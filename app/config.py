@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from urllib.parse import urlparse
@@ -11,6 +12,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from app.utils.multipart_config import MultipartStorageConfig
 
+logger = logging.getLogger(__name__)
 DEFAULT_SECRETS_DIR = "/run/secrets"
 _SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
 _KEYED_SECRET = re.compile(r"(?:OIDC|OAUTH)_[A-Z][A-Z0-9]*_CLIENT_SECRET|CRUCIBLE_AUTH_PREVIOUS_PEPPER_[A-Z0-9]+")
@@ -657,6 +659,13 @@ def missing_required_settings() -> list[str]:
     return sorted({name for group in GROUPS for name in getattr(settings, group).problems(settings)})
 
 
+def _warn_about_plain_http(settings) -> None:
+    address = settings.hub.public_api_url or settings.api.public_url
+    parts = urlparse(address) if address else None
+    if parts is not None and parts.scheme == "http" and parts.hostname not in ("localhost", *LOOPBACK_HOSTS):
+        logger.warning("The public address %s is plain HTTP: API keys and sessions cross the network unencrypted. Use it on this machine only, or set up HTTPS.", address)
+
+
 def check_settings() -> None:
     found = missing_required_settings()
     if found:
@@ -669,6 +678,7 @@ def check_settings() -> None:
             public_api_url()
         except (HubLoginUnavailable, ConfigurationError):
             raise ConfigurationError("CRUCIBLE_AUTH_PASSWORD_ENABLED needs an https:// public API address (http:// only on localhost), so passwords never cross the network in the clear") from None
+    _warn_about_plain_http(settings)
     if settings.auth.password_registration == "open":
         raise ConfigurationError("CRUCIBLE_AUTH_PASSWORD_REGISTRATION=open is refused: nothing verifies who signs up with a password, so use approval and let an administrator approve each account")
     if settings.auth.clients and settings.hub.enabled:

@@ -53,6 +53,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- **Breaking for Compose installations** (see Upgrading in `deploy/compose/README.md`): the server listens on this machine only unless `CRUCIBLE_BIND_ADDRESS` opens it.
+- **Breaking for Compose installations:** Caddy refuses plain HTTP under any name but `localhost` (421); `CRUCIBLE_HTTP_HOSTS` names an address behind a proxy that provides HTTPS.
+- **Breaking for Compose installations:** passwords are on by default and need the new secret `CRUCIBLE_AUTH_PEPPER`; with a provider also listed, sign-in offers the choice.
+- **Breaking for Compose installations:** ORCID sign-in moved from `compose.hub.yaml` to `compose.orcid.yaml`, so the Hub works with passwords alone.
+- Compose bundle: the nano-crucible client is registered without the Hub overlay, and Docker Engine 28 is required.
+- Compose bundle: files in `deploy/compose/local/` adjust how Caddy gets its certificate (an institution's ACME service, certificate files, a DNS challenge) or name a trusted proxy, without editing the Caddyfile.
+- The API logs a warning at startup when its public address is plain HTTP on anything but localhost.
+- The bundle smoke test (`scripts/selfhost_smoke.py --password-link`) sets the administrator's password through the one-time link and signs in as the nano-crucible command line does.
 - Refresh tokens get a 30-second grace: the token just before the newest can be used again in that time and gets a new pair, so concurrent refreshes and retries no longer end the session. Any older token still ends it.
 - Linking moved to `/oauth/link/start`, `/oauth/link/preview` and `/oauth/link/confirm`; the `/auth/hub/link/*` paths are gone (no client used them). Sign-in and link events record the client they came through. Needs migration `4a3a4e216223`.
 - Linking a login: only the session that started the link can preview or confirm it, that session needs a sign-in within 10 minutes when confirming (401 `insufficient_user_authentication`), the one-time start address works for 2 minutes, and a person can start at most 5 links in 10 minutes (429 `too_many_links`). Needs migration `15eb11ce75fd`.

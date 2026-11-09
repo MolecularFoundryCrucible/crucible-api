@@ -238,7 +238,7 @@ jobs:
       - name: Create secrets and settings as in the install guide
         run: |
           mkdir -p secrets && chmod 700 secrets
-          for name in POSTGRES_PASSWORD PGDB_PW CRUCIBLE_SECRET_KEY S3_SECRET_ACCESS_KEY; do
+          for name in POSTGRES_PASSWORD PGDB_PW CRUCIBLE_SECRET_KEY CRUCIBLE_AUTH_PEPPER S3_SECRET_ACCESS_KEY; do
             openssl rand -hex 32 > "secrets/$name"
           done
           openssl rand -hex 16 > secrets/S3_ACCESS_KEY_ID
@@ -255,8 +255,13 @@ jobs:
           CRUCIBLE_API_URL: http://localhost:8080/api/v3
         run: |
           CRUCIBLE_API_KEY=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1]))['api_key'])" "$RUNNER_TEMP/admin.json")
-          export CRUCIBLE_API_KEY
+          CRUCIBLE_PASSWORD_LINK=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1]))['password_link'])" "$RUNNER_TEMP/admin.json")
+          export CRUCIBLE_API_KEY CRUCIBLE_PASSWORD_LINK
           python3 ../../scripts/selfhost_smoke.py
+      - name: Only this machine can reach it, and plain HTTP under another name is refused
+        run: |
+          test "$(docker compose port proxy 80)" = "127.0.0.1:8080"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: labbox:8080' http://localhost:8080/api/v3/health/ready)" = 421
       - name: Storage check inside the API container
         run: docker compose exec -T api python -m app.cli storage check
       - name: Sign-in cleanup runs and its service stays up
@@ -302,7 +307,7 @@ jobs:
           echo "CA=$RUNNER_TEMP/caddy-root.crt" >> "$GITHUB_ENV"
           CA="$RUNNER_TEMP/caddy-root.crt"
           mkdir -p secrets && chmod 700 secrets
-          for name in POSTGRES_PASSWORD PGDB_PW CRUCIBLE_SECRET_KEY HUB_AUTH_CLIENT_SECRET S3_SECRET_ACCESS_KEY; do
+          for name in POSTGRES_PASSWORD PGDB_PW CRUCIBLE_SECRET_KEY CRUCIBLE_AUTH_PEPPER HUB_AUTH_CLIENT_SECRET S3_SECRET_ACCESS_KEY; do
             openssl rand -hex 32 > "secrets/$name"
           done
           openssl rand -hex 16 > secrets/S3_ACCESS_KEY_ID
@@ -310,7 +315,7 @@ jobs:
           chmod 644 secrets/*
           cp .env.example .env
           cat >> .env <<EOF
-          COMPOSE_FILE=compose.yaml:compose.hub.yaml
+          COMPOSE_FILE=compose.yaml:compose.hub.yaml:compose.orcid.yaml
           CRUCIBLE_SITE_ADDRESS=localhost
           CRUCIBLE_PUBLIC_URL=$SITE
           ORCID_CLIENT_ID=APP-SELFHOSTTEST0
@@ -337,12 +342,15 @@ jobs:
           docker compose pull hub hub-setup
           docker compose up -d --wait
           test "$(docker inspect "$(docker compose ps -q hub)" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "1.7.1"
-      - name: The Hub answers through the front door and starts sign-in through the API
+      - name: The Hub answers through the front door, and sign-in through the API offers ORCID and a password
         run: |
           curl -fsS --cacert "$CA" "$SITE/hub/health" | grep -q '"sessions":"ok"'
           login=$(curl -sS --cacert "$CA" -o /dev/null -w '%{redirect_url}' "$SITE/hub/auth/login")
           case "$login" in "$SITE/api/v3/auth/hub/login?"*) ;; *) echo "Hub login went to $login"; exit 1;; esac
-          orcid=$(curl -sS --cacert "$CA" -o /dev/null -w '%{redirect_url}' "$login")
+          test "$(curl -sS --cacert "$CA" -o "$RUNNER_TEMP/chooser.html" -w '%{http_code}' "$login")" = 200
+          grep -q 'provider=orcid' "$RUNNER_TEMP/chooser.html"
+          grep -q 'provider=password' "$RUNNER_TEMP/chooser.html"
+          orcid=$(curl -sS --cacert "$CA" -o /dev/null -w '%{redirect_url}' "$login&provider=orcid")
           case "$orcid" in "https://sandbox.orcid.org/oauth/authorize?"*) ;; *) echo "API login went to ${orcid%%\?*}"; exit 1;; esac
           python3 -c "import sys; from urllib.parse import parse_qs, urlparse; q = parse_qs(urlparse(sys.argv[1]).query); assert q['redirect_uri'] == [sys.argv[2] + '/api/v3/auth/hub/callback'], q['redirect_uri']" "$orcid" "$SITE"
       - name: The Hub authenticates to the API with the shared secret
@@ -384,7 +392,7 @@ jobs:
           done
           test "$(docker compose exec -T api sh -c 'grep CapEff /proc/1/status' | awk '{print $2}')" = 0000000000000000
           test "$(docker compose exec -T api id -u)" = 10001
-          ! docker compose exec -T api touch /app/app/written-at-run-time
+          if docker compose exec -T api touch /app/app/written-at-run-time; then echo 'the API can write to its own code'; exit 1; fi
           docker compose exec -T api touch /tmp/scratch
           test "$(docker compose exec -T proxy sh -c 'grep CapEff /proc/1/status' | awk '{print $2}')" = 0000000000000400
           test "$(docker compose exec -T seaweedfs sh -c 'grep CapEff /proc/1/status' | awk '{print $2}')" = 0000000000000000

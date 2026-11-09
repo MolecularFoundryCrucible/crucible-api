@@ -168,19 +168,6 @@ def plain_key_only(engine, unique_id, token, created):
         session.commit()
 
 
-def test_regenerate_replaces_only_the_plain_key(client, auth_as, people):
-    as_hub(auth_as, ADA)
-    named = create(client).json()["api_key"]
-    auth_as(ADA)
-    first = client.post("/account/apikey/regenerate").json()["api_key"]
-    second = client.post("/account/apikey/regenerate").json()["api_key"]
-    assert authorize(named).user_id == ADA and authorize(second).user_id == ADA
-    with pytest.raises(HTTPException):
-        authorize(first)
-    with Session(people) as session:
-        assert len(session.exec(select(ApiKey).where(ApiKey.revoked_at == None)).all()) == 2  # noqa: E711
-
-
 def test_status_counts_a_plain_key_not_yet_copied(client, auth_as, people):
     plain_key_only(people, ADA, "p" * 64, datetime.now(timezone.utc).date().isoformat())
     client.headers["Crucible-Privilege-Mode"] = "elevated"
@@ -188,7 +175,6 @@ def test_status_counts_a_plain_key_not_yet_copied(client, auth_as, people):
     assert client.get(f"/users/{ADA}").json()["api_key_status"]["valid"] is True
     listed = {user["unique_id"]: user for user in client.get("/users", params={"limit": 50}).json()["items"]}
     assert listed[ADA]["api_key_status"]["valid"] is True
-    assert client.post(f"/users/{ADA}/apikey").status_code == 409
     with Session(people) as session:
         assert session.exec(select(ApiKey)).all() == []
 
@@ -235,8 +221,9 @@ def test_pending_filter_is_a_declared_parameter(client, auth_as, people):
 def test_keys_can_be_renamed_and_the_older_routes_key_is_marked(client, auth_as, people):
     as_hub(auth_as, ADA)
     named = create(client).json()
+    plain_key_only(people, ADA, "p" * 64, datetime.now(timezone.utc).date().isoformat())
+    authorize("p" * 64)
     auth_as(ADA)
-    client.post("/account/apikey/regenerate")
     listed = {item["name"]: item for item in client.get("/account/apikeys").json()["items"]}
     assert (listed["laptop"]["older_routes"], listed["Default key"]["older_routes"]) == (False, True)
     renamed = client.patch(f"/account/apikeys/{listed['Default key']['id']}", json={"name": "old scripts"}).json()

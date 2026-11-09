@@ -56,16 +56,8 @@ def test_api_key_cannot_change_a_humans_admin_status(client, auth_as, people):
     assert role(client, PERSON, "contributor").status_code == 200
 
 
-def test_api_key_cannot_read_or_regenerate_an_admins_key_even_its_own(client, auth_as, people):
-    as_key(auth_as, client)
-    for ref in (OTHER_ADMIN, ADMIN):
-        assert refused_for_a_key(client.post(f"/users/{ref}/apikey"))
-        assert refused_for_a_key(client.post(f"/users/{ref}/apikey/regenerate"))
-
-
 def test_api_key_still_manages_ordinary_users_and_service_accounts(client, auth_as, people):
     as_key(auth_as, client)
-    assert client.post(f"/users/{PERSON}/apikey/regenerate").status_code == 200
     assert client.delete(f"/users/{PERSON}/apikey").status_code == 204
     assert client.patch(f"/service_accounts/{ROBOT}", json={"platform_role": "admin"}).status_code == 200
     assert client.patch(f"/users/{PERSON}", json={"username": "renamed", "email": "renamed@example.com"}).status_code == 200
@@ -76,7 +68,6 @@ def test_recent_hub_session_can_do_all_of_these(client, auth_as, people):
     as_hub(auth_as, client)
     assert role(client, PERSON, "admin").status_code == 200
     assert role(client, PERSON, "none").status_code == 200
-    assert client.post(f"/users/{OTHER_ADMIN}/apikey/regenerate").status_code == 200
 
 
 def test_stale_hub_session_is_asked_to_sign_in_again(client, auth_as, people):

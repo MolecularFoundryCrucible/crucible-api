@@ -12,6 +12,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, SQLModel, select
 
 import app.utils.auth_utils as auth_utils
+from app.auth.api_keys import newest_key, status_of
 from app.models.core_models import ApiToken, HubAccessToken, HubLoginCode, HubRefreshToken, HubTokenFamily, User
 from app.utils.hub_tokens import hub_access_family, issue_hub_tokens, refresh_hub_tokens, revoke_all_hub_tokens
 
@@ -57,7 +58,8 @@ def test_key_and_hub_session_still_work_after_unique_id_changes(db_engine, perso
     assert (authorize(key).user_id, authorize(key).internal_user_id) == (MFID, user_id)
     assert authorize(pair.access_token).user_id == MFID
     assert refresh_hub_tokens(db_engine, pair.refresh_token, "crucible-hub").user_unique_id == MFID
-    assert auth_utils.has_active_api_key(user_id, db_engine)
+    with Session(db_engine) as session:
+        assert status_of(newest_key(session, user_id)) == "active"
     assert auth_utils.find_or_add_api_access(user_id, db_engine) == key
 
 

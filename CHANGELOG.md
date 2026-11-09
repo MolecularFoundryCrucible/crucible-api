@@ -71,6 +71,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Hub sign-in failures after a valid request redirect to the Hub with `state` and a standard OAuth `error`, instead of a 400 or 503 page.
 - `settings check` warns when the ORCID provider's issuer and `ORCID_ISSUER` differ.
 
+### Removed
+
+- `GET /account/apikey`, `POST /account/apikey/regenerate`, `POST /users/{user_ref}/apikey` and `POST /users/{user_ref}/apikey/regenerate` now answer 410 Gone (`route_removed`, naming the replacement): keys cannot be read back, and an API key can no longer renew itself or read someone else's. Use `POST`, `GET` and `DELETE /account/apikeys`, and for administrators `GET` and `DELETE /users/{user_ref}/apikeys`. Hub releases before the next one and nano-crucible 2.1 to 3.3 (`crucible account api-key`) call some of them, so deploy with the client releases.
+
 ### Security
 
 - Authlib 1.9.5, with its four security releases since 1.9.1 (GHSA-f3fg-34g9-v7jx, GHSA-gp2m-377p-m4j3, GHSA-9qr6-8289-9j56, GHSA-f7j6-p4qx-gq99). None affects the sign-in code in use; the upgrade comes before building on Authlib's server parts.

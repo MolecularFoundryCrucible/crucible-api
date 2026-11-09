@@ -10,6 +10,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from app.api.removed import REMOVED_RESPONSE, removed
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import DatasetMfid, UserRef
 from app.general_utils import is_orcid, is_valid_mfid
@@ -17,11 +18,11 @@ from app.models.core_models import (
     UserIdentity,
     AccessGroup, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
 )
-from app.utils.auth_utils import caller_row, forget_cached_keys, API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_human_admin_safeguard, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
+from app.utils.auth_utils import caller_row, forget_cached_keys, authorize_user, fetch_acl_rows, permission_filter, require_human_admin_safeguard, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor,
 )
-from app.utils.permissions import SESSION, AccessGroupType, Permission, effective_role, has_global_permission, PlatformRole, Principal, Role
+from app.utils.permissions import AccessGroupType, Permission, effective_role, has_global_permission, PlatformRole, Principal, Role
 from app.utils.search_utils import (
     MAX_SEARCH_QUERY_LENGTH,
     SEARCH_QUERY_LIMIT_DESCRIPTION,
@@ -43,7 +44,7 @@ from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
 from app.api.routes.projects import PROJECT_PAGINATION
 from app.models.users import UserCreate, UserPublicRead, UserRead, UserUpdate
-from app.models.response_schemas import ApiKeyRead, ApiKeyVerify, DetailResponse
+from app.models.response_schemas import ApiKeyVerify, DetailResponse
 from app.models.projects import ProjectWithLead
 from app.models.access_groups import AccessGroupRead
 from app.models.access import EffectiveAccess, EffectiveResourceAccessRead
@@ -465,48 +466,16 @@ def _admin_key_status(session, caller: Principal, user: User) -> Optional[Servic
     return _key_status(newest_key(session, user.id))
 
 
-def _admin_user_for_key(user_ref, auth_res):
-    user_id = _canonical_user_id(user_ref)
-    require_platform_admin(auth_res)
-    require_recent_authentication(auth_res)
-    with Session(get_engine()) as session:
-        user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        require_human_admin_safeguard(auth_res, user)
-        return user.id
+@router.post("/users/{user_ref}/apikey", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
+def get_or_provision_user_apikey(user_ref: str):
+    """Removed: people create their own keys with POST /account/apikeys."""
+    removed("Reading, creating or regenerating someone's API key was removed. People create their own keys with POST /account/apikeys; administrators list and revoke them with GET and DELETE /users/{user_ref}/apikeys.")
 
 
-@router.post("/users/{user_ref}/apikey", response_model=ApiKeyRead, deprecated=True, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}, 409: {"description": "Hub sessions cannot read an existing key (`api_key_exists`)"}})
-def get_or_provision_user_apikey(
-    user_ref: UserRef,
-    auth_res: Annotated[Principal, Depends(authorize_user)],
-    response: Response,
-):
-    '''Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.
-
-    Deprecated: returning an existing key will stop when keys are stored hashed. Use
-    POST /users/{user_ref}/apikey/regenerate. Hub sessions already receive 409 when a key exists.
-    '''
-    user_id = _admin_user_for_key(user_ref, auth_res)
-    if auth_res.credential == SESSION and has_active_api_key(user_id, get_engine()):
-        raise HTTPException(status_code=409, detail={"code": "api_key_exists", "message": "The user already has an API key; regenerate it instead"})
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Deprecation"] = API_KEY_READ_DEPRECATION
-    return ApiKeyRead(api_key=find_or_add_api_access(user_id, get_engine(), regenerate=False))
-
-
-@router.post("/users/{user_ref}/apikey/regenerate", response_model=ApiKeyRead, deprecated=True, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}})
-def regenerate_user_apikey(
-    user_ref: UserRef,
-    auth_res: Annotated[Principal, Depends(authorize_user)],
-    response: Response,
-):
-    '''Replace the key the single-key routes show and return the new one once. Admin only.
-    Deprecated: revoke a person's keys one by one with DELETE /users/{user_ref}/apikeys/{key_id}.'''
-    user_id = _admin_user_for_key(user_ref, auth_res)
-    response.headers["Cache-Control"] = "no-store"
-    return ApiKeyRead(api_key=find_or_add_api_access(user_id, get_engine(), regenerate=True))
+@router.post("/users/{user_ref}/apikey/regenerate", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
+def regenerate_user_apikey(user_ref: str):
+    """Removed: administrators revoke keys with DELETE /users/{user_ref}/apikeys/{key_id}."""
+    removed("Reading, creating or regenerating someone's API key was removed. People create their own keys with POST /account/apikeys; administrators list and revoke them with GET and DELETE /users/{user_ref}/apikeys.")
 
 
 @router.get("/users/{user_ref}/apikey/verify", response_model=ApiKeyVerify, deprecated=True)

@@ -34,6 +34,7 @@ from app.utils.search_utils import (
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_active
 from app.auth.api_keys import key_status, newest_key, newest_keys, replace_plain_keys, revoke_user_keys
 from app.auth.events import AuthEventType, record_event
+from app.auth.password_links import void_links
 from app.auth.registration import NotPending, StillReferenced, approve_pending_user, reject_pending_user
 from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
 from app.utils.hub_tokens import revoke_all_hub_tokens
@@ -733,6 +734,7 @@ def disable_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(autho
             user.disabled_at = datetime.now(timezone.utc)
             session.add(user)
             revoke_all_hub_tokens(session, user.id)
+            void_links(session, user)
             record_event(session, AuthEventType.DISABLED, user=user, actor=caller_row(session, auth_res))
             session.commit()
             forget_cached_keys(session, user.id)

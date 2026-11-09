@@ -705,6 +705,18 @@ def require_recent_hub_session(principal: Principal, message: str) -> None:
     require_recent_authentication(principal)
 
 
+def require_credential_change(principal: Principal, *, target) -> None:
+    """Who may change how `target` signs in. Your own: a browser session with a recent sign-in, never
+    an API key or a device-code session. Someone else's: a platform administrator, whose API key works
+    for ordinary people, while any human administrator's needs a browser session with a recent sign-in."""
+    if principal.is_user(target):
+        require_recent_hub_session(principal, "Changing how you sign in needs a browser session with a recent sign-in, not an API key")
+        return
+    require_platform_admin(principal)
+    require_recent_authentication(principal)
+    require_human_admin_safeguard(principal, target)
+
+
 def require_self_or_platform_admin(principal: Principal, user) -> None:
     """Raise 403 unless the caller is `user`, a User row or None, or a platform admin."""
     if principal.is_user(user):

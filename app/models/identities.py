@@ -45,6 +45,12 @@ class LinkPreviewRead(SQLModel):
     )
 
 
+class PasswordChange(SQLModel):
+    """Set your first password, or change it. The current password is needed only to change one."""
+    current_password: Optional[str] = Field(default=None, max_length=1024)
+    new_password: str = Field(max_length=1024)
+
+
 class PasswordLinkRead(SQLModel):
     """A one-time link to set or reset a password, shown only in this response."""
     url: str

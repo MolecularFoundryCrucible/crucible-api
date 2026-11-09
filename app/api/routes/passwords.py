@@ -1,6 +1,6 @@
-"""Password links: an administrator issues one, and the person opens it in a browser to set or
-reset their password. On first open the token moves into a cookie bound to this browser and the
-address loses it, so it does not stay in the browser's history."""
+"""Passwords set or changed through the API, and password links: an administrator issues one, and
+the person opens it in a browser to set or reset their password. On first open the token moves into
+a cookie bound to this browser and the address loses it, so it does not stay in the browser's history."""
 import secrets
 from typing import Annotated
 
@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Res
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse
 from itsdangerous import BadData, URLSafeTimedSerializer
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.api.dependencies import get_api_root_path, get_engine
 from app.api.path_params import UserRef
@@ -16,9 +16,10 @@ from app.api.routes.hub_auth import _browser_headers, _require_passwords, _templ
 from app.auth.password_links import LinkRefused, issue_link, link_purpose, live_link, use_link
 from app.auth.passwords import MAX_LENGTH, check_new_password
 from app.auth.throttle import HashBusy, begin_code_attempt, client_address, give_back, hash_slot
-from app.config import get_secret, get_settings
-from app.models.identities import PasswordLinkRead
-from app.utils.auth_utils import authorize_user, caller_row, require_human_admin_safeguard, require_platform_admin, require_recent_authentication
+from app.api.errors import feature_disabled_response
+from app.config import FeatureDisabled, get_secret, get_settings
+from app.models.identities import PasswordChange, PasswordLinkRead
+from app.utils.auth_utils import authorize_user, caller_row, require_credential_change, require_human_admin_safeguard, require_platform_admin, require_recent_authentication
 from app.utils.hub_login import HubLoginUnavailable, public_api_url
 from app.utils.permissions import Principal
 from app.utils.user_utils import resolve_user_by_identifier
@@ -38,7 +39,8 @@ def link_url(base: str, token: str) -> str:
     401: {"description": "A session needs a recent sign-in (`insufficient_user_authentication`)"},
     403: {"description": "Not a platform administrator; `hub_session_required` for any human administrator, yourself included; `browser_sign_in_required` for a session approved with a device code"},
     404: {"description": "No such person"},
-    409: {"description": "`passwords_off`, `service_account`, `account_disabled` or `account_pending`"},
+    409: {"description": "`service_account`, `account_disabled` or `account_pending`"},
+    **feature_disabled_response("passwords"),
     503: {"description": "The public API address is not set"},
 })
 def issue_password_link(user_ref: UserRef, response: Response, auth_res: Annotated[Principal, Depends(authorize_user)]):
@@ -47,8 +49,7 @@ def issue_password_link(user_ref: UserRef, response: Response, auth_res: Annotat
     ends the person's sessions and does not sign them in. Platform administrators only."""
     require_platform_admin(auth_res)
     require_recent_authentication(auth_res)
-    if not get_settings().auth.password_enabled:
-        raise HTTPException(status_code=409, detail={"code": "passwords_off", "message": "Password sign-in is off on this server"})
+    _passwords_on()
     try:
         base = public_api_url()
     except HubLoginUnavailable:
@@ -63,6 +64,129 @@ def issue_password_link(user_ref: UserRef, response: Response, auth_res: Annotat
             raise HTTPException(status_code=409, detail={"code": refused.code, "message": refused.message}) from None
     response.headers["Cache-Control"] = "no-store"
     return PasswordLinkRead(url=link_url(base, token), purpose=purpose, expires_at=expires_at)
+
+
+class _PasswordChanged(Exception):
+    """Someone set or removed the password between the check and the write."""
+
+
+def _passwords_on() -> None:
+    if not get_settings().auth.password_enabled:
+        raise FeatureDisabled("passwords")
+
+
+def _field_error(field: str, kind: str, message: str, **context) -> HTTPException:
+    """A 422 in FastAPI's validation shape, so clients show it on the field."""
+    error = {"type": kind, "loc": ["body", field], "msg": message}
+    if context:
+        error["ctx"] = context
+    return HTTPException(status_code=422, detail=[error])
+
+
+def _caller_and_credential(engine, auth_res: Principal):
+    from app.models.core_models import LocalCredential
+
+    with Session(engine) as session:
+        user = caller_row(session, auth_res)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        require_credential_change(auth_res, target=user)
+        if user.is_service_account:
+            raise HTTPException(status_code=409, detail={"code": "service_account", "message": "Service accounts sign in with API keys, not passwords"})
+        session.expunge(user)
+        return user, session.get(LocalCredential, user.id) is not None
+
+
+def _write_password(engine, user_id: int, password: str, *, first: bool, keep_family: str | None) -> None:
+    from app.auth.events import AuthEventType, record_event
+    from app.auth.passwords import store_password
+    from app.models.core_models import LocalCredential, User
+    from app.utils.hub_tokens import revoke_all_hub_tokens
+
+    with hash_slot(), Session(engine) as session, session.begin():
+        user = session.exec(select(User).where(User.id == user_id).with_for_update()).one()
+        if (session.get(LocalCredential, user.id) is None) != first or not user.username:
+            raise _PasswordChanged
+        store_password(session, user, password)
+        if not first:
+            revoke_all_hub_tokens(session, user.id, except_family_id=keep_family)
+        record_event(session, AuthEventType.PASSWORD_SET if first else AuthEventType.PASSWORD_CHANGED, user=user, actor=user)
+
+
+@router.post("/account/password", status_code=204, tags=["account"], responses={
+    401: {"description": "A session needs a recent sign-in (`insufficient_user_authentication`)"},
+    403: {"description": "`hub_session_required` for an API key, `browser_sign_in_required` for a session approved with a device code"},
+    409: {"description": "`service_account`, `username_required` (set one with PATCH /account/profile first), or `password_changed` when another request changed it first"},
+    **feature_disabled_response("passwords"),
+    422: {"description": "Field errors in FastAPI's shape: `current_password_required` or `current_password_invalid` (counted against the account's attempt limit) on `current_password`, `password_rejected` with `ctx.reason` on `new_password`"},
+    503: {"description": "The server is busy checking passwords"},
+})
+async def set_account_password(body: PasswordChange, request: Request, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Set a first password, or change yours, from a browser session with a recent sign-in. Changing
+    needs the current password and ends your other sessions, keeping this one. Passwords sign in with
+    the username, so an account without one sets it first with PATCH /account/profile. API keys are
+    never touched."""
+    from app.auth.throttle import attempt_password
+
+    _passwords_on()
+    engine = get_engine()
+    user, has_password = await run_in_threadpool(_caller_and_credential, engine, auth_res)
+    if not user.username:
+        raise HTTPException(status_code=409, detail={"code": "username_required", "message": "Passwords sign in with a username; set one with PATCH /account/profile first"})
+    if has_password:
+        if not body.current_password:
+            raise _field_error("current_password", "current_password_required", "Give your current password to change it")
+        try:
+            valid = await run_in_threadpool(attempt_password, engine, user.id, body.current_password, client_address(request), session_authenticated=True)
+        except HashBusy:
+            raise HTTPException(status_code=503, detail="The server is busy checking passwords; try again in a moment") from None
+        if not valid:
+            raise _field_error("current_password", "current_password_invalid", "The current password is not correct")
+    problem = check_new_password(body.new_password, context=(user.username, user.email, user.first_name, user.last_name))
+    if problem is not None:
+        raise _field_error("new_password", "password_rejected", problem.message, reason=problem.code)
+    try:
+        await run_in_threadpool(lambda: _write_password(engine, user.id, body.new_password, first=not has_password, keep_family=auth_res.session_family_id))
+    except HashBusy:
+        raise HTTPException(status_code=503, detail="The server is busy checking passwords; try again in a moment") from None
+    except _PasswordChanged:
+        raise HTTPException(status_code=409, detail={"code": "password_changed", "message": "The password or username was changed by another request; check and try again"}) from None
+    return Response(status_code=204)
+
+
+@router.delete("/users/{user_ref}/password", status_code=204, responses={
+    401: {"description": "A session needs a recent sign-in (`insufficient_user_authentication`)"},
+    403: {"description": "Not a platform administrator; `hub_session_required` for any human administrator, yourself included; `browser_sign_in_required` for a session approved with a device code"},
+    404: {"description": "No such person, or `no_password`"},
+    409: {"description": "`service_account`, or `last_sign_in_method` when removing your own only way in"},
+})
+def remove_user_password(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Remove a person's password, for example after a compromise: it stops working at once, their
+    sessions end and any password link is cancelled. Issue a new link afterwards with
+    POST /users/{user_ref}/password-link. API keys are not touched; revoke them separately.
+    Platform administrators, or yourself if you have another way to sign in."""
+    from app.auth.events import AuthEventType, record_event
+    from app.auth.linking import sign_in_methods
+    from app.auth.password_links import void_links
+    from app.models.core_models import LocalCredential, User
+    from app.utils.hub_tokens import revoke_all_hub_tokens
+
+    with Session(get_engine()) as session, session.begin():
+        user = resolve_user_by_identifier(session, user_ref)
+        require_credential_change(auth_res, target=user)
+        if user.is_service_account:
+            raise HTTPException(status_code=409, detail={"code": "service_account", "message": "Service accounts have no password"})
+        session.exec(select(User.id).where(User.id == user.id).with_for_update()).one()
+        credential = session.get(LocalCredential, user.id)
+        if credential is None:
+            raise HTTPException(status_code=404, detail={"code": "no_password", "message": "This person has no password"})
+        if auth_res.is_user(user) and not sign_in_methods(session, user):
+            raise HTTPException(status_code=409, detail={"code": "last_sign_in_method", "message": "This is your only way to sign in; link another login first"})
+        session.delete(credential)
+        void_links(session, user)
+        revoke_all_hub_tokens(session, user.id)
+        record_event(session, AuthEventType.PASSWORD_REMOVED, user=user, actor=caller_row(session, auth_res))
+    return Response(status_code=204)
 
 
 def _serializer(purpose: str) -> URLSafeTimedSerializer:

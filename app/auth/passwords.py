@@ -14,7 +14,7 @@ from typing import Iterable
 from pwdlib import PasswordHash
 from pwdlib.exceptions import PwdlibError
 from pwdlib.hashers.argon2 import Argon2Hasher
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.config import get_secret, get_settings
 from app.models.core_models import LocalCredential, User
@@ -156,3 +156,29 @@ def store_password(session: Session, user: User, password: str, *, now: datetime
     credential.password_changed_at = now or datetime.now(timezone.utc)
     session.add(credential)
     return credential
+
+
+def revoke_all_passwords(engine, *, commit: bool, now: datetime | None = None) -> dict[int, int]:
+    """After a breach: remove every password, cancel password links and end the sessions of everyone
+    who had one. Without `commit`, only counts. Returns how many passwords there were and how many of
+    those people have no other way to sign in, who then need a new link."""
+    from sqlalchemy import delete, update
+
+    from app.auth.events import AuthEventType, record_event
+    from app.models.core_models import HubTokenFamily, PasswordToken, UserIdentity
+
+    current = now or datetime.now(timezone.utc)
+    with Session(engine) as session, session.begin():
+        query = select(LocalCredential.user_id)
+        user_ids = session.exec(query.with_for_update() if commit else query).all()
+        with_login = set(session.exec(select(UserIdentity.user_id).where(UserIdentity.user_id.in_(user_ids))).all()) if user_ids else set()
+        counts = {"passwords": len(user_ids), "without_another_login": len([user_id for user_id in user_ids if user_id not in with_login])}
+        if commit and user_ids:
+            session.execute(delete(LocalCredential).where(LocalCredential.user_id.in_(user_ids)))
+            session.execute(update(PasswordToken).where(PasswordToken.user_id.in_(user_ids), PasswordToken.consumed_at == None, PasswordToken.voided_at == None)  # noqa: E711
+                            .values(voided_at=current).execution_options(synchronize_session=False))
+            session.execute(update(HubTokenFamily).where(HubTokenFamily.user_id.in_(user_ids), HubTokenFamily.revoked_at == None)  # noqa: E711
+                            .values(revoked_at=current).execution_options(synchronize_session=False))
+            for user in session.exec(select(User).where(User.id.in_(user_ids))).all():
+                record_event(session, AuthEventType.PASSWORD_REMOVED, user=user)
+        return counts

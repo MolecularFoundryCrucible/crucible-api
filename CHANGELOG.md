@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Password links: `POST /users/{user_ref}/password-link` (administrators; for any human administrator, yourself included, a browser session with a recent sign-in) returns a one-time link to set or reset a password at `/oauth/password-link`, valid `CRUCIBLE_AUTH_PASSWORD_LINK_HOURS` (24 by default, 1 to 168). Using it ends the person's sessions and signs nobody in; a new link, a password change, disabling the account or changing its logins cancels it. `python -m app.cli admin password-link USER` prints one from the server. Needs migration `a7df9dd039cf`.
 - Sessions approved with a device code are recorded as such and refused, with 403 `browser_sign_in_required`, wherever a recent sign-in is needed: creating keys, ending sessions, changing logins or administrators. The device approval page shows the network address that asked. Needs migration `1226f8497119`.
 - Signed-in sessions: `GET /account/sessions` lists yours, `DELETE /account/sessions/{id}` and `DELETE /account/sessions` (all but this one) end them with a recent sign-in; administrators use `/users/{user_ref}/sessions`; `auth end-sessions --user|--all` ends them from the server. No migration.
 - Device sign-in (RFC 8628) for public clients on machines without a browser: `POST /oauth/device_authorization`, polling at `/oauth/token`, and the browser pages at `/oauth/device` (enter the code, sign in afresh, approve or deny). Codes last 10 minutes, are stored as hashes, and wrong codes count against the per-address limit. Needs migration `6a97d683a96c`.
@@ -73,6 +74,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- Removed four finished data scripts from May and June 2026 (storage paths, file MFIDs, usernames, personal access groups) that wrote to the database without a `--commit` flag; they remain in git history.
+- The per-address attempt limit now slows guessing for at most a minute instead of up to 15, and a browser that already signed in to the account skips it, so one person behind a shared address can no longer lock everyone there out of passwords, device codes and password links.
+- API keys can no longer reach the server log: the database engine hides statement parameters, the activity update no longer matches the plain key table by key value, and its failures log only the error class.
 - The Compose guide warns that plain HTTP sends API keys unencrypted to the whole network, and its backup and upgrade commands now encrypt the database dump with age, since it holds every API key.
 - Authlib 1.9.5, with its four security releases since 1.9.1 (GHSA-f3fg-34g9-v7jx, GHSA-gp2m-377p-m4j3, GHSA-9qr6-8289-9j56, GHSA-f7j6-p4qx-gq99). None affects the sign-in code in use; the upgrade comes before building on Authlib's server parts.
 - Hub sign-in uses one browser cookie per sign-in, so parallel tabs no longer break each other and an unmatched callback no longer cancels a sign-in in progress, and refuses provider responses whose RFC 9207 `iss` names another issuer.

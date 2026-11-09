@@ -30,6 +30,7 @@ def setup_engine(env_file=None):
         pool_timeout=db.pool_timeout,
         pool_recycle=db.pool_recycle,
         pool_pre_ping=True,
+        hide_parameters=True,
     )
     return(engine)
 

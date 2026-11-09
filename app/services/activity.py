@@ -45,10 +45,9 @@ def record_caller_activity(engine, user_id: str, api_key: str | None = None) -> 
                 session.exec(update(User).where(User.unique_id == user_id, _stale(User.last_active_at, USER_ACTIVITY_INTERVAL, now)).values(last_active_at=now))
             if key_due:
                 session.exec(update(ApiKey).where(ApiKey.key_hash == hashlib.sha256(api_key.encode()).hexdigest(), _stale(ApiKey.last_used_at, API_KEY_USE_INTERVAL, now)).values(last_used_at=now))
-                session.exec(update(ApiToken).where(ApiToken.token == api_key, _stale(ApiToken.last_used_at, API_KEY_USE_INTERVAL, now)).values(last_used_at=now))
             session.commit()
-    except Exception:
-        logger.warning("Could not record activity for %s", user_id, exc_info=True)
+    except Exception as error:
+        logger.warning("Could not record activity for %s: %s", user_id, type(error).__name__)
 
 
 def _changed(session, obj) -> bool:

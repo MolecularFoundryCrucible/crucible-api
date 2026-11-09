@@ -76,7 +76,7 @@ class UserRead(SQLModel):
     api_key_status: Optional[ServiceAccountKeyStatus] = None
     disabled_at: Optional[UtcDatetime] = Field(default=None, description="When an administrator switched this account off; empty for an active account.")
     pending_at: Optional[UtcDatetime] = Field(default=None, description="When this account was created waiting for an administrator's approval; empty once approved. Only administrators see waiting accounts.")
-    sign_in_methods: Optional[List[str]] = Field(default=None, description="Administrators only, on GET /users/{user_ref} and GET /users?pending=true: how this person signs in, as `password` and the providers' display names.")
+    sign_in_methods: Optional[List[str]] = Field(default=None, description="How this person signs in, as `password` and the providers' display names. Filled for the person themselves (GET /account/profile, GET /users/{user_ref}) and for administrators (GET /users/{user_ref}, GET /users?pending=true); null elsewhere.")
     last_active_at: Optional[UtcDatetime] = Field(default=None, description="Last authenticated request, recorded at most hourly. Returned to platform administrators and to the user themselves.")
 
 

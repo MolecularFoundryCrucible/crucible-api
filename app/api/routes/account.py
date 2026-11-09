@@ -38,6 +38,7 @@ from app.utils.permissions import (
 )
 from app.api.errors import feature_disabled_response
 from app.config import require_feature
+from app.auth.linking import sign_in_labels
 from app.auth.api_keys import find_api_key, key_status, newest_key
 from app.auth.identity import linked_orcid
 from app.services.proposals import ProposalServiceUnavailable, assign_discovered_projects, lookup_proposals
@@ -102,6 +103,7 @@ def get_account_profile(
                     can_elevate=context.can_elevate,
                 ),
                 "capabilities": _account_capabilities(auth_res),
+                "sign_in_methods": sign_in_labels(session, [user.id]).get(user.id),
             },
         )
 

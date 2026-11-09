@@ -105,7 +105,7 @@ def _user_read(caller: Principal, user: User, *, key_status: Optional[ServiceAcc
             "platform_role": role,
             "user_capabilities": _user_capabilities(caller, user) if with_capabilities else None,
             "api_key_status": key_status,
-            "sign_in_methods": sign_in if caller.is_platform_admin else None,
+            "sign_in_methods": sign_in,
         },
     )
 
@@ -461,8 +461,7 @@ def read_user(user_ref: UserRef, response: Response,
             response.headers["Content-Location"] = f"/users/{user.unique_id}"
         if auth_res.is_user(user) or is_admin:
             key_status = _admin_key_status(session, auth_res, user)
-            labels = sign_in_labels(session, [user.id]).get(user.id) if is_admin else None
-            return _user_read(auth_res, user, key_status=key_status, with_capabilities=True, sign_in=labels)
+            return _user_read(auth_res, user, key_status=key_status, with_capabilities=True, sign_in=sign_in_labels(session, [user.id]).get(user.id))
         return _user_public_read(auth_res, user, with_capabilities=True)
 
 

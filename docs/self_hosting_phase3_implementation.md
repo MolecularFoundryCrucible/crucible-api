@@ -253,6 +253,7 @@ Details and fixes are in `docs/self_hosting_phase3_security_review.md`, by the n
 - 1.11 Smaller items, including two misses from Task 5: disable and enable skip recent sign-in for ordinary users, and `POST /users` does not record `created_by`.
 - Hub items: adopt `required_user` and `error`, and a login lockup in single-instance mode. For the Hub session.
 - Decisions in section 4: service accounts reading everything, instrument metadata, deletion requests, and an unlinked ORCID after the rewrite.
+- Usernames are checked case- and separator-insensitively (`john_doe`, `john-doe` and `JohnDoe` collide), but the unique index `ix_user_username` compares exact names, so two people claiming lookalikes at the same instant could both succeed. Closing it needs a unique index on the normalized name, which is a migration. Found while building 13b, 2026-11-09.
 - The November audit, with its status table: `docs/security_audit_2026_11.md`. The contributor's deletion requests on any record are a known issue, kept until the role is reworked.
 
 ## Ingestion, open issues (deferred by the user, 2026-11-09)

@@ -459,9 +459,12 @@ def _origin(uri: str) -> str:
 
 def _password_page(request: Request, *, state: str = "", username: str = "", problem: str | None = None, expired: bool = False, callback_uri: str | None = None, status: int = 200) -> Response:
     """The form posts to itself, then the answer redirects to the client, so form-action names both."""
+    from app.auth.password_registration import registration_open
+
     style_nonce, script_nonce = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
     response = _templates.TemplateResponse(request, "hub_password_form.html", {
         "style_nonce": style_nonce, "script_nonce": script_nonce, "state": state, "username": username, "problem": problem, "expired": expired,
+        "can_register": registration_open(),
     }, status_code=status)
     targets = "'self'" + (f" {_origin(callback_uri)}" if callback_uri else "")
     response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{style_nonce}'; script-src 'nonce-{script_nonce}'; form-action {targets}; base-uri 'none'; frame-ancestors 'none'"

@@ -303,3 +303,128 @@ async def password_link_submitted(
     if link.purpose == "setup":
         return _done(request, "Password set", "Your password is set. Sign in with it from the Hub or the program you use.")
     return _done(request, "Password changed", "Your password is changed and you were signed out everywhere. Sign in again with the new one.")
+
+
+REGISTER_COOKIE = "crucible_register"
+
+
+def _register_cookie_path() -> str:
+    return f"{get_api_root_path()}/oauth/register"
+
+
+def _secure_cookies() -> bool:
+    try:
+        return public_api_url().startswith("https://")
+    except HubLoginUnavailable:
+        return False
+
+
+def _register_page(request: Request, nonce: str, values: dict | None = None, *, problem: str | None = None, status: int = 200) -> Response:
+    fields = {"first_name": "", "last_name": "", "email": "", "username": "", **(values or {})}
+    return _page(request, "password_register_form.html", {
+        **fields, "problem": problem, "min_length": get_settings().auth.password_min_length, "max_length": MAX_LENGTH,
+        "form_token": _serializer("register-form").dumps({"n": nonce}),
+    }, status, form=True)
+
+
+def _register_browser(request: Request) -> str | None:
+    try:
+        data = _serializer("register-cookie").loads(request.cookies.get(REGISTER_COOKIE, ""), max_age=BROWSER_LIFETIME)
+    except BadData:
+        return None
+    return data.get("n") if isinstance(data, dict) and isinstance(data.get("n"), str) else None
+
+
+def _require_registration() -> None:
+    from app.auth.password_registration import registration_open
+
+    if not registration_open():
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+@pages.get("/register", response_class=HTMLResponse, responses={404: {"description": "Password registration is off"}})
+def registration_form(request: Request) -> Response:
+    """Where someone asks for an account with a password, when the server allows it
+    (CRUCIBLE_AUTH_PASSWORD_REGISTRATION=approval). An administrator approves each one."""
+    _require_registration()
+    nonce = secrets.token_urlsafe(24)
+    response = _register_page(request, nonce)
+    response.set_cookie(REGISTER_COOKIE, _serializer("register-cookie").dumps({"n": nonce}), max_age=BROWSER_LIFETIME, path=_register_cookie_path(),
+                        secure=_secure_cookies(), httponly=True, samesite="lax")
+    return response
+
+
+def _create_account(engine, fields: tuple[str, str, str, str], password: str) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    from app.auth.password_registration import IN_USE, RegistrationProblem, RegistrationRefused, register
+
+    username, first_name, last_name, email = fields
+    with hash_slot(), Session(engine) as session:
+        try:
+            with session.begin():
+                register(session, username=username, first_name=first_name, last_name=last_name, email=email, password=password)
+        except IntegrityError:
+            raise RegistrationRefused(RegistrationProblem("username", IN_USE, 409)) from None
+
+
+def _checked(engine, **fields) -> tuple[str, str, str, str]:
+    from app.auth.password_registration import checked_fields
+
+    with Session(engine) as session:
+        return checked_fields(session, **fields)
+
+
+@pages.post("/register", response_class=HTMLResponse, responses={
+    400: {"description": "A form from another browser, or one that waited too long", "content": {"text/html": {}}},
+    404: {"description": "Password registration is off"},
+    409: {"description": "The username or email is already in use; one answer for both", "content": {"text/html": {}}},
+    422: {"description": "A field breaks a rule, or the passwords differ", "content": {"text/html": {}}},
+    429: {"description": "Too many requests from this address; wait a minute", "content": {"text/html": {}}},
+    503: {"description": "The server is busy checking passwords", "content": {"text/html": {}}},
+})
+async def registration_submitted(
+    request: Request,
+    first_name: str = Form(max_length=100),
+    last_name: str = Form(max_length=100),
+    email: str = Form(max_length=254),
+    username: str = Form(max_length=64),
+    password: str = Form(max_length=1024),
+    confirm: str = Form(max_length=1024),
+    form_token: str = Form(max_length=2048),
+    engine=Depends(get_engine),
+) -> Response:
+    """Create an account that waits for an administrator's approval. Every submission counts against
+    the address's limit, so one source cannot fill the approval list. It signs nobody in."""
+    from app.auth.password_registration import RegistrationRefused
+
+    _require_registration()
+    nonce = _register_browser(request)
+    try:
+        form = _serializer("register-form").loads(form_token, max_age=BROWSER_LIFETIME)
+    except BadData:
+        form = None
+    if nonce is None or not isinstance(form, dict) or not secrets.compare_digest(str(form.get("n", "")), nonce):
+        return _done(request, "Not sent", "This form did not come from this browser, or it waited too long. Open the page again.", 400)
+    values = {"first_name": first_name.strip(), "last_name": last_name.strip(), "email": email.strip(), "username": username.strip()}
+    allowed, _ = await run_in_threadpool(begin_code_attempt, engine, client_address(request))
+    if not allowed:
+        return _register_page(request, nonce, values, problem="Too many requests from your network. Wait a minute and try again.", status=429)
+    if password != confirm:
+        return _register_page(request, nonce, values, problem="The two passwords are different. Type the same password in both.", status=422)
+    try:
+        fields = await run_in_threadpool(lambda: _checked(engine, username=username, first_name=first_name, last_name=last_name, email=email))
+    except RegistrationRefused as refused:
+        return _register_page(request, nonce, values, problem=refused.problem.message, status=refused.problem.status)
+    problem = check_new_password(password, context=fields)
+    if problem is not None:
+        return _register_page(request, nonce, values, problem=problem.message, status=422)
+    try:
+        await run_in_threadpool(_create_account, engine, fields, password)
+    except HashBusy:
+        return _register_page(request, nonce, values, problem="The server is busy. Try again in a moment.", status=503)
+    except RegistrationRefused as refused:
+        return _register_page(request, nonce, values, problem=refused.problem.message, status=refused.problem.status)
+    response = _done(request, "Request sent", "Thank you. An administrator will review your request. Once it is approved, sign in with your username and password.")
+    response.delete_cookie(REGISTER_COOKIE, path=_register_cookie_path())
+    return response

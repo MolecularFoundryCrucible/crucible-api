@@ -318,6 +318,7 @@ class AuthSettings(SettingsGroup):
     pepper: SecretStr | None = None
     pepper_id: str | None = Field(None, pattern=r"^[a-z0-9]{1,32}$")
     previous_pepper_ids: list[str] = Field(default_factory=list)
+    password_registration: Literal["closed", "approval", "open"] = Field("closed", description="Whether people can ask for an account with a password: closed, or approval (an administrator approves each one). open is refused, since nothing verifies who signed up.")
     password_link_hours: int = Field(24, ge=1, le=168, description="How long a one-time link to set or reset a password works.")
     device_cookie_days: int = Field(90, ge=1, le=400, description="How long a browser that signed in with a password stays known, which exempts it from the delays for unknown browsers.")
     hash_concurrency: int = Field(2, ge=1, le=32, description="Password checks running at once in each worker; each holds CRUCIBLE_AUTH_ARGON2_MEMORY_KIB of memory.")
@@ -668,6 +669,8 @@ def check_settings() -> None:
             public_api_url()
         except (HubLoginUnavailable, ConfigurationError):
             raise ConfigurationError("CRUCIBLE_AUTH_PASSWORD_ENABLED needs an https:// public API address (http:// only on localhost), so passwords never cross the network in the clear") from None
+    if settings.auth.password_registration == "open":
+        raise ConfigurationError("CRUCIBLE_AUTH_PASSWORD_REGISTRATION=open is refused: nothing verifies who signs up with a password, so use approval and let an administrator approve each account")
     if settings.auth.clients and settings.hub.enabled:
         raise ConfigurationError("CRUCIBLE_AUTH_CLIENTS and HUB_AUTH_ENABLED are both set; list the Hub in CRUCIBLE_AUTH_CLIENTS and unset HUB_AUTH_ENABLED, HUB_AUTH_CLIENT_ID, HUB_AUTH_CALLBACK_URI and HUB_AUTH_CLIENT_SECRET")
     try:

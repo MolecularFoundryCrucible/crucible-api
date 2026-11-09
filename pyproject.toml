@@ -41,6 +41,7 @@ dependencies = [
     "awscrt==0.38.0",
     "jinja2>=3.1.6",
     "anyascii>=0.3.3",
+    "email-validator>=2.2",
 ]
 
 [tool.uv]

@@ -9,8 +9,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_image_includes_the_cleanup_script():
-    assert "COPY scripts/cleanup_hub_auth.py /root/scripts/cleanup_hub_auth.py" in (ROOT / "Dockerfile").read_text()
+def test_image_includes_the_cleanup_script_where_the_cronjobs_call_it():
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    assert "COPY scripts/cleanup_hub_auth.py /app/scripts/cleanup_hub_auth.py" in dockerfile
+    assert "ln -s /app/.venv /root/.venv && ln -s /app/scripts /root/scripts" in dockerfile
 
 
 @pytest.fixture

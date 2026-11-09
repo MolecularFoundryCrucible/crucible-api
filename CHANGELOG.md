@@ -74,6 +74,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- Removed four finished data scripts from May and June 2026 (storage paths, file MFIDs, usernames, personal access groups) that wrote to the database without a `--commit` flag; they remain in git history.
 - The per-address attempt limit now slows guessing for at most a minute instead of up to 15, and a browser that already signed in to the account skips it, so one person behind a shared address can no longer lock everyone there out of passwords, device codes and password links.
 - API keys can no longer reach the server log: the database engine hides statement parameters, the activity update no longer matches the plain key table by key value, and its failures log only the error class.
 - Authlib 1.9.5, with its four security releases since 1.9.1 (GHSA-f3fg-34g9-v7jx, GHSA-gp2m-377p-m4j3, GHSA-9qr6-8289-9j56, GHSA-f7j6-p4qx-gq99). None affects the sign-in code in use; the upgrade comes before building on Authlib's server parts.

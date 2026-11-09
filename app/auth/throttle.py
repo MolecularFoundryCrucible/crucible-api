@@ -8,9 +8,10 @@ guesses cannot slip past a counter, and a crash during hashing counts as a failu
   they are refused. An attempt during a delay is not counted and its password is not checked.
 - A known browser (its device cookie) or a signed-in session: no delays, and at 10 the password is
   disabled until an administrator issues a new link. Both counters together never pass 100.
-- Per client address, across accounts: 10 failures without delay, then the same delays. The count
-  restarts after an hour without failures. A success gives back only its own count, so an attacker's
-  own account cannot clear earlier failures, while many people behind one address can sign in.
+- Per client address, across accounts: 10 failures without delay, then delays of 2, 4, 8 seconds and
+  so on up to one minute. It slows guessing without locking out everyone behind a shared address, and
+  a known browser skips it. The count restarts after an hour without failures. A success gives back
+  only its own count, so an attacker's own account cannot clear earlier failures.
 """
 import hashlib
 import hmac
@@ -36,6 +37,7 @@ ADDRESS_WINDOW = timedelta(hours=1)
 ADDRESS_RETENTION = timedelta(days=30)
 FIRST_DELAY = timedelta(seconds=2)
 LONGEST_DELAY = timedelta(minutes=15)
+LONGEST_ADDRESS_DELAY = timedelta(minutes=1)
 DEVICE_COOKIE_SALT = "crucible.device-cookie"
 
 
@@ -64,11 +66,11 @@ def _aware(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
-def delay_after(failures: int, free: int) -> timedelta | None:
+def delay_after(failures: int, free: int, longest: timedelta = LONGEST_DELAY) -> timedelta | None:
     if failures <= free:
         return None
     doublings = failures - free - 1
-    return LONGEST_DELAY if FIRST_DELAY * 2 ** min(doublings, 20) >= LONGEST_DELAY else FIRST_DELAY * 2 ** doublings
+    return longest if FIRST_DELAY * 2 ** min(doublings, 20) >= longest else FIRST_DELAY * 2 ** doublings
 
 
 def address_hash(address: str | None) -> str | None:
@@ -124,7 +126,7 @@ def _count_address(session: Session, digest: str, now: datetime) -> bool:
     row = session.execute(stmt).first()
     if row is None:
         return False
-    wait = delay_after(row[0], ADDRESS_FREE_FAILURES)
+    wait = delay_after(row[0], ADDRESS_FREE_FAILURES, LONGEST_ADDRESS_DELAY)
     session.execute(update(LoginThrottle).where(LoginThrottle.address_hash == digest).values(blocked_until=now + wait if wait else None))
     return True
 
@@ -134,13 +136,16 @@ def begin_attempt(engine, credential_user_id: int | None, client_address: str | 
     current = now or datetime.now(timezone.utc)
     digest = address_hash(client_address)
     with Session(engine) as session, session.begin():
-        if digest is not None and not _count_address(session, digest, current):
-            return AttemptDecision(False, credential_user_id, address_hash=digest)
         credential = session.get(LocalCredential, credential_user_id) if credential_user_id is not None else None
+        trusted = credential is not None and (session_authenticated or (
+            device_cookie is not None and device_cookie.user_id == credential.user_id and device_cookie.password_changed_at == _aware(credential.password_changed_at)))
+        if trusted:
+            digest = None
+        elif digest is not None and not _count_address(session, digest, current):
+            return AttemptDecision(False, credential_user_id, address_hash=digest)
         if credential is None or credential.locked_at is not None:
             return AttemptDecision(False, credential_user_id, address_hash=digest)
         user_id, seen = credential.user_id, credential.password_changed_at
-        trusted = session_authenticated or (device_cookie is not None and device_cookie.user_id == credential.user_id and device_cookie.password_changed_at == _aware(seen))
         conditions = [
             LocalCredential.user_id == credential.user_id,
             LocalCredential.locked_at.is_(None),

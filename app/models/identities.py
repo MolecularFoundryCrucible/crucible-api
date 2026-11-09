@@ -45,6 +45,13 @@ class LinkPreviewRead(SQLModel):
     )
 
 
+class PasswordLinkRead(SQLModel):
+    """A one-time link to set or reset a password, shown only in this response."""
+    url: str
+    purpose: str = Field(description="`setup` when the person has no password yet, `reset` when they have one")
+    expires_at: UtcDatetime
+
+
 class SessionRead(SQLModel):
     """One signed-in session. Never its tokens."""
     id: str

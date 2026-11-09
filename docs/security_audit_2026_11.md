@@ -13,7 +13,7 @@ Four independent reviewers (Fable, high effort) audited the API on 2026-11-07, o
 | Medium: a contributor can file deletion requests on any dataset or sample (authorization M1) | Known; the contributor role stays for now and will be reworked | |
 | Medium: one address locks out everyone behind it (authentication M1) | Fixed: address delay capped at one minute, known browsers skip it | #467 |
 | Medium: an API key renews itself, an admin key reads plain keys (authentication M2, M3) | Removed, answering 410; released together with the Hub from `dev` and nano-crucible 4.0.0, not on production before | #471 |
-| Medium: ingestion strings reach the queue unvalidated (files F4) | Fixed | #468 |
+| Medium: ingestion strings reach the queue unvalidated (files F4) | Deferred by the user; see Ingestion, open issues, in the Phase 3 plan. #468 stays open as a possible interim | #468, open |
 | Medium: four data scripts write without `--commit` (deployment M4) | Removed | #469 |
 | Medium: plain HTTP by default, unencrypted backups (deployment M2, M3) | Guide warns and encrypts backups; HTTPS default in Task 15; plain keys leave with key hashing steps 3 and 4 | #470 |
 | Medium: deleted GCS content stays and can be re-attached by basename (files F3) | Later, with the cleanup of orphaned files | |

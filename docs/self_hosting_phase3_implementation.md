@@ -255,6 +255,13 @@ Details and fixes are in `docs/self_hosting_phase3_security_review.md`, by the n
 - Decisions in section 4: service accounts reading everything, instrument metadata, deletion requests, and an unlinked ORCID after the rewrite.
 - The November audit, with its status table: `docs/security_audit_2026_11.md`. The contributor's deletion requests on any record are a known issue, kept until the role is reworked.
 
+## Ingestion, open issues (deferred by the user, 2026-11-09)
+
+- `GET /ingestors` is a hard-coded list in `app/api/routes/misc.py` (37 names) that has fallen behind the ingestion library: `crucible-ingestion` selects ingestors from its own `SELECTABLE` dictionary (46 at commit 7167460). The user wants the API to return the real list.
+- `ingestion_class` on the ingest routes is a free string copied into the queue message. The consumer looks it up in `SELECTABLE` and scans all ingestors when the name is unknown, so it never runs code chosen by name; the risk is low, but nothing validates the name.
+- `PATCH /ingestion_requests/{id}` accepts the whole table model, so a dataset editor can rewrite `file_to_upload`, `ingestion_class` or `time_created`. #468 limits it to `status`, `time_completed` and `ingestion_githash`, and adds a format check on `ingestion_class`; it stays open as a possible interim.
+- Proposed fix: the consumer registers its list at startup (`PUT /ingestors/{consumer}` with its version, platform administrators only), `GET /ingestors` keeps its shape and returns the registered names, and the ingest route accepts only those (422 `unknown_ingestor`). Rejected: importing `crucible-ingestion` into the API (heavy dependencies, coupled releases), a hand-kept setting (drifts like today's list), and asking the consumer live over RabbitMQ (fails when it is down). Needs a change in `ingestion-cloud-consumer`, which no session maintains.
+
 ## Open bug, not sign-in: replaced files are not retired
 
 Found 2026-11-05, left for later by the user's decision. On staging, replacing a file through multipart upload logs `file_retire_failed` with `403 PATCH ... projection=full ...: Provided scope(s) are not authorized`. The replace succeeds, but the old object gets no `customTime`, so it stays in storage instead of expiring. No data is lost. Likely cause, not proven: `blob.patch` asks for `projection=full`, which needs a wider scope than the `devstorage.read_write` requested for impersonated credentials in `app/storage/gcs.py` since the keyless change (in v3.3.0 and v3.3.1). Production showed no failures in the logs available over 7 days and no replacements in 24 hours, so it may not have been triggered yet. Fix in its own small pull request, tested against real staging storage.

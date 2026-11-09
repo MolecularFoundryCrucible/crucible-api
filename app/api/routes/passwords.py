@@ -16,7 +16,8 @@ from app.api.routes.hub_auth import _browser_headers, _require_passwords, _templ
 from app.auth.password_links import LinkRefused, issue_link, link_purpose, live_link, use_link
 from app.auth.passwords import MAX_LENGTH, check_new_password
 from app.auth.throttle import HashBusy, begin_code_attempt, client_address, give_back, hash_slot
-from app.config import get_secret, get_settings
+from app.api.errors import feature_disabled_response
+from app.config import FeatureDisabled, get_secret, get_settings
 from app.models.identities import PasswordChange, PasswordLinkRead
 from app.utils.auth_utils import authorize_user, caller_row, require_credential_change, require_human_admin_safeguard, require_platform_admin, require_recent_authentication
 from app.utils.hub_login import HubLoginUnavailable, public_api_url
@@ -38,7 +39,8 @@ def link_url(base: str, token: str) -> str:
     401: {"description": "A session needs a recent sign-in (`insufficient_user_authentication`)"},
     403: {"description": "Not a platform administrator; `hub_session_required` for any human administrator, yourself included; `browser_sign_in_required` for a session approved with a device code"},
     404: {"description": "No such person"},
-    409: {"description": "`passwords_off`, `service_account`, `account_disabled` or `account_pending`"},
+    409: {"description": "`service_account`, `account_disabled` or `account_pending`"},
+    **feature_disabled_response("passwords"),
     503: {"description": "The public API address is not set"},
 })
 def issue_password_link(user_ref: UserRef, response: Response, auth_res: Annotated[Principal, Depends(authorize_user)]):
@@ -47,8 +49,7 @@ def issue_password_link(user_ref: UserRef, response: Response, auth_res: Annotat
     ends the person's sessions and does not sign them in. Platform administrators only."""
     require_platform_admin(auth_res)
     require_recent_authentication(auth_res)
-    if not get_settings().auth.password_enabled:
-        raise HTTPException(status_code=409, detail={"code": "passwords_off", "message": "Password sign-in is off on this server"})
+    _passwords_on()
     try:
         base = public_api_url()
     except HubLoginUnavailable:
@@ -71,7 +72,7 @@ class _PasswordChanged(Exception):
 
 def _passwords_on() -> None:
     if not get_settings().auth.password_enabled:
-        raise HTTPException(status_code=409, detail={"code": "passwords_off", "message": "Password sign-in is off on this server"})
+        raise FeatureDisabled("passwords")
 
 
 def _field_error(field: str, kind: str, message: str, **context) -> HTTPException:
@@ -115,7 +116,8 @@ def _write_password(engine, user_id: int, password: str, *, first: bool, keep_fa
 @router.post("/account/password", status_code=204, tags=["account"], responses={
     401: {"description": "A session needs a recent sign-in (`insufficient_user_authentication`)"},
     403: {"description": "`hub_session_required` for an API key, `browser_sign_in_required` for a session approved with a device code"},
-    409: {"description": "`passwords_off`, `service_account`, `username_required` (set one with PATCH /account/profile first), or `password_changed` when another request changed it first"},
+    409: {"description": "`service_account`, `username_required` (set one with PATCH /account/profile first), or `password_changed` when another request changed it first"},
+    **feature_disabled_response("passwords"),
     422: {"description": "Field errors in FastAPI's shape: `current_password_required` or `current_password_invalid` (counted against the account's attempt limit) on `current_password`, `password_rejected` with `ctx.reason` on `new_password`"},
     503: {"description": "The server is busy checking passwords"},
 })

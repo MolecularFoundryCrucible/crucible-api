@@ -291,7 +291,7 @@ def test_no_link_when_passwords_are_off(client, auth_as, monkeypatch):
     monkeypatch.setenv("CRUCIBLE_AUTH_PASSWORD_ENABLED", "false")
     config.get_settings.cache_clear()
     refused = issue(client)
-    assert (refused.status_code, refused.json()["detail"]["code"]) == (409, "passwords_off")
+    assert (refused.status_code, refused.json()["detail"]["code"], refused.json()["detail"]["feature"]) == (501, "feature_disabled", "passwords")
     assert client.get("/oauth/password-link").status_code == 404
 
 

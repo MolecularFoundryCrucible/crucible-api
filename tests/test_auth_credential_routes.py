@@ -159,7 +159,7 @@ def test_no_password_changes_when_passwords_are_off(client, people, monkeypatch)
     monkeypatch.setenv("CRUCIBLE_AUTH_PASSWORD_ENABLED", "false")
     config.get_settings.cache_clear()
     answer = change(client, token, current_password=OLD, new_password=NEW)
-    assert (answer.status_code, answer.json()["detail"]["code"]) == (409, "passwords_off")
+    assert (answer.status_code, answer.json()["detail"]["code"], answer.json()["detail"]["feature"]) == (501, "feature_disabled", "passwords")
 
 
 def test_an_admin_key_removes_an_ordinary_persons_password(client, people, auth_as):

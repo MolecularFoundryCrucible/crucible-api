@@ -36,8 +36,9 @@ class ApiKeyVerify(BaseModel):
 class AuthMethodRead(BaseModel):
     key: str
     display_name: str
-    kind: Literal["oidc"] = "oidc"
+    kind: Literal["oidc", "password"] = "oidc"
     is_orcid: bool
+    registration_url: Optional[str] = Field(default=None, description="On the password entry only: where people ask for an account, present while registration is open")
 
 
 class ProjectSyncResult(BaseModel):

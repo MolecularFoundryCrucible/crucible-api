@@ -138,3 +138,52 @@ def test_open_registration_with_passwords_is_refused_at_startup(monkeypatch):
     config.get_settings.cache_clear()
     with pytest.raises(config.ConfigurationError, match="refused"):
         config.check_settings()
+
+
+def test_administrators_see_how_waiting_people_signed_up_and_can_open_them(client, setup, auth_as):
+    from app.utils.permissions import PlatformRole
+
+    assert submit(client).status_code == 200
+    waiting = person(setup, "rfranklin")
+    auth_as("admin-person", platform_role=PlatformRole.ADMIN)
+    elevated = {"Crucible-Privilege-Mode": "elevated"}
+    listed = client.get("/users", params={"pending": "true"}, headers=elevated).json()["items"]
+    assert [(item["username"], item["email"], item["sign_in_methods"]) for item in listed] == [("rfranklin", "rosalind@example.org", ["password"])]
+    detail = client.get("/users/rfranklin", headers=elevated)
+    assert detail.status_code == 200 and detail.json()["pending_at"] and detail.json()["sign_in_methods"] == ["password"]
+    assert client.get(f"/users/{waiting.unique_id}/identities", headers=elevated).json() == []
+    ordinary = client.get("/users", headers=elevated).json()["items"]
+    assert all(item["sign_in_methods"] is None for item in ordinary)
+    auth_as("0tmnyhfztdwc1000w2kspzsnh0")
+    assert client.get("/users/rfranklin").status_code == 404
+    assert client.get(f"/users/{waiting.unique_id}/identities").status_code == 404
+
+
+def test_server_commands_list_approve_and_reject_waiting_accounts(client, setup, use_engine, capsys):
+    import json
+
+    from app.cli import admin as admin_cli
+
+    use_engine(setup)
+    assert submit(client).status_code == 200
+    assert submit(client, username="mcurie", email="marie@example.org", first_name="Marie", last_name="Curie").status_code == 200
+    assert admin_cli._run_pending(type("Args", (), {"json": True})()) == 0
+    listed = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [(item["username"], item["sign_in_methods"]) for item in listed] == [("rfranklin", ["password"]), ("mcurie", ["password"])]
+    assert admin_cli._run_decide(type("Args", (), {"user": "rfranklin", "approve": True})()) == 0
+    assert person(setup, "rfranklin").pending_at is None
+    assert admin_cli._run_decide(type("Args", (), {"user": "rfranklin", "approve": False})()) == 1
+    assert admin_cli._run_decide(type("Args", (), {"user": "marie@example.org", "approve": False})()) == 0
+    assert person(setup, "mcurie") is None
+
+
+def test_the_sign_in_methods_name_the_registration_page_only_while_it_is_open(client, monkeypatch):
+    password = client.get("/auth/methods").json()[-1]
+    assert password == {"key": "password", "display_name": "Password", "kind": "password", "is_orcid": False, "registration_url": f"{API_URL}/oauth/register"}
+    assert all(method["registration_url"] is None for method in client.get("/auth/methods").json()[:-1])
+    monkeypatch.setenv("CRUCIBLE_AUTH_PASSWORD_REGISTRATION", "closed")
+    config.get_settings.cache_clear()
+    assert client.get("/auth/methods").json()[-1]["registration_url"] is None
+    monkeypatch.setenv("CRUCIBLE_AUTH_PASSWORD_ENABLED", "false")
+    config.get_settings.cache_clear()
+    assert all(method["kind"] == "oidc" for method in client.get("/auth/methods").json())

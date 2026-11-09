@@ -131,8 +131,8 @@ def people(db_engine):
 
 def test_methods_lists_each_provider_without_its_settings(client):
     assert client.get("/auth/methods").json() == [
-        {"key": "orcid", "display_name": "ORCID", "kind": "oidc", "is_orcid": True},
-        {"key": "lab", "display_name": "Example Lab", "kind": "oidc", "is_orcid": False},
+        {"key": "orcid", "display_name": "ORCID", "kind": "oidc", "is_orcid": True, "registration_url": None},
+        {"key": "lab", "display_name": "Example Lab", "kind": "oidc", "is_orcid": False, "registration_url": None},
     ]
 
 

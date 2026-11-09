@@ -79,6 +79,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Security
 
 - Removed four finished data scripts from May and June 2026 (storage paths, file MFIDs, usernames, personal access groups) that wrote to the database without a `--commit` flag; they remain in git history.
+- `ingestion_class` on the ingest routes must be 1 to 128 letters, digits, dots, hyphens or underscores (422 otherwise), and `PATCH /ingestion_requests/{id}` now changes only `status`, `time_completed` and `ingestion_githash`, ignoring other fields, so a caller can no longer rewrite the stored file location or ingestor.
 - The per-address attempt limit now slows guessing for at most a minute instead of up to 15, and a browser that already signed in to the account skips it, so one person behind a shared address can no longer lock everyone there out of passwords, device codes and password links.
 - API keys can no longer reach the server log: the database engine hides statement parameters, the activity update no longer matches the plain key table by key value, and its failures log only the error class.
 - The Compose guide warns that plain HTTP sends API keys unencrypted to the whole network, and its backup and upgrade commands now encrypt the database dump with age, since it holds every API key.

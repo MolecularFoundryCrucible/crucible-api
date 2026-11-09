@@ -193,3 +193,24 @@ def test_legacy_public_boolean_does_not_authorize_ingestion_list(client, db_engi
     response = client.get("/ingestion_requests", params={"dataset_id": dataset_mfid})
 
     assert response.status_code == 404, response.text
+
+
+def test_patch_records_the_outcome_and_ignores_other_fields(client, db_engine, auth_as):
+    request_id, dataset_mfid, group_id = _setup_ingestion_request(db_engine, permission=Role.EDITOR)
+    auth_as("ordinary-user", groups=[("ingestion-readers", group_id, Role.EDITOR)])
+    answer = client.patch(f"/ingestion_requests/{request_id}", json={
+        "status": "completed", "time_completed": "2026-11-09T10:00:00Z", "ingestion_githash": "abc123",
+        "file_to_upload": "other-bucket/secret.csv", "ingestion_class": "../../evil", "time_created": "1970-01-01",
+    })
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert (body["status"], body["time_completed"], body["ingestion_githash"]) == ("completed", "2026-11-09T10:00:00Z", "abc123")
+    assert (body["file_to_upload"], body["ingestion_class"], body["time_created"]) == (None, None, None)
+    assert client.patch(f"/ingestion_requests/{request_id}", json={"dataset_mfid": "elsewhere"}).status_code == 400
+    assert client.patch(f"/ingestion_requests/{request_id}", json={"status": "x" * 65}).status_code == 422
+
+
+def test_ingest_refuses_an_ingestor_name_with_unexpected_characters(client, db_engine, auth_as):
+    auth_as("ordinary-user", platform_role=PlatformRole.ADMIN)
+    for name in ("../ingestors/evil", "AFM Ingestor", "x" * 129, "os.system('id')"):
+        assert client.post("/files/any-file/ingest", params={"ingestion_class": name}).status_code == 422, name

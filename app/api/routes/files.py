@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.models.core_models import (
+    INGESTION_CLASS_PATTERN,
     AssociatedFile,
     Dataset,
     IngestionRequest,
@@ -181,7 +182,7 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
 def create_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
-    ingestion_class: Optional[str] = None,
+    ingestion_class: Optional[str] = Query(None, pattern=INGESTION_CLASS_PATTERN, description="An ingestor name, such as one from GET /ingestors"),
     status: Literal['requested', 'not_requested'] = 'requested'
 ):
     '''

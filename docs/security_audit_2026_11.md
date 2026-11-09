@@ -6,17 +6,18 @@ Four independent reviewers (Fable, high effort) audited the API on 2026-11-07, o
 
 | Finding | Decision | Where |
 | --- | --- | --- |
-| High: no request body size limit (files F1, deployment H1) | Standard procedure explained; waiting for the user | |
+| Load balancers and nginx routes (found while answering H1) | nginx to use the internal load balancers, then retire the public ones; fix the NetworkPolicy and the runbook; merge crucible-nginx into the deploy repo. For the deploy session, with the user's authorization | deploy repo |
+| High: no request body size limit (files F1, deployment H1) | 10 MiB, 20 MiB for thumbnails (source cap 14 MiB), in the API and the bundle's Caddy; the Foundry's nginx via the deploy session | #473 |
 | High: legacy GCS upload routes let a contributor overwrite a dataset's files (files F2) | Retired with API v4, at the end of the local deployment plan | |
 | Medium: API keys reach the server log (authentication M4) | Fixed | #466 |
 | Medium: a contributor can file deletion requests on any dataset or sample (authorization M1) | Known; the contributor role stays for now and will be reworked | |
 | Medium: one address locks out everyone behind it (authentication M1) | Fixed: address delay capped at one minute, known browsers skip it | #467 |
-| Medium: an API key renews itself, an admin key reads plain keys (authentication M2, M3) | Remove the deprecated key routes, leaving 410 stubs; waits for the Hub release from `dev`, since Hub 1.7.3 still calls two of them | |
+| Medium: an API key renews itself, an admin key reads plain keys (authentication M2, M3) | Removed, answering 410; released together with the Hub from `dev` and nano-crucible 4.0.0, not on production before | #471 |
 | Medium: ingestion strings reach the queue unvalidated (files F4) | Fixed | #468 |
 | Medium: four data scripts write without `--commit` (deployment M4) | Removed | #469 |
 | Medium: plain HTTP by default, unencrypted backups (deployment M2, M3) | Guide warns and encrypts backups; HTTPS default in Task 15; plain keys leave with key hashing steps 3 and 4 | #470 |
-| Medium: deleted GCS content stays and can be re-attached by basename (files F3) | Open | |
-| Medium: containers run as root (deployment M1) | Open; the image also runs on GKE, so it needs the deploy session | |
+| Medium: deleted GCS content stays and can be re-attached by basename (files F3) | Later, with the cleanup of orphaned files | |
+| Medium: containers run as root (deployment M1) | Image runs as uid 10001 with read-only code; the deploy session prepares the GKE securityContext | #472 |
 
 
 

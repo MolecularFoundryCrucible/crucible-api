@@ -42,6 +42,13 @@ def register(groups: argparse._SubParsersAction) -> None:
     set_role.add_argument("user", help="unique_id, linked ORCID, username or email")
     set_role.add_argument("role", choices=ROLES)
     set_role.set_defaults(handler=_run_set_role)
+    password_link = commands.add_parser(
+        "password-link",
+        help="Print a one-time link for a person to set or reset their password",
+        description="Works for any person, administrators included, so a locked-out administrator can recover from the server. Replaces any earlier link.",
+    )
+    password_link.add_argument("user", help="unique_id, linked ORCID, username or email")
+    password_link.set_defaults(handler=_run_password_link)
 
 
 def _name(value: str) -> str:
@@ -224,3 +231,40 @@ def _run_set_role(args: argparse.Namespace) -> int:
         print(f"Changed {name} from {previous} to {args.role}", file=sys.stderr)
     return 0
 
+
+
+def _password_link(user_ref: str) -> tuple[str, str, str, str]:
+    from app.api.dependencies import get_engine
+    from app.api.routes.passwords import link_url
+    from app.auth.password_links import LinkRefused, issue_link, link_purpose
+    from app.config import get_settings
+    from app.utils.hub_login import HubLoginUnavailable, public_api_url
+    from app.utils.user_utils import person_by_reference
+
+    if not get_settings().auth.password_enabled:
+        raise Refused("Password sign-in is off; set CRUCIBLE_AUTH_PASSWORD_ENABLED=true first")
+    try:
+        base = public_api_url()
+    except HubLoginUnavailable:
+        raise Refused("The public API address is not set, so no link can be made") from None
+    with Session(get_engine()) as session, session.begin():
+        user = person_by_reference(session, user_ref)
+        if user is None:
+            raise Refused(f"No user matches {user_ref}")
+        purpose = link_purpose(session, user)
+        try:
+            token, expires_at = issue_link(session, user, purpose, actor=None)
+        except LinkRefused as refused:
+            raise Refused(refused.message) from None
+        return user.username or user.unique_id, purpose, expires_at.isoformat(timespec="minutes"), link_url(base, token)
+
+
+def _run_password_link(args: argparse.Namespace) -> int:
+    try:
+        name, purpose, expires_at, url = _password_link(args.user)
+    except Refused as error:
+        print(error, file=sys.stderr)
+        return 1
+    print(f"A link to {'set' if purpose == 'setup' else 'reset'} the password of {name}, valid once until {expires_at}. Pass it on privately:", file=sys.stderr)
+    print(url)
+    return 0

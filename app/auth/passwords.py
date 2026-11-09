@@ -142,10 +142,13 @@ def check_new_password(password: str, *, context: Iterable[str | None]) -> Passw
 
 
 def store_password(session: Session, user: User, password: str, *, now: datetime | None = None) -> LocalCredential:
-    """Set a person's password in the caller's transaction. The only code that writes
-    local_credential, and it refuses service accounts."""
+    """Set a person's password in the caller's transaction, cancelling any live password link. The
+    only code that writes local_credential, and it refuses service accounts."""
+    from app.auth.password_links import void_links
+
     if user.is_service_account:
         raise ServiceAccountPassword
+    void_links(session, user, now=now)
     password_hash, pepper_id = hash_password(password)
     credential = session.get(LocalCredential, user.id) or LocalCredential(user_id=user.id, password_hash=password_hash, password_changed_at=now or datetime.now(timezone.utc))
     credential.password_hash = password_hash

@@ -18,6 +18,7 @@ from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, feature_disabled_response
 from app.general_utils import get_utc_datetime
 from app.models.core_models import (
+    INGESTION_CLASS_PATTERN,
     AccessGroup,
     AssociatedFile,
     Dataset,
@@ -1444,7 +1445,7 @@ def create_ds_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
     file_id: str,
-    ingestion_class: Optional[str] = None,
+    ingestion_class: Optional[str] = Query(None, pattern=INGESTION_CLASS_PATTERN, description="An ingestor name, such as one from GET /ingestors"),
     status: Literal['requested', 'not_requested'] = 'requested',
 ):
     '''

@@ -8,6 +8,7 @@ from app.api.dependencies import get_engine
 from app.models.core_models import (
     Dataset,
     IngestionRequest,
+    IngestionRequestUpdate,
 )
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
@@ -92,9 +93,11 @@ def get_ingestion_request(
 def patch_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     request_id: int,
-    ing_req: IngestionRequest,
+    ing_req: IngestionRequestUpdate,
 ):
-    '''Updates an ingestion request. Requires edit access to the parent dataset.'''
+    '''Records an ingestion's outcome: `status`, `time_completed` and `ingestion_githash`. Other
+    fields in the body are ignored; the dataset and file cannot change. Requires edit access to the
+    parent dataset.'''
     if ing_req.id and ing_req.id != request_id:
         raise HTTPException(status_code=400, detail="Request body ID does not match URL")
 

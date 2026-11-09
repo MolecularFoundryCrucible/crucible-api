@@ -713,6 +713,19 @@ class IngestionRequest(SQLModel, table=True):
     associated_file: Optional["AssociatedFile"] = Relationship(back_populates="ingestion_requests")
 
 
+INGESTION_CLASS_PATTERN = r"^[A-Za-z0-9_.-]{1,128}$"
+
+
+class IngestionRequestUpdate(SQLModel):
+    """What an ingestion consumer reports back. Other fields of the request are ignored."""
+    id: Optional[int] = None
+    dataset_mfid: Optional[str] = None
+    file_mfid: Optional[str] = None
+    status: Optional[str] = Field(default=None, max_length=64)
+    time_completed: Optional[str] = Field(default=None, max_length=64)
+    ingestion_githash: Optional[str] = Field(default=None, max_length=128)
+
+
 class PostprocessingRun(SQLModel, table=True):
     __table_args__ = (
         Index("ix_postprocessingrun_dataset_requested", "dataset_mfid", "requested_at"),

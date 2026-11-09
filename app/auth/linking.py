@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, update
 from sqlmodel import Session, select
 
+from app.auth.password_links import void_links
 from app.auth.events import AuthEventType, record_event
 from app.auth.identity import IdentityTaken, ensure_identity, find_identity
 from app.config import ORCID_ISSUERS, OidcProvider, get_settings
@@ -231,6 +232,7 @@ def confirm_link(engine, code: str, verifier: str, client_id: str, callback_uri:
                     identity.label = grant.label
                 session.add(identity)
                 record_event(session, AuthEventType.IDENTITY_LINKED, user=user, actor=user, issuer=grant.issuer, client_id=grant.client_id)
+                void_links(session, user, now=current)
                 session.flush()
                 session.expunge(identity)
                 return identity
@@ -256,6 +258,7 @@ def unlink_identity(session: Session, user: User, identity_id: int, *, actor: Us
     session.execute(update(HubLoginTransaction).where(HubLoginTransaction.user_id == user.id, HubLoginTransaction.purpose == "link", HubLoginTransaction.consumed_at == None).values(consumed_at=current))  # noqa: E711
     session.execute(update(HubLoginCode).where(HubLoginCode.user_id == user.id, HubLoginCode.purpose == "link", HubLoginCode.consumed_at == None).values(consumed_at=current))  # noqa: E711
     record_event(session, AuthEventType.IDENTITY_UNLINKED, user=user, actor=actor, issuer=identity.issuer)
+    void_links(session, user, now=current)
     return identity
 
 
@@ -349,5 +352,7 @@ def move_identity(session: Session, identity: UserIdentity, target: User, *, now
     record_event(session, AuthEventType.IDENTITY_UNLINKED, user=source, issuer=identity.issuer)
     record_event(session, AuthEventType.IDENTITY_LINKED, user=target, issuer=identity.issuer)
     record_event(session, AuthEventType.DISABLED, user=source)
+    void_links(session, source, now=current)
+    void_links(session, target, now=current)
     return source
 

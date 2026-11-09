@@ -11,7 +11,7 @@ from app.auth.throttle import (
     ADDRESS_FREE_FAILURES, KNOWN_LIMIT, TOTAL_LIMIT, UNKNOWN_LIMIT, DeviceCookie, attempt_password, begin_attempt, client_address, finish_attempt,
     issue_device_cookie, read_device_cookie,
 )
-from app.models.core_models import DeviceAuthorization, LocalCredential, LoginThrottle, User, UserIdentity
+from app.models.core_models import DeviceAuthorization, LocalCredential, LoginThrottle, PasswordToken, User, UserIdentity
 
 NOW = datetime(2026, 11, 6, 12, tzinfo=timezone.utc)
 RIGHT = "violet ladder under quiet rain"
@@ -28,7 +28,7 @@ def fast_settings(monkeypatch):
 @pytest.fixture
 def engine():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(engine, tables=[User.__table__, UserIdentity.__table__, LocalCredential.__table__, LoginThrottle.__table__])
+    SQLModel.metadata.create_all(engine, tables=[User.__table__, UserIdentity.__table__, LocalCredential.__table__, LoginThrottle.__table__, PasswordToken.__table__])
     yield engine
     engine.dispose()
 
@@ -255,6 +255,25 @@ def test_address_limit_applies_across_accounts_and_counts_unknown_usernames(engi
     attempt(engine, users[0], address="203.0.113.7")
     assert attempt(engine, users[1], RIGHT, address="203.0.113.7") is False
     assert attempt(engine, users[1], RIGHT, address="198.51.100.1") is True
+
+
+def test_an_address_is_slowed_for_at_most_a_minute(engine):
+    victim = person(engine)
+    for step in range(40):
+        attempt(engine, None, at=NOW + timedelta(seconds=step * 61), address="10.0.0.1")
+    with Session(engine) as session:
+        row = session.exec(select(LoginThrottle)).one()
+    assert row.consecutive_failures == 40 and row.blocked_until - row.last_failure_at <= throttle.LONGEST_ADDRESS_DELAY
+    assert attempt(engine, victim, RIGHT, at=row.blocked_until + timedelta(seconds=1), address="10.0.0.1")
+
+
+def test_a_known_browser_signs_in_while_its_address_is_slowed(engine):
+    victim = person(engine)
+    cookie = cookie_for(engine, victim)
+    for _ in range(throttle.ADDRESS_FREE_FAILURES + 1):
+        attempt(engine, None, address="10.0.0.1")
+    assert not attempt(engine, victim, RIGHT, address="10.0.0.1")
+    assert attempt(engine, victim, RIGHT, address="10.0.0.1", cookie=cookie)
 
 
 def test_address_success_gives_back_only_its_own_count(engine):

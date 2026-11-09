@@ -86,8 +86,8 @@ def test_an_api_key_can_list_but_not_end_sessions(client, people, auth_as):
 def test_a_device_session_works_but_cannot_end_sessions_or_create_keys(client, people):
     device = sign_in(people, ADA, grant_type=DEVICE_CODE)
     assert client.get("/account/sessions", headers=bearer(device)).status_code == 200
-    for method, path in (("DELETE", "/account/sessions"), ("POST", "/account/apikey/regenerate")):
-        refused = client.request(method, path, headers=bearer(device))
+    for method, path, body in (("DELETE", "/account/sessions", None), ("POST", "/account/apikeys", {"name": "from a device"})):
+        refused = client.request(method, path, headers=bearer(device), json=body)
         assert (refused.status_code, refused.json()["detail"]["code"]) == (403, "browser_sign_in_required")
     assert works(device)
 

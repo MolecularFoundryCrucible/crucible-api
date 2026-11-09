@@ -334,6 +334,9 @@ jobs:
             echo "$service $caps"
           done
           test "$(docker compose exec -T api sh -c 'grep CapEff /proc/1/status' | awk '{print $2}')" = 0000000000000000
+          test "$(docker compose exec -T api id -u)" = 10001
+          ! docker compose exec -T api touch /app/app/written-at-run-time
+          docker compose exec -T api touch /tmp/scratch
           test "$(docker compose exec -T proxy sh -c 'grep CapEff /proc/1/status' | awk '{print $2}')" = 0000000000000400
           test "$(docker compose exec -T seaweedfs sh -c 'grep CapEff /proc/1/status' | awk '{print $2}')" = 0000000000000000
       # The API side of a second-machine Hub is only CRUCIBLE_HUB_UPSTREAM; the Hub's own calls to the API then go

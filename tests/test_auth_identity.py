@@ -165,7 +165,6 @@ def test_apikey_page_writes_the_identity_row_with_the_older_flows_issuer(db_engi
 
 
 def test_post_users_with_orcid_writes_the_identity_row(client, db_engine, auth_as, monkeypatch):
-    monkeypatch.setattr(users_routes, "find_or_add_api_access", lambda *args, **kwargs: "test-key")
     auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
     response = client.post("/users", json={"user_info": {"first_name": "Ada", "last_name": "Lovelace", "username": "ada", "unique_id": ORCID}, "project_ids": []})
     assert response.status_code == 200, response.text
@@ -356,7 +355,6 @@ def test_admin_create_refuses_an_orcid_linked_to_another_user(db_engine):
 
 
 def test_post_users_without_orcid_writes_no_identity_row(client, db_engine, auth_as, monkeypatch):
-    monkeypatch.setattr(users_routes, "find_or_add_api_access", lambda *args, **kwargs: "test-key")
     auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
     response = client.post("/users", json={"user_info": {"first_name": "Ada", "last_name": "Lovelace", "username": "ada"}, "project_ids": []})
     assert response.status_code == 200, response.text

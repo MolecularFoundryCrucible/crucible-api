@@ -7,7 +7,6 @@ from app.utils.permissions import AccessGroupType, PlatformRole
 
 
 def test_platform_admin_can_create_orcidless_human(client, db_engine, auth_as, monkeypatch):
-    monkeypatch.setattr(users_routes, "find_or_add_api_access", lambda *args, **kwargs: "test-key")
     auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
 
     response = client.post("/users", json={
@@ -81,7 +80,6 @@ def _memberships(db_engine, unique_id):
 
 
 def test_create_user_resolves_projects_like_every_project_reference(client, db_engine, auth_as, monkeypatch):
-    monkeypatch.setattr(users_routes, "find_or_add_api_access", lambda *args, **kwargs: "test-key")
     auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
     mfids = _projects(db_engine)
 
@@ -105,7 +103,6 @@ def test_create_user_resolves_projects_like_every_project_reference(client, db_e
 
 
 def test_proposal_projects_skip_unknown_and_pending_deletion(client, db_engine, auth_as, monkeypatch):
-    monkeypatch.setattr(users_routes, "find_or_add_api_access", lambda *args, **kwargs: "test-key")
     monkeypatch.setattr(users_routes, "find_mf_user_proposals", lambda orcid: ["MYPROJ", "doomed", "gone"])
     auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
     mfids = _projects(db_engine)

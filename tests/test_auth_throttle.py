@@ -11,7 +11,7 @@ from app.auth.throttle import (
     ADDRESS_FREE_FAILURES, KNOWN_LIMIT, TOTAL_LIMIT, UNKNOWN_LIMIT, DeviceCookie, attempt_password, begin_attempt, client_address, finish_attempt,
     issue_device_cookie, read_device_cookie,
 )
-from app.models.core_models import DeviceAuthorization, LocalCredential, LoginThrottle, PasswordToken, User, UserIdentity
+from app.models.core_models import AuthEvent, DeviceAuthorization, LocalCredential, LoginThrottle, PasswordToken, User, UserIdentity
 
 NOW = datetime(2026, 11, 6, 12, tzinfo=timezone.utc)
 RIGHT = "violet ladder under quiet rain"
@@ -28,7 +28,7 @@ def fast_settings(monkeypatch):
 @pytest.fixture
 def engine():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(engine, tables=[User.__table__, UserIdentity.__table__, LocalCredential.__table__, LoginThrottle.__table__, PasswordToken.__table__])
+    SQLModel.metadata.create_all(engine, tables=[User.__table__, UserIdentity.__table__, LocalCredential.__table__, LoginThrottle.__table__, PasswordToken.__table__, AuthEvent.__table__])
     yield engine
     engine.dispose()
 

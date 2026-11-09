@@ -11,7 +11,7 @@ from sqlmodel import Session, SQLModel
 from app import config
 from app.auth import throttle
 from app.auth.passwords import store_password
-from app.models.core_models import LocalCredential, LoginThrottle, PasswordToken, User, UserIdentity
+from app.models.core_models import AuthEvent, LocalCredential, LoginThrottle, PasswordToken, User, UserIdentity
 
 RIGHT = "violet ladder under quiet rain"
 
@@ -38,7 +38,7 @@ def pg_engine():
         connection.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
     engine = create_engine(value, pool_size=25, max_overflow=5, connect_args={"options": f"-csearch_path={schema}"})
     try:
-        SQLModel.metadata.create_all(engine, tables=[User.__table__, UserIdentity.__table__, LocalCredential.__table__, LoginThrottle.__table__, PasswordToken.__table__])
+        SQLModel.metadata.create_all(engine, tables=[User.__table__, UserIdentity.__table__, LocalCredential.__table__, LoginThrottle.__table__, PasswordToken.__table__, AuthEvent.__table__])
         yield engine
     finally:
         engine.dispose()

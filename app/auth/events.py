@@ -16,6 +16,7 @@ class AuthEventType(str, Enum):
     PASSWORD_SET = "password_set"
     PASSWORD_CHANGED = "password_changed"
     PASSWORD_RESET = "password_reset"
+    PASSWORD_REMOVED = "password_removed"
     LINK_ISSUED = "link_issued"
     IDENTITY_LINKED = "identity_linked"
     IDENTITY_UNLINKED = "identity_unlinked"

@@ -60,6 +60,7 @@ class AttemptDecision:
     password_hash: str | None = None
     pepper_id: str | None = None
     password_changed_at: datetime | None = None
+    locks: bool = False
 
 
 def _aware(value: datetime) -> datetime:
@@ -171,7 +172,7 @@ def begin_attempt(engine, credential_user_id: int | None, client_address: str | 
             after["locked_at"] = current
         if after:
             session.execute(update(LocalCredential).where(LocalCredential.user_id == user_id).values(**after).execution_options(synchronize_session=False))
-    return AttemptDecision(True, user_id, trusted, digest, password_hash, pepper_id, seen)
+    return AttemptDecision(True, user_id, trusted, digest, password_hash, pepper_id, seen, locks="locked_at" in after)
 
 
 def begin_code_attempt(engine, client_address: str | None, *, now: datetime | None = None) -> tuple[bool, str | None]:
@@ -247,7 +248,29 @@ def attempt_password(engine, user_id: int | None, password: str, client_address:
             verify_dummy(password)
             return False
         valid, new_hash = verify_password(password, decision.password_hash, decision.pepper_id)
+    if not valid:
+        _record_failure(engine, decision)
     return finish_attempt(engine, decision, success=valid, new_hash=new_hash)
+
+
+def _record_failure(engine, decision: AttemptDecision) -> None:
+    """A checked, wrong password goes into the sign-in history, and so does the lock it caused.
+    Attempts refused before checking are not recorded, so the limits also bound the history."""
+    from app.auth.events import AuthEventType, record_event
+    from app.models.core_models import User
+    from app.utils.hub_login import HubLoginUnavailable, public_api_url
+
+    try:
+        issuer = public_api_url()
+    except HubLoginUnavailable:
+        issuer = None
+    with Session(engine) as session, session.begin():
+        user = session.get(User, decision.user_id)
+        if user is None:
+            return
+        record_event(session, AuthEventType.SIGN_IN_FAILED, user=user, issuer=issuer)
+        if decision.locks:
+            record_event(session, AuthEventType.LOCKED, user=user, issuer=issuer)
 
 
 def expired_address_rows(session: Session, now: datetime, batch_size: int, *, lock: bool) -> list[str]:

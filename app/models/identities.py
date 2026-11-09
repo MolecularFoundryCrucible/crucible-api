@@ -58,6 +58,16 @@ class PasswordLinkRead(SQLModel):
     expires_at: UtcDatetime
 
 
+class AuthEventRead(SQLModel):
+    """One entry of a person's sign-in history. Never an address, a password or a token."""
+    id: int
+    at: UtcDatetime
+    event: str = Field(description="sign_in, sign_in_failed, locked, password_set, password_changed, password_reset, password_removed, link_issued, identity_linked, identity_unlinked, api_key_created, api_key_revoked, registered, approved, rejected, disabled, enabled, role_changed, sessions_ended, provider_refused")
+    actor_unique_id: Optional[str] = Field(default=None, description="Who made the change, when it was someone else, such as an administrator")
+    issuer: Optional[str] = Field(default=None, description="The provider involved, or the API itself for passwords")
+    client_id: Optional[str] = Field(default=None, description="The program the sign-in went through")
+
+
 class SessionRead(SQLModel):
     """One signed-in session. Never its tokens."""
     id: str

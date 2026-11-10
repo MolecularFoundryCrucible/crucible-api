@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `python -m app.cli db sequences [--commit]` reports id sequences that are behind their tables, which makes inserts fail with a 500 after rows are loaded with their own ids, and moves them up.
 - `GET /account/auth-events` shows people their own sign-in history, in the same shape as the administrators' route.
 - `sign_in_methods` is now also filled for the person themselves, on `GET /account/profile` and `GET /users/{user_ref}`, so a client can tell whether they have a password before offering to set, change or remove one. No migration.
 - The sign-in history now records each checked wrong password (`sign_in_failed`) and the lock it causes (`locked`), without client addresses; attempts refused by the limits are not recorded. Administrators read a person's history, newest first in cursor pages, with `GET /users/{user_ref}/auth-events`, waiting accounts included. No migration.

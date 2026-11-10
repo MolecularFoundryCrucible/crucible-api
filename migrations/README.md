@@ -88,6 +88,19 @@ DB_CONF_FILE=.env.prod \
 
 Scripts in `migrations/data/` are dated and record one-time work; most have already run in production. The August 2026 permission rollout and the September 2026 timestamp and contributor-role migrations are complete; do not replay their procedures (they are in git history). Accepted production cleanup items are in [production migration data follow-ups](../docs/archive/production_migration_data_followups.md).
 
+## Loading rows that carry their own ids
+
+Copying rows from another database with their `id` values (a subset of production into staging, a partial restore) does not move the id sequences. The next insert then draws an id that already exists and fails on a duplicate key, which the API reports as a bare 500; because each failed insert uses up one value, it looks intermittent. A full `pg_dump` and restore is not affected: it carries the sequence values.
+
+After any such load, run:
+
+```bash
+python -m app.cli db sequences            # lists sequences behind their tables; exit 1 if any
+python -m app.cli db sequences --commit   # moves them up to their tables' highest ids
+```
+
+The check reads only; `--commit` never moves a sequence backwards and needs `--yes-this-is-production` on the production database.
+
 ## Connecting to Cloud SQL
 
 Authenticate with Application Default Credentials and run the Cloud SQL Auth Proxy on an unused local port, then point an untracked environment file at it. Confirm the database name before any write.

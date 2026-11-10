@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `GET /features` lists the optional features of a deployment (`uploads`, `ingestion`, `printing`, `proposal_sync`, `passwords`) and whether each is enabled, so clients can hide what would return 501 `feature_disabled`.
 - `python -m app.cli identity backfill --issuer URL [--commit]` records a login for each person whose identifier is an ORCID; it replaces the script `migrations/data/20261103_backfill_user_identity.py`, which is not in the image and now forwards to it.
 - `python -m app.cli db sequences [--commit]` reports id sequences that are behind their tables, which makes inserts fail with a 500 after rows are loaded with their own ids, and moves them up.
 - `GET /account/auth-events` shows people their own sign-in history, in the same shape as the administrators' route.

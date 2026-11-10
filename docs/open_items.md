@@ -120,7 +120,7 @@ History: `permission_system_plan.md`
 
 ### Stored objects left behind by deletion
 
-`DELETE /files/{file_id}` and dataset hard deletion remove database rows but not the stored objects, so storage leaks and deleted data is retained. Fix: after the rows are committed, delete the object through the storage adapter under the rules that file replacement uses (`retire_if_eligible`): the deployment's own bucket, under the file's dataset, no other record on the same path. Parts of an upload still in progress when its dataset is deleted can also remain, because the session row is deleted with the dataset; the bucket's rule for incomplete uploads removes them. Objects orphaned before the fix require a reviewed script that runs as a dry run first, and explicit authorization.
+`DELETE /files/{file_id}` and dataset hard deletion remove database rows but not the stored objects, so storage leaks and deleted data is retained. This is the accepted behavior for 4.0.0: removing the record removes the file from its dataset, and object cleanup follows later. Planned: after the rows are committed, retire the object the way a replaced file's content is retired (removed by `storage cleanup` on S3 and by the lifecycle rule on Google Cloud Storage), under the rules that file replacement uses (`retire_if_eligible`): the deployment's own bucket, under the file's dataset, no other record on the same path. Parts of an upload still in progress when its dataset is deleted can also remain, because the session row is deleted with the dataset; the bucket's rule for incomplete uploads removes them. Objects orphaned before the fix require a reviewed script that runs as a dry run first, and explicit authorization.
 
 History: `file_object_cleanup_followup.md`
 

@@ -16,7 +16,9 @@ from app.config import get_settings
 from app.tables import Keyword
 from app.models.datasets import KeywordRead
 from app.models.health import LivenessResponse, ReadinessResponse
+from app.models.response_schemas import FeaturesRead
 from app.utils.auth_utils import authorize_user
+from app.utils.multipart_config import MultipartStorageConfig
 from app.utils.permissions import Principal
 
 router = APIRouter(tags=["misc"])
@@ -132,6 +134,20 @@ def readiness():
 def health():
     """Compatibility alias for /health/ready."""
     return readiness()
+
+
+@router.get("/features", response_model=FeaturesRead)
+def list_features(auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """The optional features of this deployment and whether each is enabled, so a client can hide
+    what is unavailable instead of meeting a 501 `feature_disabled` response."""
+    settings = get_settings()
+    return FeaturesRead(
+        uploads=MultipartStorageConfig.from_env().enabled,
+        ingestion=settings.ingestion.enabled,
+        printing=settings.printing.enabled,
+        proposal_sync=settings.proposals.enabled,
+        passwords=settings.auth.password_enabled,
+    )
 
 
 @router.get("/keywords", response_model=List[KeywordRead])

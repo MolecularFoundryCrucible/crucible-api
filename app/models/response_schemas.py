@@ -43,6 +43,16 @@ class ProjectSyncResult(BaseModel):
     projects_already_member: List[str] = []
     projects_not_found: List[str] = []
 
+class FeaturesRead(BaseModel):
+    """Whether each optional feature is enabled on this deployment. Each field name is the `feature`
+    in the 501 `feature_disabled` response that the feature's routes return while it is disabled."""
+    uploads: bool = Field(description="Files can be uploaded (`MULTIPART_UPLOAD_ENABLED`)")
+    ingestion: bool = Field(description="Ingestion requests and postprocessing pipelines (`INGESTION_ENABLED`)")
+    printing: bool = Field(description="Label printing (`PRINTING_ENABLED`)")
+    proposal_sync: bool = Field(description="Project membership from the proposal database (`PROPOSAL_SYNC_ENABLED`)")
+    passwords: bool = Field(description="Password sign-in (`CRUCIBLE_AUTH_PASSWORD_ENABLED`)")
+
+
 class MessageResponse(BaseModel):
     message: str
 

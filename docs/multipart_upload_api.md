@@ -71,7 +71,7 @@ Initiation returns state `completed` with `existing_file`, and creates no sessio
 
 | Condition | Response |
 | --- | --- |
-| `MULTIPART_UPLOAD_ENABLED` is not `true` (both initiate routes) | 501 `{"detail": {"code": "feature_disabled", "feature": "uploads", "message": ...}}`; sessions already started can still finish |
+| `MULTIPART_UPLOAD_ENABLED` is not `true` (both initiate routes) | 501 `{"detail": {"code": "feature_disabled", "feature": "uploads", "message": ...}}`; sessions already started can still finish. `GET /features` reports `uploads: false` |
 | File larger than `MAX_UPLOAD_BYTES` | 413 |
 | Owner or dataset quota exceeded | 429 with `Retry-After: 60` |
 | Filename exists in the dataset | 409 `{"detail": {"code": "filename_exists", "file_mfid": ..., "etag": ..., "message": ...}}` |

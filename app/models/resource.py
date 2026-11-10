@@ -1,5 +1,5 @@
 # Resource request/response schemas
-# Table model lives in core_models.py
+# Table model lives in app/tables.py
 from typing import Literal, Optional
 
 from pydantic import Field

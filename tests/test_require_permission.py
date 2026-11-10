@@ -15,7 +15,7 @@ from sqlalchemy import select as sa_select, text
 from sqlmodel import Session
 from fastapi import HTTPException
 
-from app.models.core_models import Dataset
+from app.tables import Dataset
 from app.utils.auth_utils import fetch_acl_rows, permission_filter, require_permission
 from app.utils.permissions import (
     GroupMembership, Permission, PlatformRole, Principal, Role,

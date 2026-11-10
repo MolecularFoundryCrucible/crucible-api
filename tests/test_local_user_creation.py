@@ -1,7 +1,7 @@
 from sqlmodel import Session, select
 
 from app.api.routes import users as users_routes
-from app.models.core_models import AccessGroup, User, UserAccessGroupLink
+from app.tables import AccessGroup, User, UserAccessGroupLink
 from app.models.users import AccountProfileUpdate, UserCreate, UserUpdate
 from app.utils.permissions import AccessGroupType, PlatformRole
 
@@ -50,7 +50,7 @@ def test_user_schemas_reject_service_account_mutation():
 
 
 def _projects(db_engine):
-    from app.models.core_models import DeletionRequest, Project
+    from app.tables import DeletionRequest, Project
     with Session(db_engine) as session:
         mfids = {}
         for slug in ("myproj", "doomed"):

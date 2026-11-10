@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 import tests.test_auth_linking as linking_tests
 import tests.test_auth_providers as provider_tests
 from app.cli import identity as identity_cli
-from app.models.core_models import AuthEvent, Dataset, HubTokenFamily, User, UserIdentity
+from app.tables import AuthEvent, Dataset, HubTokenFamily, User, UserIdentity
 from tests.test_auth_linking import ADA, BOB, LAB_ISSUER, ORCID_ISSUER, bearer, hub_session, user_id
 
 remote = provider_tests.remote

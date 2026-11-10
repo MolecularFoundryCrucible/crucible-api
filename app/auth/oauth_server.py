@@ -20,7 +20,7 @@ from sqlmodel import Session, select
 
 from app.auth.clients import ClientUnavailable, RegisteredClient, client_by_id
 from app.config import ConfigurationError, optional_secret
-from app.models.core_models import HubAccessToken, HubLoginCode, HubRefreshToken, HubTokenFamily
+from app.tables import HubAccessToken, HubLoginCode, HubRefreshToken, HubTokenFamily
 from app.utils.hub_login import exchange_handoff_code
 from app.utils.hub_tokens import ACCESS_PREFIX, REFRESH_PREFIX, HubTokenPair, InvalidHubGrant, refresh_hub_tokens, revoke_hub_tokens
 
@@ -304,7 +304,7 @@ class DeviceGrant(DeviceCodeGrant):
 
     def query_device_credential(self, device_code):
         from app.auth.devices import device_code_hash
-        from app.models.core_models import DeviceAuthorization as Row
+        from app.tables import DeviceAuthorization as Row
 
         with Session(self.request.engine) as session:
             row = session.get(Row, device_code_hash(device_code))
@@ -323,7 +323,7 @@ class DeviceGrant(DeviceCodeGrant):
     def should_slow_down(self, credential):
         """Each poll before the interval has passed adds 5 seconds to it, for this and every later poll."""
         from app.auth.devices import SLOW_DOWN_STEP
-        from app.models.core_models import DeviceAuthorization as Row
+        from app.tables import DeviceAuthorization as Row
 
         current = datetime.now(timezone.utc)
         row = credential.row
@@ -337,7 +337,7 @@ class DeviceGrant(DeviceCodeGrant):
 
     def create_token_response(self):
         """Use up the approved device sign-in and issue the session in one transaction."""
-        from app.models.core_models import DeviceAuthorization as Row
+        from app.tables import DeviceAuthorization as Row
         from app.utils.hub_tokens import DEVICE_CODE, issue_hub_tokens_in_session
 
         row = self.request.credential.row

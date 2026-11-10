@@ -2,7 +2,7 @@ import pytest
 from fastapi import HTTPException, Request, Response
 from sqlmodel import Session, select
 
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     Dataset,
     Project,

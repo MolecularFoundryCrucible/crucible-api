@@ -1,6 +1,6 @@
 from sqlmodel import Session
 
-from app.models.core_models import User
+from app.tables import User
 from app.utils.permissions import PlatformRole
 from tests.people import add_old_style_key, internal_id
 

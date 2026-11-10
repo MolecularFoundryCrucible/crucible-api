@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.auth.api_keys import DEFAULT_KEY_NAME, created_at_of, key_hash, store_key
-from app.models.core_models import ApiKey, ApiToken
+from app.tables import ApiKey, ApiToken
 
 BATCH_SIZE = 1000
 

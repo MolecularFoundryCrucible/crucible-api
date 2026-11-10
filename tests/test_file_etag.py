@@ -2,7 +2,7 @@ import hashlib
 
 from sqlmodel import Session
 
-from app.models.core_models import AssociatedFile, Dataset, Resource
+from app.tables import AssociatedFile, Dataset, Resource
 from app.models.datasets import AssociatedFileRead, file_etag
 from app.utils.permissions import PlatformRole
 

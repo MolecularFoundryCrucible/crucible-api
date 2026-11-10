@@ -9,7 +9,7 @@ from sqlalchemy import or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.models.core_models import ApiKey, ApiToken, User
+from app.tables import ApiKey, ApiToken, User
 
 KEY_LIFETIME = timedelta(days=365)
 KEY_PREFIX = "crucible_"

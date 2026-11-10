@@ -17,7 +17,7 @@ from app.api.dependencies import get_engine
 from app.api.routes import hub_auth as routes
 from app.api.routes import oauth as oauth_routes
 from app.auth.passwords import store_password
-from app.models.core_models import (
+from app.tables import (
     AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential, LoginThrottle, User,
 )
 

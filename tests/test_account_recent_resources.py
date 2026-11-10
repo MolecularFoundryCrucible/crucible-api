@@ -4,7 +4,7 @@ import pytest
 from sqlmodel import Session, select
 
 from app.general_utils import get_utc_datetime
-from app.models.core_models import (
+from app.tables import (
     AccessGroup, Dataset, DeletionRequest, Instrument, Project, Resource, ResourceACL, Sample, User, UserRecentResource,
 )
 from app.utils.permissions import Role

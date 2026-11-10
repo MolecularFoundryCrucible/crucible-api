@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 
 from app.api.main import app
 from app.api.routes.resource_graph import read_resource_graph
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     Dataset,
     DatasetLink,

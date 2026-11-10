@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlmodel import Session, SQLModel, select
 
-from app.models.core_models import AccessGroup, Dataset, Keyword, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
+from app.tables import AccessGroup, Dataset, Keyword, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
 from app.models.multipart import MultipartInitiate
 from app.services.multipart import initiate, reserve
 from app.utils.auth_utils import load_principal

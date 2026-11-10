@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ProjectRef, UserRef
-from app.models.core_models import (
+from app.tables import (
     AccessGroup, Project, Resource, ScientificMetadataBinary, User, UserAccessGroupLink,
 )
 from app.services.resource_pagination import (

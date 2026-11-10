@@ -11,7 +11,7 @@ from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.general_utils import if_match_satisfied
-from app.models.core_models import AssociatedFile, Dataset, UploadSession
+from app.tables import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead, file_etag
 from app.models.multipart import EMPTY_SHA256, MultipartStatus
 from app.storage import StorageFailure, UploadMissing

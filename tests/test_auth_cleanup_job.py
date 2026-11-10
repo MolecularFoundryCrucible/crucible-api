@@ -6,7 +6,7 @@ from sqlmodel import Session, SQLModel, select
 
 from app.cli import auth as auth_cli
 from app.config import ConfigurationError, get_settings
-from app.models.core_models import DeviceAuthorization, LoginThrottle, AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily
+from app.tables import DeviceAuthorization, LoginThrottle, AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily
 from app.utils.hub_auth_maintenance import cleanup_hub_auth
 
 NOW = datetime.now(timezone.utc)

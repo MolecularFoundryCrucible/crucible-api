@@ -6,7 +6,7 @@ import app.api.routes.datasets as datasets_routes
 import app.api.routes.resources as resources_routes
 import app.api.routes.samples as samples_routes
 import app.services.resource_details as resource_details
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     Dataset,
     DatasetLink,

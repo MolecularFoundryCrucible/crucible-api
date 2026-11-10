@@ -17,7 +17,7 @@ from sqlmodel import Session, SQLModel, select
 from app.api.dependencies import get_engine
 from app.api.routes import hub_auth as routes
 from app.config import get_settings
-from app.models.core_models import HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserIdentity
+from app.tables import HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserIdentity
 
 API_URL = "http://localhost:7777"
 HUB_CALLBACK = "http://localhost:3000/hub/auth/callback"

@@ -1,6 +1,6 @@
 from sqlmodel import Session, select
 
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     Dataset,
     Project,

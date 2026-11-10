@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, Resource, ResourceACL, ScientificMetadataBinary
+from app.tables import AccessGroup, Dataset, Resource, ResourceACL, ScientificMetadataBinary
 from app.utils.permissions import Role
 
 

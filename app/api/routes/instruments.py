@@ -9,7 +9,7 @@ from app.api.path_params import InstrumentRef, ServiceAccountRef
 from app.general_utils import get_utc_datetime
 from app.models.access import EntryCapabilities
 from app.models.access_groups import AccessGroupMemberRead
-from app.models.core_models import (
+from app.tables import (
     AccessGroup, Instrument, Resource, ResourceACL, ScientificMetadataBinary, User, UserAccessGroupLink)
 from app.models.instrument import InstrumentCreate, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse

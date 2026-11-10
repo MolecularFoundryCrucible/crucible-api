@@ -13,7 +13,7 @@ from sqlmodel import Session, SQLModel, select
 
 import app.utils.auth_utils as auth_utils
 from app.auth.api_keys import newest_key, status_of
-from app.models.core_models import ApiToken, HubAccessToken, HubLoginCode, HubRefreshToken, HubTokenFamily, User
+from app.tables import ApiToken, HubAccessToken, HubLoginCode, HubRefreshToken, HubTokenFamily, User
 from app.utils.hub_tokens import hub_access_family, issue_hub_tokens, refresh_hub_tokens, revoke_all_hub_tokens
 
 ORCID = "0000-0002-1825-0097"

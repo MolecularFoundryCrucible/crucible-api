@@ -18,7 +18,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import get_secret
 from app.api.dependencies import get_engine
-from app.models.core_models import ApiKey, ApiToken, User
+from app.tables import ApiKey, ApiToken, User
 from app.models.resource import ResourceCapabilities
 from app.utils.hub_tokens import ACCESS_PREFIX, DEVICE_CODE, InvalidHubGrant, hub_access_family
 from app.auth.api_keys import DEFAULT_KEY_NAME, find_api_key, replace_plain_keys, status_of, store_key
@@ -240,7 +240,7 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
 def load_principal(session, user_id: Optional[int]) -> Principal:
     """Build a Principal from the database. Split out of authorize_user so the
     query is testable without an API key or a live request."""
-    from app.models.core_models import AccessGroup, User, UserAccessGroupLink
+    from app.tables import AccessGroup, User, UserAccessGroupLink
 
     user = session.get(User, user_id) if user_id is not None else None
     if user is None:
@@ -289,7 +289,7 @@ def _public_group_id(session) -> Optional[int]:
     phase 1 migration, making injection a no-op rather than an error."""
     global _PUBLIC_GROUP_ID
     if _PUBLIC_GROUP_ID is _UNSET:
-        from app.models.core_models import AccessGroup
+        from app.tables import AccessGroup
         _PUBLIC_GROUP_ID = session.exec(
             select(AccessGroup.id).where(AccessGroup.group_name == PUBLIC_GROUP_NAME)
         ).first()
@@ -300,7 +300,7 @@ def _public_group_id(session) -> Optional[int]:
 
 def fetch_acl_rows(session, mfid: str):
     """(accessgroup_id, permission) for one resource."""
-    from app.models.core_models import ResourceACL
+    from app.tables import ResourceACL
     rows = session.exec(
         select(ResourceACL.accessgroup_id, ResourceACL.permission)
         .where(ResourceACL.mfid == mfid)
@@ -459,7 +459,7 @@ def permission_filter(principal: Principal, resource_model,
     and useraccessgrouplink never has to be joined.
     """
     from sqlalchemy import exists, false, true
-    from app.models.core_models import ResourceACL
+    from app.tables import ResourceACL
 
     if has_global_permission(principal, permission):
         return true()
@@ -500,7 +500,7 @@ def permission_filter(principal: Principal, resource_model,
 
 def owner_affiliation_filter(principal: Principal, resource_model):
     from sqlalchemy import exists
-    from app.models.core_models import AccessGroup, ResourceACL
+    from app.tables import AccessGroup, ResourceACL
     from app.utils.permissions import AccessGroupType
 
     return (
@@ -520,7 +520,7 @@ def owner_affiliation_filter(principal: Principal, resource_model):
 def member_affiliation_filter(principal: Principal, resource_model):
     """Resources the caller reaches through one of their own grants, not only because they are public."""
     from sqlalchemy import exists, false
-    from app.models.core_models import ResourceACL
+    from app.tables import ResourceACL
     from app.utils.permissions import PUBLIC_GROUP_NAME
 
     group_ids = [m.id for m in principal.groups if m.group_name != PUBLIC_GROUP_NAME and m.role >= Role.VIEWER]
@@ -551,7 +551,7 @@ def resource_affiliation_filter(principal: Principal, resource_model, affiliatio
 def maintainer_affiliation_filter(principal: Principal, resource_model):
     """Resources where the caller's own identity holds editor or admin."""
     from sqlalchemy import exists
-    from app.models.core_models import AccessGroup, ResourceACL
+    from app.tables import AccessGroup, ResourceACL
     from app.utils.permissions import AccessGroupType
 
     return (
@@ -572,7 +572,7 @@ def project_member_filter(user_id: str, project_model, roles: Optional[Iterable[
     """Projects where `user_id` stands in the project's own access group,
     optionally at one of `roles`."""
     from sqlalchemy import exists
-    from app.models.core_models import AccessGroup, User, UserAccessGroupLink
+    from app.tables import AccessGroup, User, UserAccessGroupLink
     from app.utils.permissions import AccessGroupType
 
     conditions = [
@@ -599,7 +599,7 @@ def project_owner_affiliation_filter(principal: Principal, project_model):
 def access_group_permission_filter(accessgroup_id: int, resource_model,
                                    permission: Permission = Permission.READ):
     from sqlalchemy import exists
-    from app.models.core_models import ResourceACL
+    from app.tables import ResourceACL
 
     threshold = THRESHOLDS[permission]
     allowed = [role.db_value for role in Role if role >= threshold]
@@ -617,7 +617,7 @@ def access_group_permission_filter(accessgroup_id: int, resource_model,
 
 def project_scope_filter(session, caller: Principal, resource_model,
                          project_mfid: str, project_scope: str):
-    from app.models.core_models import AccessGroup, Project
+    from app.tables import AccessGroup, Project
     from app.utils.permissions import AccessGroupType
 
     if project_scope == "assigned":
@@ -719,7 +719,7 @@ def require_self_or_platform_admin(principal: Principal, user) -> None:
 
 def caller_row(session, principal: Principal, *, for_update: bool = False):
     """The caller's own User row, found by internal key."""
-    from app.models.core_models import User
+    from app.tables import User
 
     if principal.internal_user_id is None:
         return None
@@ -736,7 +736,7 @@ def is_caller(column, principal: Principal):
 
 
 def _own_identity_group_ids(principal: Principal):
-    from app.models.core_models import UserAccessGroupLink
+    from app.tables import UserAccessGroupLink
 
     return select(UserAccessGroupLink.accessgroup_id).where(
         is_caller(UserAccessGroupLink.user_id, principal),
@@ -771,7 +771,7 @@ def access_selector_filter(session, caller: Principal, resource_model,
                            user_refs: Optional[Sequence[str]] = None,
                            project_refs: Optional[Sequence[str]] = None,
                            max_selectors: int = 10):
-    from app.models.core_models import AccessGroup
+    from app.tables import AccessGroup
     from app.utils.permissions import AccessGroupType
     from app.utils.project_utils import resolve_project_reference
 

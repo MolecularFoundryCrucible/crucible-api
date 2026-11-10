@@ -8,7 +8,7 @@ import app.services.activity as activity
 import app.utils.auth_utils as auth_utils
 from app.general_utils import get_utc_datetime
 from app.auth.api_keys import key_hash, store_key
-from app.models.core_models import ApiKey, ApiToken, Dataset, Instrument, Project, Resource, Sample, User
+from app.tables import ApiKey, ApiToken, Dataset, Instrument, Project, Resource, Sample, User
 from app.utils.permissions import PlatformRole
 from tests.people import internal_id
 

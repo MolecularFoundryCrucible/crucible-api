@@ -10,7 +10,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.api.dependencies import get_engine
 from app.api.routes.hub_auth import router as hub_auth_router
-from app.models.core_models import (
+from app.tables import (
     DeviceAuthorization,
     PasswordToken,
     LoginThrottle,

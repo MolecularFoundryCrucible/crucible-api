@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 import app.api.routes.datasets as datasets_routes
 import app.services.thumbnails as thumbnail_service
-from app.models.core_models import Dataset, Resource, Thumbnail
+from app.tables import Dataset, Resource, Thumbnail
 from app.models.datasets import (
     ThumbnailCreate,
     ThumbnailPreviewRead,

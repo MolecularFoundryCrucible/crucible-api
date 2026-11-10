@@ -7,7 +7,7 @@ unset.
 """
 from sqlmodel import Session, SQLModel, select
 
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     Dataset,
     DatasetKeywordLink,

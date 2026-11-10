@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from app.auth.events import AuthEventType, record_event
 from app.auth.linking import holdings
-from app.models.core_models import ApiKey, ApiToken, User, UserAccessGroupLink, UserIdentity
+from app.tables import ApiKey, ApiToken, User, UserAccessGroupLink, UserIdentity
 
 PENDING_LIFETIME = timedelta(days=30)
 logger = logging.getLogger(__name__)

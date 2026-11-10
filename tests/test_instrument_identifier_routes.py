@@ -1,6 +1,6 @@
 from sqlmodel import Session
 
-from app.models.core_models import Instrument, Resource
+from app.tables import Instrument, Resource
 
 
 def _setup(db_engine, status="maintenance"):

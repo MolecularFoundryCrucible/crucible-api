@@ -6,7 +6,7 @@ covered separately in test_project_rename_resolves_live.py.
 """
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Project, Resource, ResourceACL, User, UserAccessGroupLink
+from app.tables import AccessGroup, Project, Resource, ResourceACL, User, UserAccessGroupLink
 from app.utils.permissions import Role
 
 

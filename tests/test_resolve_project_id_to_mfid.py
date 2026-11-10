@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import Project
+from app.tables import Project
 from app.utils.project_utils import (
     resolve_project_id_to_mfid,
     resolve_project_identifiers,

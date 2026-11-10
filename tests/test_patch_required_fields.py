@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 from sqlmodel import Session
 
-from app.models.core_models import Resource, Sample
+from app.tables import Resource, Sample
 from app.models.datasets import AssociatedFileUpdate
 from app.models.projects import ProjectUpdate
 from app.models.samples import SampleUpdate

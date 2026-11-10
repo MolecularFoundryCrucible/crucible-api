@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, text
 from sqlmodel import Session, SQLModel, select
 
 from app.api.routes import resources as resources_routes
-from app.models.core_models import Keyword, Resource, ResourceEmbedding, ScientificMetadataBinary
+from app.tables import Keyword, Resource, ResourceEmbedding, ScientificMetadataBinary
 from app.utils.permissions import PlatformRole, Principal
 from tests.conftest import TEST_TABLES
 
@@ -69,7 +69,7 @@ def test_concurrent_metadata_patches_keep_both_updates(use_engine, pg_engine, mo
 def test_deletion_request_and_new_dataset_cannot_both_succeed(use_engine, pg_engine, monkeypatch, auth_as):
     from fastapi.testclient import TestClient
     from app.api.main import app
-    from app.models.core_models import AccessGroup, Dataset, Project, User
+    from app.tables import AccessGroup, Dataset, Project, User
     from app.utils.permissions import AccessGroupType
     with Session(pg_engine) as session:
         session.add_all([User(unique_id="lead", first_name="L", last_name="D", email=None), User(unique_id="admin", first_name="A", last_name="D", email=None)])
@@ -112,7 +112,7 @@ def test_deletion_request_and_new_dataset_cannot_both_succeed(use_engine, pg_eng
 
 
 def test_metadata_search_member_affiliation_narrows_only_datasets_and_samples(use_engine, pg_engine, monkeypatch):
-    from app.models.core_models import AccessGroup, Dataset, Instrument, ResourceACL, Sample
+    from app.tables import AccessGroup, Dataset, Instrument, ResourceACL, Sample
     from app.models.query_params import ResourceAffiliation
     from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, GroupMembership, Role
     with Session(pg_engine) as session:

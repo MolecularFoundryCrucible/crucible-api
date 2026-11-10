@@ -4,7 +4,7 @@ from datetime import timedelta, timezone
 from sqlmodel import Session, select
 
 from app.config import get_settings
-from app.models.core_models import AssociatedFile, Dataset, FileVersion, UploadSession
+from app.tables import AssociatedFile, Dataset, FileVersion, UploadSession
 from app.services.storage_downloads import owned_object
 from app.utils.sql_utils import get_active_deletion_request, touch_resource_modification_time
 

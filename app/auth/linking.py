@@ -14,7 +14,7 @@ from app.auth.password_links import void_links
 from app.auth.events import AuthEventType, record_event
 from app.auth.identity import IdentityTaken, ensure_identity, find_identity
 from app.config import ORCID_ISSUERS, OidcProvider, get_settings
-from app.models.core_models import HubLoginCode, HubLoginTransaction, User, UserIdentity
+from app.tables import HubLoginCode, HubLoginTransaction, User, UserIdentity
 from app.models.identities import IdentityRead
 from app.utils.hub_login import HubLoginConfig, HubLoginRefused, InvalidHubLogin, _aware, _digest, check_login_request
 from app.utils.hub_tokens import InvalidHubGrant, hub_access_family, revoke_all_hub_tokens
@@ -242,7 +242,7 @@ def confirm_link(engine, code: str, verifier: str, client_id: str, callback_uri:
 def sign_in_labels(session: Session, user_ids: list[int]) -> dict[int, list[str]]:
     """How each person signs in, for administrators: `password` when they have one, then each
     login's provider by display name (its issuer when no listed provider matches)."""
-    from app.models.core_models import LocalCredential
+    from app.tables import LocalCredential
 
     names = {provider.issuer.rstrip("/"): provider.display_name for provider in get_settings().auth.providers}
     labels: dict[int, list[str]] = {user_id: [] for user_id in user_ids}
@@ -264,7 +264,7 @@ def sign_in_methods(session: Session, user: User) -> list[UserIdentity]:
 def unlink_identity(session: Session, user: User, identity_id: int, *, actor: User, keep_family_id: str | None = None, now: datetime | None = None) -> UserIdentity:
     """Remove one of the person's logins in the caller's transaction. Refuses their last way to sign
     in, a password included, ends their other Hub sessions and cancels links still in progress."""
-    from app.models.core_models import LocalCredential
+    from app.tables import LocalCredential
 
     current = _now(now)
     methods = sign_in_methods(session, user)
@@ -309,7 +309,7 @@ def holdings(session: Session, user: User) -> list[str]:
     """What an account holds besides its own identity group, as reasons it must not be emptied."""
     from sqlalchemy import func
 
-    from app.models.core_models import (
+    from app.tables import (
         AccessGroupJoinRequest, ApiKey, ApiToken, Dataset, DeletionRequest, Instrument, PostprocessingRun, Project, ResourceACL, Sample, UploadSession,
         UserAccessGroupLink,
     )
@@ -346,7 +346,7 @@ def holdings(session: Session, user: User) -> list[str]:
 def move_identity(session: Session, identity: UserIdentity, target: User, *, now: datetime | None = None) -> User:
     """Move a login off an account that holds nothing else, onto the right account, and switch the
     emptied account off. This is not a merge: it refuses when the source holds anything."""
-    from app.models.core_models import ApiToken
+    from app.tables import ApiToken
 
     current = _now(now)
     source = session.get(User, identity.user_id, with_for_update=True)

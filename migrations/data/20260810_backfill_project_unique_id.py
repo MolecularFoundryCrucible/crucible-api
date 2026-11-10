@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from app.api.dependencies import get_engine
-from app.models.core_models import get_mfid_value
+from app.tables import get_mfid_value
 
 
 PRODUCTION_DB = "crucible"

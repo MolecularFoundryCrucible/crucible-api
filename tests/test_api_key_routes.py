@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlmodel import Session, select
 
 from app.auth.api_keys import MAX_ACTIVE_KEYS, key_hash, store_key
-from app.models.core_models import ApiKey, ApiToken, User
+from app.tables import ApiKey, ApiToken, User
 from app.utils import auth_utils
 from app.utils.permissions import PlatformRole
 

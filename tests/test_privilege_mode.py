@@ -5,7 +5,7 @@ import pytest
 from sqlmodel import Session
 
 from app.api.main import app
-from app.models.core_models import User
+from app.tables import User
 from app.utils.permissions import (
     PlatformRole,
     Principal,

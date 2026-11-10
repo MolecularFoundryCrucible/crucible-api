@@ -12,7 +12,7 @@ from sqlmodel import Session
 
 from app import storage
 from app.cli.storage import StorageCheck, send
-from app.models.core_models import AccessGroup, Dataset, Resource, ResourceACL, User, UserAccessGroupLink
+from app.tables import AccessGroup, Dataset, Resource, ResourceACL, User, UserAccessGroupLink
 from app.services.multipart import MIN_PART_SIZE
 from app.storage.s3 import S3Store
 from app.utils.permissions import Role

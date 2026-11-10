@@ -3,7 +3,7 @@ from typing import Any, Protocol
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import Session
 
-from app.models.core_models import Resource
+from app.tables import Resource
 from app.utils.auth_utils import (
     access_selector_filter,
     resource_affiliation_filter,

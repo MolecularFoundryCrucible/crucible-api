@@ -13,7 +13,7 @@ from app.api.dependencies import get_engine
 from app.api.path_params import DatasetMfid
 from app.config import get_secret, require_feature
 from app.general_utils import get_utc_datetime
-from app.models.core_models import Dataset, PostprocessingRun
+from app.tables import Dataset, PostprocessingRun
 from app.models.pagination import PaginatedResponse
 from app.models.pipelines import PipelineRead, PostprocessingRunRead, PostprocessingRunStatus, PostprocessingRunUpdate, PostprocessRequest
 from app.services.pipelines import PIPELINES

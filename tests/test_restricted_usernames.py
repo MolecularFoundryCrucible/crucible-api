@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import Session, select
 
-from app.models.core_models import User
+from app.tables import User
 from app.utils.permissions import PlatformRole
 from app.utils.user_utils import RESTRICTED_USERNAMES, generate_unique_username, is_restricted_username
 

@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, DeletionRequest, PostprocessingRun, Resource, ResourceACL, User
+from app.tables import AccessGroup, Dataset, DeletionRequest, PostprocessingRun, Resource, ResourceACL, User
 from app.utils.permissions import Role
 
 ME = "0000-0005-0000-0001"

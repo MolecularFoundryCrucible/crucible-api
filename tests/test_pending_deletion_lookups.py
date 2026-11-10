@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, AssociatedFile, Dataset, DatasetSampleLink, DeletionRequest, IngestionRequest, PostprocessingRun, Resource, ResourceACL, Sample, SampleLink, User, UserAccessGroupLink
+from app.tables import AccessGroup, AssociatedFile, Dataset, DatasetSampleLink, DeletionRequest, IngestionRequest, PostprocessingRun, Resource, ResourceACL, Sample, SampleLink, User, UserAccessGroupLink
 from app.utils.permissions import Role
 
 ME = "0000-0009-0000-0001"

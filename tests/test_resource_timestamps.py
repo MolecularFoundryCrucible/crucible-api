@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from app.models.core_models import Resource
+from app.tables import Resource
 from app.models.timestamps import UtcDatetime
 
 

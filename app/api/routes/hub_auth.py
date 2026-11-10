@@ -20,7 +20,7 @@ from app.auth.clients import ClientUnavailable, authenticate_client, require_cli
 from app.auth.oauth_server import FormRequest, authorization_server, check_authorization_request
 from authlib.oauth2 import OAuth2Error
 from app.config import ConfigurationError, OidcProvider, get_settings
-from app.models.core_models import HubLoginTransaction
+from app.tables import HubLoginTransaction
 from app.auth.sign_in import AccountPending
 from app.utils.hub_login import (
     HubLoginRefused, HubLoginUnavailable, InvalidHubLogin, check_login_request, consume_login, create_handoff_code,
@@ -477,7 +477,7 @@ def _password_holder(engine, username: str) -> tuple[int, str, bool] | None:
     whether it waits for approval. Usernames match regardless of case and surrounding spaces."""
     from sqlalchemy import func
 
-    from app.models.core_models import User
+    from app.tables import User
 
     wanted = username.strip().lower()
     if not wanted:
@@ -556,7 +556,7 @@ async def password_sign_in(
 
 
 def _password_changed_at(engine, user_id: int):
-    from app.models.core_models import LocalCredential
+    from app.tables import LocalCredential
 
     with Session(engine) as session:
         return session.get(LocalCredential, user_id).password_changed_at

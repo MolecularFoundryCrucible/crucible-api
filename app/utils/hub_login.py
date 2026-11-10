@@ -12,7 +12,7 @@ from app.auth.identity import retry_after_concurrent_first_write
 from app.auth.sign_in import WRONG_USER, AccountPending, SignInRefused, record_refused_sign_in, resolve_sign_in
 from app.auth.clients import RegisteredClient, client_by_id, registered_clients, sign_in_enabled
 from app.config import ConfigurationError, OidcProvider, get_settings, optional_secret, trusted_redirect_uri
-from app.models.core_models import HubLoginCode, HubLoginTransaction
+from app.tables import HubLoginCode, HubLoginTransaction
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
 
 
@@ -213,7 +213,7 @@ def create_local_code(engine, state: str, browser_secret: str, user_id: int, *, 
     """After a correct password: use up the sign-in and issue its code in one transaction, and
     return the address to send the browser back to."""
     from app.auth.events import AuthEventType, record_event
-    from app.models.core_models import User
+    from app.tables import User
 
     current = _now(now)
     code = secrets.token_urlsafe(48)

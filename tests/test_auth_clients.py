@@ -13,7 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app import config
 from app.api.routes.hub_auth import require_hub_client
 from app.auth.clients import registered_clients
-from app.models.core_models import (
+from app.tables import (
     AccessGroup, ApiKey, ApiToken, AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User,
     UserAccessGroupLink, UserIdentity,
 )

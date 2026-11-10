@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session as OrmSession, attributes
 from sqlmodel import Session
 
 from app.general_utils import get_utc_datetime
-from app.models.core_models import ApiKey, Dataset, Instrument, Project, Resource, Sample, User
+from app.tables import ApiKey, Dataset, Instrument, Project, Resource, Sample, User
 
 logger = logging.getLogger(__name__)
 

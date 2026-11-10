@@ -18,7 +18,7 @@ from sqlmodel import Session, SQLModel
 from app import config
 from app.api.dependencies import get_engine
 from app.auth.passwords import store_password
-from app.models.core_models import (
+from app.tables import (
     AuthEvent, DeviceAuthorization, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential, LoginThrottle, PasswordToken, User,
     UserIdentity,
 )

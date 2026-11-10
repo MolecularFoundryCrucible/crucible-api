@@ -8,7 +8,7 @@ from sqlalchemy import func, update
 from sqlmodel import Session, select
 
 from app.auth.clients import client_by_id
-from app.models.core_models import HubAccessToken, HubRefreshToken, HubTokenFamily, User
+from app.tables import HubAccessToken, HubRefreshToken, HubTokenFamily, User
 
 
 ACCESS_LIFETIME = timedelta(minutes=15)

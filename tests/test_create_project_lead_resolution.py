@@ -5,7 +5,7 @@ existing three explicit project_lead_orcid/_email/_username fields.
 """
 from sqlmodel import Session, select
 
-from app.models.core_models import Project, User
+from app.tables import Project, User
 from app.utils.permissions import PlatformRole
 
 

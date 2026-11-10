@@ -7,7 +7,7 @@ from email_validator import EmailNotValidError, validate_email
 from fastapi import HTTPException
 from sqlmodel import Session
 
-from app.models.core_models import User, get_mfid_value
+from app.tables import User, get_mfid_value
 
 IN_USE = "This username or email is already in use. Choose another username, or ask an administrator if you already have an account."
 

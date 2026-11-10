@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlmodel import Session
 
 from app.api.routes.projects import read_project
-from app.models.core_models import Project, Resource, User
+from app.tables import Project, Resource, User
 from app.models.query_params import ProjectDetailQuery
 from app.utils.permissions import Principal
 

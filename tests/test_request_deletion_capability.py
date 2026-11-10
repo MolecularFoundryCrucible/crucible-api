@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import Session
 
-from app.models.core_models import Dataset, Resource, ResourceACL
+from app.tables import Dataset, Resource, ResourceACL
 from tests.test_join_request_workflow import ALICE, CONTRIBUTOR, EDITOR, OWNER, STRANGER, act, world  # noqa: F401
 
 

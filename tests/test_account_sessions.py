@@ -8,7 +8,7 @@ from sqlmodel import Session, SQLModel, select
 
 from app.api.main import app
 from app.cli import auth as auth_cli
-from app.models.core_models import AuthEvent, HubAccessToken, HubRefreshToken, HubTokenFamily, User
+from app.tables import AuthEvent, HubAccessToken, HubRefreshToken, HubTokenFamily, User
 from app.utils import auth_utils
 from app.utils.auth_utils import authenticate_user
 from app.utils.hub_tokens import AUTHORIZATION_CODE, DEVICE_CODE, issue_hub_tokens

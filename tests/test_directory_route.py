@@ -3,7 +3,7 @@ platform_role contributor or admin. Instrument-group membership grants nothing.
 """
 from sqlmodel import Session
 
-from app.models.core_models import AccessGroup, Instrument, Project, User, UserAccessGroupLink
+from app.tables import AccessGroup, Instrument, Project, User, UserAccessGroupLink
 from app.utils.permissions import PlatformRole, Role
 
 

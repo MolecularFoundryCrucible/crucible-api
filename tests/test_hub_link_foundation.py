@@ -93,7 +93,7 @@ def test_hub_principal_carries_its_token_family(engine, use_engine, monkeypatch)
     from fastapi.security import HTTPAuthorizationCredentials
     from sqlmodel import Session, select
 
-    from app.models.core_models import HubTokenFamily
+    from app.tables import HubTokenFamily
     from app.utils import auth_utils
     from app.utils.hub_tokens import issue_hub_tokens
     from tests.people import internal_id

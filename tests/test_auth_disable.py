@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlmodel import Session, SQLModel, select
 
 from app.auth.sign_in import DISABLED, SignInRefused, resolve_sign_in
-from app.models.core_models import (
+from app.tables import (
     AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserIdentity,
 )
 from app.utils import auth_utils

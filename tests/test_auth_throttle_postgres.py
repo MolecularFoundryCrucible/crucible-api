@@ -11,7 +11,7 @@ from sqlmodel import Session, SQLModel
 from app import config
 from app.auth import throttle
 from app.auth.passwords import store_password
-from app.models.core_models import AuthEvent, LocalCredential, LoginThrottle, PasswordToken, User, UserIdentity
+from app.tables import AuthEvent, LocalCredential, LoginThrottle, PasswordToken, User, UserIdentity
 
 RIGHT = "violet ladder under quiet rain"
 

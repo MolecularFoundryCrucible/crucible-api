@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import Session
 
-from app.models.core_models import User
+from app.tables import User
 
 CALLER = "0000-0006-0000-0001"
 MFID = "0tnq3dqdsnsrd000497vvkk650"

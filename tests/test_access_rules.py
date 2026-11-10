@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import Session, select
 
-from app.models.core_models import Dataset, Resource, ResourceACL, User, UserAccessGroupLink
+from app.tables import Dataset, Resource, ResourceACL, User, UserAccessGroupLink
 from app.utils.permissions import PlatformRole
 from tests.test_join_request_workflow import ALICE, BOB, CONTRIBUTOR, EDITOR, OWNER, act, world  # noqa: F401
 

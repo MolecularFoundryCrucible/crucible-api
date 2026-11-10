@@ -16,7 +16,7 @@ from sqlmodel import Session, SQLModel, select
 from app import config
 from app.auth import throttle
 from app.auth.password_links import LinkRefused, issue_link, use_link
-from app.models.core_models import (
+from app.tables import (
     DeviceAuthorization, HubAccessToken, HubLoginCode, HubRefreshToken, HubTokenFamily, LocalCredential, PasswordToken, User, UserIdentity, AuthEvent,
 )
 

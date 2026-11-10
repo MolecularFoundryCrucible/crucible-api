@@ -9,7 +9,7 @@ import pytest
 from sqlmodel import Session, SQLModel, select
 
 from app.api.main import app
-from app.models.core_models import AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserIdentity
+from app.tables import AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserIdentity
 from app.utils.auth_utils import authenticate_user
 from app.utils.hub_tokens import issue_hub_tokens
 from tests.test_auth_providers import remote  # noqa: F401

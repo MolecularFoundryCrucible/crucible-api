@@ -4,7 +4,7 @@ import requests
 from sqlmodel import Session, select
 
 from app.config import ConfigurationError, get_secret, get_settings
-from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
+from app.tables import AccessGroup, Project, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, Role
 from app.utils.project_utils import resolve_project_reference
 from app.utils.sql_utils import get_active_deletion_request

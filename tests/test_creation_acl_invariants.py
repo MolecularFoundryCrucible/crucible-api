@@ -1,6 +1,6 @@
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, Project, Resource, ResourceACL, Sample, User
+from app.tables import AccessGroup, Dataset, Project, Resource, ResourceACL, Sample, User
 from app.utils.permissions import PlatformRole
 from app.utils.sql_utils import set_public
 

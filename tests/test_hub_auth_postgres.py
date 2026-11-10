@@ -15,11 +15,11 @@ from sqlalchemy import event, inspect, text
 from sqlalchemy.engine import make_url
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.models.core_models import DeviceAuthorization, LoginThrottle, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User
+from app.tables import DeviceAuthorization, LoginThrottle, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User
 from app.utils.hub_login import exchange_handoff_code
 from app.utils.hub_tokens import InvalidHubGrant, hub_access_user, issue_hub_tokens, refresh_hub_tokens, revoke_hub_tokens
 from tests.people import internal_id
-from app.models.core_models import AuthEvent, PasswordToken, UserIdentity
+from app.tables import AuthEvent, PasswordToken, UserIdentity
 
 pytestmark = pytest.mark.usefixtures("hub_client_registered")
 

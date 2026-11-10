@@ -147,7 +147,7 @@ def check_duplicate_group_owners(session):
     print("\n[4] groups that would end up with more than one owner")
 
     # User.unique_id is the Python attribute; the column is literally `orcid`
-    # (core_models.py:201, sa_column=Column("orcid", ...)). Raw SQL needs the
+    # (app/tables.py, sa_column=Column("orcid", ...)). Raw SQL needs the
     # column name.
     dupes = _rows(session, f"""
         SELECT ag.group_name, count(*) AS members

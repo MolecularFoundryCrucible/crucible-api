@@ -1,7 +1,7 @@
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateIndex
 
-from app.models.core_models import Instrument, ScientificMetadataBinary, User
+from app.tables import Instrument, ScientificMetadataBinary, User
 
 
 def _ddl(table, name):

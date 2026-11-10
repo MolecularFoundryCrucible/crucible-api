@@ -3,7 +3,7 @@ import pytest
 from pydantic import ValidationError
 from sqlmodel import Session, select
 from app.utils.permissions import PUBLIC_GROUP_NAME, PlatformRole, Role
-from app.models.core_models import Resource, Dataset, AssociatedFile, AccessGroup, ResourceACL
+from app.tables import Resource, Dataset, AssociatedFile, AccessGroup, ResourceACL
 from app.models.datasets import AssociatedFileCreate, AssociatedFileRead, AssociatedFileUpdate
 
 

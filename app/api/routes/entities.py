@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import EntityMfid, ProjectRef
-from app.models.core_models import (
+from app.tables import (
     Dataset, DatasetLink, DatasetSampleLink, Sample, SampleLink,
 )
 from app.models.response_schemas import EntityGraph

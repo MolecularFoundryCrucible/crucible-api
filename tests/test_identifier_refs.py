@@ -2,7 +2,7 @@
 body and query pairs (x_id + x_mfid) must agree."""
 from sqlmodel import Session, select
 
-from app.models.core_models import (
+from app.tables import (
     AccessGroup, Dataset, Instrument, Project, Resource, ResourceACL, User, UserAccessGroupLink,
 )
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
@@ -259,7 +259,7 @@ def test_thumbnail_and_sample_link_responses_carry_mfids(client, db_engine, auth
 
     from PIL import Image
 
-    from app.models.core_models import Sample
+    from app.tables import Sample
 
     ids = _setup(db_engine)
     with Session(db_engine) as session:

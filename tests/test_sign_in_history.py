@@ -10,7 +10,7 @@ from app.auth import throttle
 from app.auth.events import AuthEventType, record_event
 from app.auth.passwords import store_password
 from app.auth.throttle import attempt_password
-from app.models.core_models import AuthEvent, User
+from app.tables import AuthEvent, User
 from app.utils.permissions import PlatformRole
 
 ADA, BOSS = "0tmnyhfztdwc1000w2kspzsnh0", "0tmnyhfztdwc1000w2kspzsnh9"

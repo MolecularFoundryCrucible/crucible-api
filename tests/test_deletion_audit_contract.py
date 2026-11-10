@@ -4,7 +4,7 @@ from sqlmodel import Session
 
 import app.api.routes.deletion as deletion_routes
 from app.api.main import app
-from app.models.core_models import DeletionAuditLog, User
+from app.tables import DeletionAuditLog, User
 from app.models.deletion import DeletableResourceType, DeletionAuditScope
 from app.models.query_params import SortDirection
 from app.utils.permissions import PlatformRole

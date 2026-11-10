@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from app.api.dependencies import get_engine
 from app.build_info import api_version, branch_name, git_commit
 from app.config import get_settings
-from app.models.core_models import Keyword
+from app.tables import Keyword
 from app.models.datasets import KeywordRead
 from app.models.health import LivenessResponse, ReadinessResponse
 

@@ -32,7 +32,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.general_utils import get_utc_isoformat
-from app.models.core_models import DeletionAuditLog, Project, Resource, Sample
+from app.tables import DeletionAuditLog, Project, Resource, Sample
 from app.utils.deletion_utils import hard_delete_resource
 
 PRODUCTION_DB = "crucible"

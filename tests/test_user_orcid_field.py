@@ -4,7 +4,7 @@ import pytest
 from sqlmodel import Session
 
 from app.config import get_settings
-from app.models.core_models import Dataset, Resource, User, UserIdentity
+from app.tables import Dataset, Resource, User, UserIdentity
 from app.utils.permissions import PlatformRole
 
 ORCID = "0000-0002-1825-0097"

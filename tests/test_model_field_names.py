@@ -5,7 +5,7 @@ response and drop values validated by field name.
 """
 import pytest
 
-from app.models.core_models import IngestionRequest, Resource, Sample
+from app.tables import IngestionRequest, Resource, Sample
 
 
 @pytest.mark.parametrize("model, field", [

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from sqlmodel import Session, select
 
-from app.models.core_models import ApiKey, ApiToken, User
+from app.tables import ApiKey, ApiToken, User
 from app.utils import auth_utils
 from app.utils.permissions import PlatformRole
 

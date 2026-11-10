@@ -8,11 +8,11 @@ from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import (
+from app.tables import (
     AccessGroup, Instrument, Project, Resource, ResourceACL, User, UserAccessGroupLink)
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, AccessGroupType, GroupMembership, PlatformRole, Principal, Role)
-from app.models.core_models import UserIdentity
+from app.tables import UserIdentity
 
 MFID = "ds-1"
 OWNER_ORCID = "0000-0001-2345-6789"

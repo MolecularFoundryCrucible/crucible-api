@@ -5,7 +5,7 @@ from sqlalchemy import String, case, cast, func, literal, or_, union_all
 from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
-from app.models.core_models import Dataset, DatasetLink, DatasetSampleLink, Sample, SampleLink
+from app.tables import Dataset, DatasetLink, DatasetSampleLink, Sample, SampleLink
 from app.models.links import LinkRelationshipType
 from app.models.query_params import ResourceGraphQuery
 from app.models.resource_graph import (

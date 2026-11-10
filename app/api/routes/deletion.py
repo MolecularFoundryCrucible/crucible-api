@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import ResourceMfid
-from app.models.core_models import (
+from app.tables import (
     Dataset,
     DeletionAuditLog,
     DeletionRequest,

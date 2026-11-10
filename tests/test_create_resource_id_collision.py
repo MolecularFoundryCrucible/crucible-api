@@ -11,7 +11,7 @@ in one query.
 """
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, Resource, Sample, User, UserAccessGroupLink
+from app.tables import AccessGroup, Dataset, Resource, Sample, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole
 
 

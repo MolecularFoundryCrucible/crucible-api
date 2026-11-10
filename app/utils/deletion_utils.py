@@ -1,7 +1,7 @@
 from sqlalchemy import delete, exists, func, or_
 from sqlmodel import Session, select
 
-from app.models.core_models import (
+from app.tables import (
     AccessGroup, AccessGroupJoinRequest, AssociatedFile, Dataset,
     DatasetKeywordLink, DatasetLink, DatasetSampleLink, DeletionRequest,
     Instrument, IngestionRequest, PostprocessingRun, Project, Resource, ResourceACL,

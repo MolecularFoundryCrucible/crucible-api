@@ -7,7 +7,7 @@ from sqlmodel import Session, SQLModel, select
 from app.api.main import app
 from app.auth.sign_in import IDENTITY_TAKEN, NOT_LINKED, SERVICE_ACCOUNT, UNLINKED_ORCID, WRONG_USER, SignInRefused, resolve_sign_in
 from app.config import get_settings
-from app.models.core_models import AccessGroup, ApiToken, AuthEvent, HubLoginCode, HubLoginTransaction, User, UserAccessGroupLink, UserIdentity
+from app.tables import AccessGroup, ApiToken, AuthEvent, HubLoginCode, HubLoginTransaction, User, UserAccessGroupLink, UserIdentity
 from app.utils.auth_utils import encode_token
 from app.utils.hub_login import HubLoginRefused, create_handoff_code
 from tests.test_auth_providers import LAB_ENTRY

@@ -9,7 +9,7 @@ from app.api.dependencies import get_engine
 from app.api.path_params import UserRef
 from app.auth.api_keys import KEY_LIFETIME, MAX_ACTIVE_KEYS, TooManyKeys, active, create_key, plain_key_hashes, revoke_key, status_of
 from app.models.api_keys import ApiKeyCreate, ApiKeyCreated, ApiKeyListItem, ApiKeyRename
-from app.models.core_models import ApiKey
+from app.tables import ApiKey
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, caller_row, forget_cached_key_hash, require_human_admin_safeguard, require_platform_admin, require_recent_hub_session
 from app.utils.cursor_utils import CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor

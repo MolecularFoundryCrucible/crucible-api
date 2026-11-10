@@ -8,7 +8,7 @@ from app import config
 from app.auth import passwords
 from app.auth.passwords import ServiceAccountPassword, check_new_password, hash_password, store_password, verify_dummy, verify_password
 from app.config import ConfigurationError, check_settings, get_settings
-from app.models.core_models import LocalCredential, User
+from app.tables import LocalCredential, User
 
 PEPPER = "p" * 40
 GOOD = "violet ladder under quiet rain"

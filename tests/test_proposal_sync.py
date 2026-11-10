@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.auth.identity import linked_orcid
 from app.config import get_settings
-from app.models.core_models import AccessGroup, DeletionRequest, Project, User, UserAccessGroupLink, UserIdentity
+from app.tables import AccessGroup, DeletionRequest, Project, User, UserAccessGroupLink, UserIdentity
 from app.services import proposals
 from app.services.proposals import ProposalServiceUnavailable, lookup_proposals
 

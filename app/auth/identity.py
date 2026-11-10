@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.config import ORCID_ISSUERS, get_settings
 from app.general_utils import is_orcid
-from app.models.core_models import User, UserIdentity
+from app.tables import User, UserIdentity
 
 T = TypeVar("T")
 

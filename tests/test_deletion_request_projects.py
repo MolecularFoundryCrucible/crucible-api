@@ -1,6 +1,6 @@
 from sqlmodel import Session
 
-from app.models.core_models import Dataset, Resource, ResourceACL
+from app.tables import Dataset, Resource, ResourceACL
 from tests.test_join_request_workflow import OWNER, act, world  # noqa: F401
 
 

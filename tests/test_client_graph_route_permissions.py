@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 import app.api.routes.entities as entities_routes
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     Dataset,
     DatasetLink,

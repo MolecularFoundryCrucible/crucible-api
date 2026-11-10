@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, select
 
 from app.api.routes import deletion as deletion_routes
-from app.models.core_models import DeletionAuditLog, DeletionRequest, User
+from app.tables import DeletionAuditLog, DeletionRequest, User
 from app.models.deletion import DeletionAuditScope, DeletionRequestScope
 from app.models.query_params import SortDirection
 from app.utils.permissions import PlatformRole

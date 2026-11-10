@@ -17,7 +17,7 @@ from pwdlib.hashers.argon2 import Argon2Hasher
 from sqlmodel import Session, select
 
 from app.config import get_secret, get_settings
-from app.models.core_models import LocalCredential, User
+from app.tables import LocalCredential, User
 
 MAX_LENGTH = 256
 SERVICE_NAME = "crucible"
@@ -165,7 +165,7 @@ def revoke_all_passwords(engine, *, commit: bool, now: datetime | None = None) -
     from sqlalchemy import delete, update
 
     from app.auth.events import AuthEventType, record_event
-    from app.models.core_models import HubTokenFamily, PasswordToken, UserIdentity
+    from app.tables import HubTokenFamily, PasswordToken, UserIdentity
 
     current = now or datetime.now(timezone.utc)
     with Session(engine) as session, session.begin():

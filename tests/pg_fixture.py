@@ -18,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlmodel import Session, create_engine
 
-from app.models.core_models import AccessGroup, Dataset, Project, Resource, ResourceACL, User, UserAccessGroupLink
+from app.tables import AccessGroup, Dataset, Project, Resource, ResourceACL, User, UserAccessGroupLink
 from tests.people import internal_id
 
 PG_URL = os.getenv("CRUCIBLE_TEST_PG_URL")

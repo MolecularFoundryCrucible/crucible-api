@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import Session
 
-from app.models.core_models import AccessGroup, Dataset, Resource, ResourceACL, Sample
+from app.tables import AccessGroup, Dataset, Resource, ResourceACL, Sample
 from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, PlatformRole, Role
 
 ME = "0000-0007-0000-0001"

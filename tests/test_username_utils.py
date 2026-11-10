@@ -3,12 +3,12 @@ from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import User
+from app.tables import User
 from app.utils.user_utils import (
     assert_username_available, generate_unique_username, is_username_available,
     sanitize_username_from_email, sanitize_username_from_name, validate_username_format,
 )
-from app.models.core_models import UserIdentity
+from app.tables import UserIdentity
 
 
 class TestValidateUsernameFormat:

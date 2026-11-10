@@ -4,7 +4,7 @@ from sqlalchemy import delete, func
 from sqlmodel import Session, select
 
 from app.config import get_settings
-from app.models.core_models import (
+from app.tables import (
     AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily,
 )
 

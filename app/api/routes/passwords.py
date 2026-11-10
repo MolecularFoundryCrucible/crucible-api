@@ -84,7 +84,7 @@ def _field_error(field: str, kind: str, message: str, **context) -> HTTPExceptio
 
 
 def _caller_and_credential(engine, auth_res: Principal):
-    from app.models.core_models import LocalCredential
+    from app.tables import LocalCredential
 
     with Session(engine) as session:
         user = caller_row(session, auth_res)
@@ -100,7 +100,7 @@ def _caller_and_credential(engine, auth_res: Principal):
 def _write_password(engine, user_id: int, password: str, *, first: bool, keep_family: str | None) -> None:
     from app.auth.events import AuthEventType, record_event
     from app.auth.passwords import store_password
-    from app.models.core_models import LocalCredential, User
+    from app.tables import LocalCredential, User
     from app.utils.hub_tokens import revoke_all_hub_tokens
 
     with hash_slot(), Session(engine) as session, session.begin():
@@ -168,7 +168,7 @@ def remove_user_password(user_ref: UserRef, auth_res: Annotated[Principal, Depen
     from app.auth.events import AuthEventType, record_event
     from app.auth.linking import sign_in_methods
     from app.auth.password_links import void_links
-    from app.models.core_models import LocalCredential, User
+    from app.tables import LocalCredential, User
     from app.utils.hub_tokens import revoke_all_hub_tokens
 
     with Session(get_engine()) as session, session.begin():

@@ -13,11 +13,11 @@ project_id — see docs/permission_system_plan.md, "Groups".
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
+from app.tables import AccessGroup, Project, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType
 from app.utils.project_utils import is_project_owner
 from tests.people import internal_id
-from app.models.core_models import UserIdentity
+from app.tables import UserIdentity
 
 
 def _engine():

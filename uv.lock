@@ -448,7 +448,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "playwright" },
     { name = "pyflakes" },
     { name = "pytest" },
@@ -497,7 +496,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "playwright", specifier = "==1.64.1" },
     { name = "pyflakes", specifier = ">=3.2.0" },
     { name = "pytest", specifier = ">=9.2.0" },

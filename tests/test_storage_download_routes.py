@@ -90,7 +90,7 @@ def test_download_link_rejects_an_unknown_disposition(client, db_engine, signer,
 
 
 def test_bulk_links_honor_inline_disposition(client, db_engine, signer, admin):
-    file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
+    _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
     response = client.get(f"/datasets/{DS}/download_links?disposition=inline")
     assert response.status_code == 200, response.text
     kwargs = signer.bucket.return_value.blob.return_value.generate_signed_url.call_args.kwargs

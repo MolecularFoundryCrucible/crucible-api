@@ -1,8 +1,8 @@
 """instrument_name is display text resolved through instrument_mfid, never an identifier."""
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, Instrument, Resource
-from app.utils.permissions import PlatformRole, Role
+from app.models.core_models import AccessGroup, Dataset, Resource
+from app.utils.permissions import PlatformRole
 from tests.test_instrument_lifecycle import _user
 
 ADMIN = "admin-1"

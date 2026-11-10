@@ -10,7 +10,7 @@ routes.
 The access group is keyed by the project's MFID (Project.unique_id), not its
 project_id — see docs/permission_system_plan.md, "Groups".
 """
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
 from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink

@@ -2,7 +2,7 @@ import pytest
 from sqlmodel import Session, select
 
 from app.models.core_models import AccessGroup, Dataset, Resource, ResourceACL, ScientificMetadataBinary
-from app.utils.permissions import PlatformRole, Role
+from app.utils.permissions import Role
 
 
 def _request_lines(caplog):

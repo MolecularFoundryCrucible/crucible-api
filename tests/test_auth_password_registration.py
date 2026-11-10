@@ -9,7 +9,7 @@ from app.api.main import app
 from app.api.routes import passwords as routes
 from app.auth.throttle import attempt_password
 from app.tables import (
-    AccessGroup, AuthEvent, DeviceAuthorization, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential,
+    AccessGroup, AuthEvent, DeviceAuthorization, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, LocalCredential,
     LoginThrottle, PasswordToken, User, UserAccessGroupLink,
 )
 from app.utils.auth_utils import authenticate_user
@@ -29,7 +29,7 @@ def setup(db_engine, hub_client_registered, orcid_provider_settings, monkeypatch
     orcid_provider_settings()
     monkeypatch.setattr(routes, "get_api_root_path", lambda: "")
     SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (
-        LocalCredential, LoginThrottle, PasswordToken, HubTokenFamily, HubRefreshToken, HubAccessToken, HubLoginCode, HubLoginTransaction, DeviceAuthorization,
+        LocalCredential, LoginThrottle, PasswordToken, TokenFamily, RefreshToken, AccessToken, LoginCode, LoginTransaction, DeviceAuthorization,
     )])
     with Session(db_engine) as session:
         session.add(User(unique_id="0tmnyhfztdwc1000w2kspzsnh0", username="ada", first_name="Ada", last_name="Lovelace", email="ada@example.org"))
@@ -70,12 +70,12 @@ def test_asking_for_an_account_creates_one_that_waits_for_approval(client, setup
         group = session.exec(select(AccessGroup).where(AccessGroup.group_name == user.unique_id)).one()
         assert session.exec(select(UserAccessGroupLink).where(UserAccessGroupLink.user_id == user.id, UserAccessGroupLink.accessgroup_id == group.id)).one().role == "owner"
         assert session.exec(select(AuthEvent.event).where(AuthEvent.user_id == user.id)).all() == ["registered"]
-        assert session.exec(select(HubTokenFamily)).all() == []
+        assert session.exec(select(TokenFamily)).all() == []
     assert attempt_password(setup, user.id, PASSWORD, None)
 
 
 def test_the_sign_in_page_links_to_registration_only_when_it_is_open(client, monkeypatch):
-    from app.api.routes.hub_auth import _password_page
+    from app.api.routes.browser_sign_in import _password_page
     from starlette.requests import Request
 
     request = Request({"type": "http", "method": "GET", "path": "/oauth/password", "headers": [], "query_string": b""})

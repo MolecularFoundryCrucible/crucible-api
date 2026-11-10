@@ -9,9 +9,9 @@ import pytest
 from sqlmodel import Session, SQLModel, select
 
 from app.api.main import app
-from app.tables import AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserIdentity
+from app.tables import AuthEvent, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User, UserIdentity
 from app.utils.auth_utils import authenticate_user
-from app.utils.hub_tokens import issue_hub_tokens
+from app.auth.tokens import issue_tokens
 from tests.test_auth_providers import remote  # noqa: F401
 
 ORCID_ISSUER = "https://orcid.org"
@@ -29,7 +29,7 @@ CHALLENGE = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest())
 
 @pytest.fixture
 def world(remote, client, db_engine, monkeypatch):  # noqa: F811
-    import app.api.routes.hub_auth as hub_routes
+    import app.api.routes.browser_sign_in as hub_routes
 
     for name, value in {"HUB_AUTH_CALLBACK_URI": f"{SIGN_IN_CALLBACK},{LINK_CALLBACK}", "HUB_AUTH_PUBLIC_API_URL": "http://localhost:7777",
                         "HUB_AUTH_ENABLED": "true", "HUB_AUTH_CLIENT_SECRET": HUB[1], "HUB_AUTH_CLIENT_ID": HUB[0], "CRUCIBLE_AUTH_IDENTITY_LOOKUP": "true"}.items():
@@ -38,7 +38,7 @@ def world(remote, client, db_engine, monkeypatch):  # noqa: F811
     get_settings.cache_clear()
     monkeypatch.setattr(hub_routes, "get_api_root_path", lambda: "")
     app.dependency_overrides.pop(authenticate_user, None)
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginTransaction, HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginTransaction, LoginCode, TokenFamily, RefreshToken, AccessToken)])
     with Session(db_engine) as session:
         for unique_id, orcid in ((ADA, ADA_ORCID), (BOB, BOB_ORCID)):
             user = User(unique_id=unique_id, username=unique_id[-4:], first_name="A", last_name="B", email=None)
@@ -55,7 +55,7 @@ def user_id(engine, unique_id):
 
 
 def hub_session(engine, unique_id, *, age=timedelta(seconds=5)):
-    return issue_hub_tokens(engine, user_id(engine, unique_id), "crucible-hub", auth_time=datetime.now(timezone.utc) - age).access_token
+    return issue_tokens(engine, user_id(engine, unique_id), "crucible-hub", auth_time=datetime.now(timezone.utc) - age).access_token
 
 
 def bearer(token):
@@ -289,7 +289,7 @@ def test_a_link_belongs_to_the_client_whose_session_started_it(world, monkeypatc
     ada = hub_session(engine, ADA)
     code = link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab"))
     assert client.post("/oauth/link/preview", auth=other, json=code_body(code, ada)).status_code == 401
-    other_session = issue_hub_tokens(engine, user_id(engine, ADA), "other-app", auth_time=datetime.now(timezone.utc)).access_token
+    other_session = issue_tokens(engine, user_id(engine, ADA), "other-app", auth_time=datetime.now(timezone.utc)).access_token
     assert client.post("/oauth/link/confirm", auth=hub, json=code_body(code, other_session)).status_code == 401
     assert client.post("/oauth/link/confirm", auth=hub, json=code_body(code, ada)).status_code == 200
 
@@ -309,7 +309,7 @@ def test_confirming_needs_a_recent_sign_in_again(world):
     ada = hub_session(engine, ADA)
     code = link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab"))
     with Session(engine) as session:
-        for family in session.exec(select(HubTokenFamily)).all():
+        for family in session.exec(select(TokenFamily)).all():
             family.auth_time = datetime.now(timezone.utc) - timedelta(minutes=11)
             session.add(family)
         session.commit()
@@ -322,7 +322,7 @@ def test_start_address_expires_after_two_minutes(world):
     _, client, engine = world
     start_url = start_link(world, hub_session(engine, ADA))
     with Session(engine) as session:
-        transaction = session.exec(select(HubLoginTransaction).where(HubLoginTransaction.purpose == "link")).one()
+        transaction = session.exec(select(LoginTransaction).where(LoginTransaction.purpose == "link")).one()
         transaction.created_at = datetime.now(timezone.utc) - timedelta(seconds=121)
         session.add(transaction)
         session.commit()

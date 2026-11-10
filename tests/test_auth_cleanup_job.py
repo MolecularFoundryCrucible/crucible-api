@@ -6,15 +6,15 @@ from sqlmodel import Session, SQLModel, select
 
 from app.cli import auth as auth_cli
 from app.config import ConfigurationError, get_settings
-from app.tables import DeviceAuthorization, LoginThrottle, AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily
-from app.utils.hub_auth_maintenance import cleanup_hub_auth
+from app.tables import DeviceAuthorization, LoginThrottle, AuthEvent, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily
+from app.auth.cleanup import cleanup_sign_in_records
 
 NOW = datetime.now(timezone.utc)
 
 
 @pytest.fixture
 def history(db_engine):
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginTransaction, HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken, LoginThrottle, DeviceAuthorization)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginTransaction, LoginCode, TokenFamily, RefreshToken, AccessToken, LoginThrottle, DeviceAuthorization)])
     with Session(db_engine) as session:
         for days, event in ((400, "sign_in"), (366, "provider_refused"), (364, "sign_in"), (10, "sign_in_failed"), (0, "identity_linked")):
             session.add(AuthEvent(at=NOW - timedelta(days=days), event=event))
@@ -28,16 +28,16 @@ def kept(engine):
 
 
 def test_cleanup_removes_history_older_than_a_year_and_keeps_the_rest(history):
-    assert cleanup_hub_auth(history, now=NOW)["auth_event"] == 2
+    assert cleanup_sign_in_records(history, now=NOW)["auth_event"] == 2
     assert len(kept(history)) == 5
-    assert cleanup_hub_auth(history, commit=True, now=NOW)["auth_event"] == 2
+    assert cleanup_sign_in_records(history, commit=True, now=NOW)["auth_event"] == 2
     assert kept(history) == ["identity_linked", "sign_in", "sign_in_failed"]
 
 
 def test_retention_period_is_a_setting(history, monkeypatch):
     monkeypatch.setenv("CRUCIBLE_AUTH_EVENT_RETENTION_DAYS", "30")
     get_settings.cache_clear()
-    assert cleanup_hub_auth(history, commit=True, now=NOW)["auth_event"] == 3
+    assert cleanup_sign_in_records(history, commit=True, now=NOW)["auth_event"] == 3
     assert kept(history) == ["identity_linked", "sign_in_failed"]
 
 

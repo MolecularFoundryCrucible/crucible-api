@@ -5,11 +5,11 @@ from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.tables import (
-    AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily,
+    AuthEvent, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily,
 )
 
 
-def cleanup_hub_auth(engine, *, commit: bool = False, batch_size: int = 1000, now: datetime | None = None) -> dict[str, int]:
+def cleanup_sign_in_records(engine, *, commit: bool = False, batch_size: int = 1000, now: datetime | None = None) -> dict[str, int]:
     if not 1 <= batch_size <= 10000:
         raise ValueError("batch_size must be between 1 and 10000")
     cutoff = now or datetime.now(timezone.utc)
@@ -17,34 +17,34 @@ def cleanup_hub_auth(engine, *, commit: bool = False, batch_size: int = 1000, no
     expired_access_ids = []
     with Session(engine) as session, session.begin():
         for model, key in (
-            (HubLoginTransaction, HubLoginTransaction.state_hash),
-            (HubLoginCode, HubLoginCode.code_hash),
-            (HubAccessToken, HubAccessToken.token_hash),
+            (LoginTransaction, LoginTransaction.state_hash),
+            (LoginCode, LoginCode.code_hash),
+            (AccessToken, AccessToken.token_hash),
         ):
             query = select(key).where(model.expires_at <= cutoff).order_by(model.expires_at, key).limit(batch_size)
             if commit:
                 query = query.with_for_update(skip_locked=True)
             ids = session.exec(query).all()
-            if model is HubAccessToken:
+            if model is AccessToken:
                 expired_access_ids = ids
             counts[model.__tablename__] = len(ids)
             if commit and ids:
                 session.execute(delete(model).where(key.in_(ids)))
 
-        query = select(HubTokenFamily.id).where(HubTokenFamily.expires_at <= cutoff).order_by(HubTokenFamily.expires_at, HubTokenFamily.id).limit(batch_size)
+        query = select(TokenFamily.id).where(TokenFamily.expires_at <= cutoff).order_by(TokenFamily.expires_at, TokenFamily.id).limit(batch_size)
         if commit:
             query = query.with_for_update(skip_locked=True)
         families = session.exec(query).all()
-        for model in (HubAccessToken, HubRefreshToken):
+        for model in (AccessToken, RefreshToken):
             condition = model.family_id.in_(families)
-            if model is HubAccessToken and not commit:
+            if model is AccessToken and not commit:
                 condition = condition & model.token_hash.not_in(expired_access_ids)
             counts[model.__tablename__] = counts.get(model.__tablename__, 0) + session.exec(select(func.count()).select_from(model).where(condition)).one()
             if commit and families:
                 session.execute(delete(model).where(model.family_id.in_(families)))
-        counts[HubTokenFamily.__tablename__] = len(families)
+        counts[TokenFamily.__tablename__] = len(families)
         if commit and families:
-            session.execute(delete(HubTokenFamily).where(HubTokenFamily.id.in_(families)))
+            session.execute(delete(TokenFamily).where(TokenFamily.id.in_(families)))
 
         oldest_kept = cutoff - timedelta(days=get_settings().auth.event_retention_days)
         query = select(AuthEvent.id).where(AuthEvent.at < oldest_kept).order_by(AuthEvent.at, AuthEvent.id).limit(batch_size)

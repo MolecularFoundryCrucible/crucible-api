@@ -5,8 +5,8 @@ from sqlmodel import Session, SQLModel, select
 
 from app.auth.sign_in import IDENTITY_TAKEN, NOT_LINKED, SERVICE_ACCOUNT, UNLINKED_ORCID, WRONG_USER, SignInRefused, resolve_sign_in
 from app.config import get_settings
-from app.tables import AccessGroup, AuthEvent, HubLoginCode, HubLoginTransaction, User, UserAccessGroupLink, UserIdentity
-from app.utils.hub_login import HubLoginRefused, create_handoff_code
+from app.tables import AccessGroup, AuthEvent, LoginCode, LoginTransaction, User, UserAccessGroupLink, UserIdentity
+from app.auth.login_transactions import LoginRefused, create_handoff_code
 from tests.test_auth_providers import LAB_ENTRY
 from tests.test_hub_tokens import ORCID_PROVIDER
 from app.config import OidcProvider
@@ -200,35 +200,35 @@ def test_sign_in_writes_one_event(db_engine, lookup_on):
 
 def transaction(required_user=None):
     now = datetime.now(timezone.utc)
-    return HubLoginTransaction(state_hash="s", browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", required_user=required_user, created_at=now, expires_at=now + timedelta(minutes=10))
+    return LoginTransaction(state_hash="s", browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", required_user=required_user, created_at=now, expires_at=now + timedelta(minutes=10))
 
 
 @pytest.fixture
 def hub_tables(db_engine):
-    SQLModel.metadata.create_all(db_engine, tables=[HubLoginCode.__table__, HubLoginTransaction.__table__])
+    SQLModel.metadata.create_all(db_engine, tables=[LoginCode.__table__, LoginTransaction.__table__])
 
 
 def test_hub_uses_the_resolver_for_an_mfid_person(db_engine, hub_tables, lookup_on):
     person(db_engine, MFID, ORCID_ISSUER, ORCID)
     create_handoff_code(db_engine, transaction(), ORCID_PROVIDER, ORCID, None, None)
     with Session(db_engine) as session:
-        assert session.exec(select(HubLoginCode.user_unique_id)).one() == MFID
+        assert session.exec(select(LoginCode.user_unique_id)).one() == MFID
 
 
 @pytest.mark.parametrize("required, error", [(None, "access_denied"), ("someone-else", "login_required")])
 def test_hub_refusal_keeps_the_event_and_issues_no_code(db_engine, hub_tables, lookup_on, required, error):
-    with pytest.raises(HubLoginRefused) as caught:
+    with pytest.raises(LoginRefused) as caught:
         create_handoff_code(db_engine, transaction(required), LAB, "stranger", None, None)
     assert caught.value.error == error
     with Session(db_engine) as session:
-        assert session.exec(select(HubLoginCode)).all() == []
+        assert session.exec(select(LoginCode)).all() == []
         event = session.exec(select(AuthEvent)).one()
         assert (event.event, event.user_id, event.issuer) == ("provider_refused", None, LAB_ISSUER)
 
 
 def test_unlinked_orcid_at_the_hub_is_access_denied(db_engine, hub_tables, lookup_on):
     person(db_engine, ORCID)
-    with pytest.raises(HubLoginRefused) as caught:
+    with pytest.raises(LoginRefused) as caught:
         create_handoff_code(db_engine, transaction(), ORCID_PROVIDER, ORCID, None, None)
     assert caught.value.error == "access_denied"
 

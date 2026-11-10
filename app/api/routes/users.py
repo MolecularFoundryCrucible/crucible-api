@@ -38,7 +38,7 @@ from app.auth.linking import sign_in_labels
 from app.auth.password_links import void_links
 from app.auth.registration import NotPending, StillReferenced, approve_pending_user, reject_pending_user
 from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
-from app.utils.hub_tokens import revoke_all_hub_tokens
+from app.auth.tokens import revoke_all_tokens
 from app.services.proposals import find_mf_user_proposals, usable_discovered_projects
 from app.utils.user_utils import assert_profile_fields_available, assert_username_kept_for_password, assert_self_chosen_username_allowed, commit_user, person_by_reference, profile_conflict, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import project_fields, project_leads, resolve_project_reference
@@ -729,7 +729,7 @@ def disable_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(autho
                     raise HTTPException(status_code=409, detail="Cannot disable the last active human platform administrator")
             user.disabled_at = datetime.now(timezone.utc)
             session.add(user)
-            revoke_all_hub_tokens(session, user.id)
+            revoke_all_tokens(session, user.id)
             void_links(session, user)
             record_event(session, AuthEventType.DISABLED, user=user, actor=caller_row(session, auth_res))
             session.commit()

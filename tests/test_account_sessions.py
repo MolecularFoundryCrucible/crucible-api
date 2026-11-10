@@ -8,10 +8,10 @@ from sqlmodel import Session, SQLModel, select
 
 from app.api.main import app
 from app.cli import auth as auth_cli
-from app.tables import AuthEvent, HubAccessToken, HubRefreshToken, HubTokenFamily, User
+from app.tables import AuthEvent, AccessToken, RefreshToken, TokenFamily, User
 from app.utils import auth_utils
 from app.utils.auth_utils import authenticate_user
-from app.utils.hub_tokens import AUTHORIZATION_CODE, DEVICE_CODE, issue_hub_tokens
+from app.auth.tokens import AUTHORIZATION_CODE, DEVICE_CODE, issue_tokens
 
 ADA, BOB, BOSS, CHIEF = "0tmnyhfztdwc1000w2kspzsnh0", "0tmnyhfztdwc1000w2kspzsnh1", "0tmnyhfztdwc1000w2kspzsnh9", "0tmnyhfztdwc1000w2kspzsnh8"
 
@@ -19,7 +19,7 @@ ADA, BOB, BOSS, CHIEF = "0tmnyhfztdwc1000w2kspzsnh0", "0tmnyhfztdwc1000w2kspzsnh
 @pytest.fixture
 def people(db_engine, hub_client_registered, orcid_provider_settings):
     orcid_provider_settings()
-    SQLModel.metadata.create_all(db_engine, tables=[HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__])
+    SQLModel.metadata.create_all(db_engine, tables=[TokenFamily.__table__, RefreshToken.__table__, AccessToken.__table__])
     with Session(db_engine) as session:
         for unique_id, username, role in ((ADA, "ada", "none"), (BOB, "bob", "none"), (BOSS, "boss", "admin"), (CHIEF, "chief", "admin")):
             session.add(User(unique_id=unique_id, username=username, first_name="A", last_name="B", email=None, platform_role=role))
@@ -34,7 +34,7 @@ def user_id(engine, unique_id):
 
 
 def sign_in(engine, unique_id, *, age=timedelta(seconds=5), grant_type=AUTHORIZATION_CODE):
-    return issue_hub_tokens(engine, user_id(engine, unique_id), "crucible-hub", auth_time=datetime.now(timezone.utc) - age, grant_type=grant_type).access_token
+    return issue_tokens(engine, user_id(engine, unique_id), "crucible-hub", auth_time=datetime.now(timezone.utc) - age, grant_type=grant_type).access_token
 
 
 def bearer(token, **extra):
@@ -131,7 +131,7 @@ def test_ended_and_expired_sessions_are_not_listed(client, people):
     current = sign_in(people, ADA)
     sign_in(people, ADA)
     with Session(people) as session:
-        family = session.exec(select(HubTokenFamily).order_by(HubTokenFamily.created_at)).all()[-1]
+        family = session.exec(select(TokenFamily).order_by(TokenFamily.created_at)).all()[-1]
         family.last_refreshed_at = datetime.now(timezone.utc) - timedelta(days=8)
         session.add(family)
         session.commit()

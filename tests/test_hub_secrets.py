@@ -11,9 +11,9 @@ import pytest
 from app.auth import providers
 from app.config import ConfigurationError, get_settings
 
-from app.api.routes.hub_auth import require_hub_client
+from app.api.routes.browser_sign_in import require_client
 from app.config import optional_secret
-from app.utils.hub_login import HubLoginUnavailable, hub_auth_enabled, load_login_config
+from app.auth.login_transactions import SignInUnavailable, sign_in_enabled, load_login_config
 
 
 VERSION = "projects/test-project/secrets/hub-client/versions/1"
@@ -104,23 +104,23 @@ def test_other_secrets_keep_their_value_as_given(monkeypatch, manager):
 
 
 def test_hub_auth_is_disabled_when_unset():
-    assert hub_auth_enabled() is False
+    assert sign_in_enabled() is False
 
 
 def test_managed_secret_authenticates_client(monkeypatch, manager):
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     monkeypatch.setenv("HUB_AUTH_CLIENT_ID", "crucible-hub")
-    assert require_hub_client(HTTPBasicCredentials(username="crucible-hub", password="test-secret-value-padded-to-32-chars00")) == "crucible-hub"
+    assert require_client(HTTPBasicCredentials(username="crucible-hub", password="test-secret-value-padded-to-32-chars00")) == "crucible-hub"
 
 
 def test_disabled_auth_never_fetches_secrets(monkeypatch, manager):
     monkeypatch.setenv("HUB_AUTH_ENABLED", "false")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     with pytest.raises(HTTPException) as result:
-        require_hub_client(None)
+        require_client(None)
     assert result.value.status_code == 503
-    with pytest.raises(HubLoginUnavailable):
+    with pytest.raises(SignInUnavailable):
         load_login_config()
     manager.assert_not_called()
 
@@ -133,10 +133,10 @@ def test_unavailable_reference_becomes_safe_auth_failure(monkeypatch, manager, o
     monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", "https://example.test/api/v3")
     manager.side_effect = DefaultCredentialsError("sensitive-error")
     with pytest.raises(HTTPException) as result:
-        require_hub_client(None)
+        require_client(None)
     assert result.value.status_code == 503
     assert "sensitive-error" not in str(result.value)
-    with pytest.raises(HubLoginUnavailable):
+    with pytest.raises(SignInUnavailable):
         load_login_config()
     assert manager.call_count == 2
 

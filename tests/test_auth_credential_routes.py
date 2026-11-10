@@ -12,12 +12,12 @@ from app.auth.password_links import issue_link
 from app.auth.passwords import store_password
 from app.auth.throttle import attempt_password
 from app.tables import (
-    AuthEvent, DeviceAuthorization, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential, LoginThrottle,
+    AuthEvent, DeviceAuthorization, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, LocalCredential, LoginThrottle,
     PasswordToken, User,
 )
 from app.utils import auth_utils
 from app.utils.auth_utils import authenticate_user
-from app.utils.hub_tokens import DEVICE_CODE, issue_hub_tokens
+from app.auth.tokens import DEVICE_CODE, issue_tokens
 from app.utils.permissions import PlatformRole
 
 ADA, BOB, NEWCOMER, BOSS, CHIEF, ROBOT = (
@@ -38,7 +38,7 @@ def people(db_engine, hub_client_registered, orcid_provider_settings, monkeypatc
         monkeypatch.setenv(name, value)
     orcid_provider_settings()
     SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (
-        LocalCredential, LoginThrottle, PasswordToken, HubTokenFamily, HubRefreshToken, HubAccessToken, HubLoginCode, HubLoginTransaction, DeviceAuthorization,
+        LocalCredential, LoginThrottle, PasswordToken, TokenFamily, RefreshToken, AccessToken, LoginCode, LoginTransaction, DeviceAuthorization,
     )])
     with Session(db_engine) as session:
         session.add(User(unique_id=ADA, username="ada.lovelace", first_name="Ada", last_name="Lovelace", email="ada@example.org"))
@@ -67,7 +67,7 @@ def row(engine, unique_id):
 
 
 def sign_in(engine, unique_id, *, age=timedelta(seconds=5), grant_type="authorization_code"):
-    return issue_hub_tokens(engine, row(engine, unique_id).id, "crucible-hub", auth_time=datetime.now(timezone.utc) - age, grant_type=grant_type).access_token
+    return issue_tokens(engine, row(engine, unique_id).id, "crucible-hub", auth_time=datetime.now(timezone.utc) - age, grant_type=grant_type).access_token
 
 
 def bearer(token, *, elevated=False):

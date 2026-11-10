@@ -9,9 +9,9 @@ from fastapi.testclient import TestClient
 from app.api import main
 from app.api.dependencies import get_engine
 from app.config import get_settings
-from app.api.routes import hub_auth
-from app.utils.hub_login import HubLoginUnavailable, InvalidHubLogin
-from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant
+from app.api.routes import browser_sign_in
+from app.auth.login_transactions import SignInUnavailable, InvalidLoginRequest
+from app.auth.tokens import TokenPair, InvalidGrant
 
 
 MARKER = "sensitive-test-credential"
@@ -32,7 +32,7 @@ def client(monkeypatch, caplog, orcid_provider_settings):
 
 
 def assert_private(response):
-    for name, value in main.HUB_AUTH_HEADERS.items():
+    for name, value in main.SIGN_IN_HEADERS.items():
         assert response.headers[name] == value
     assert response.headers["X-Request-ID"]
 
@@ -96,7 +96,7 @@ def test_authentication_failures_are_private(client, monkeypatch):
     assert_private(response)
 
 
-@pytest.mark.parametrize("error,status", [(InvalidHubGrant(), 401), (RuntimeError(MARKER), 500)])
+@pytest.mark.parametrize("error,status", [(InvalidGrant(), 401), (RuntimeError(MARKER), 500)])
 def test_refresh_errors_do_not_disclose_internal_details(client, monkeypatch, caplog, error, status):
     def fail(*args, **kwargs):
         raise error
@@ -104,7 +104,7 @@ def test_refresh_errors_do_not_disclose_internal_details(client, monkeypatch, ca
     from app.auth import oauth_server
 
     monkeypatch.setattr(oauth_server.RefreshGrant, "authenticate_refresh_token", lambda self, token: oauth_server._Credential(AUTH[0], 1))
-    monkeypatch.setattr(oauth_server, "refresh_hub_tokens", fail)
+    monkeypatch.setattr(oauth_server, "refresh_tokens", fail)
     with caplog.at_level(logging.INFO):
         response = client.post("/auth/hub/refresh", auth=AUTH, json={"refresh_token": "x" * 64})
     assert response.status_code == status
@@ -115,13 +115,13 @@ def test_refresh_errors_do_not_disclose_internal_details(client, monkeypatch, ca
 
 def test_browser_failures_are_private(client, monkeypatch):
     def unavailable():
-        raise HubLoginUnavailable
+        raise SignInUnavailable
 
     def invalid(*args):
-        raise InvalidHubLogin
+        raise InvalidLoginRequest
 
-    monkeypatch.setattr(hub_auth, "load_login_config", unavailable)
-    monkeypatch.setattr(hub_auth, "consume_login", invalid)
+    monkeypatch.setattr(browser_sign_in, "load_login_config", unavailable)
+    monkeypatch.setattr(browser_sign_in, "consume_login", invalid)
     response = client.get("/auth/hub/login", params={
         "client_id": "hub", "redirect_uri": "https://example.test/hub/auth/callback",
         "state": "s" * 16, "code_challenge": "c" * 43, "code_challenge_method": "S256",
@@ -135,12 +135,12 @@ def test_browser_failures_are_private(client, monkeypatch):
 
 def test_successful_credentials_and_revocation_remain_private(client, monkeypatch):
     now = datetime.now(timezone.utc)
-    pair = HubTokenPair("a" * 64, "r" * 64, now + timedelta(minutes=15), now + timedelta(days=30), "test-user")
+    pair = TokenPair("a" * 64, "r" * 64, now + timedelta(minutes=15), now + timedelta(days=30), "test-user")
     from app.auth import oauth_server
 
     monkeypatch.setattr(oauth_server.RefreshGrant, "authenticate_refresh_token", lambda self, token: oauth_server._Credential(AUTH[0], 1))
-    monkeypatch.setattr(oauth_server, "refresh_hub_tokens", lambda *args: pair)
-    monkeypatch.setattr(oauth_server, "revoke_hub_tokens", lambda *args: None)
+    monkeypatch.setattr(oauth_server, "refresh_tokens", lambda *args: pair)
+    monkeypatch.setattr(oauth_server, "revoke_tokens", lambda *args: None)
     response = client.post("/auth/hub/refresh", auth=AUTH, json={"refresh_token": "r" * 64})
     assert response.status_code == 200
     assert response.json()["access_token"] == pair.access_token

@@ -11,7 +11,7 @@ from app.auth.api_keys import KEY_LIFETIME, MAX_ACTIVE_KEYS, TooManyKeys, active
 from app.models.api_keys import ApiKeyCreate, ApiKeyCreated, ApiKeyListItem, ApiKeyRename
 from app.tables import ApiKey
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, caller_row, forget_cached_key_hash, require_human_admin_safeguard, require_platform_admin, require_recent_hub_session
+from app.utils.auth_utils import authorize_user, caller_row, forget_cached_key_hash, require_human_admin_safeguard, require_platform_admin, require_recent_session
 from app.utils.cursor_utils import CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor
 from app.utils.permissions import Principal
 from app.utils.user_utils import resolve_user_by_identifier
@@ -65,7 +65,7 @@ def _revoke(session: Session, user_id: int, key_id: int, actor) -> None:
 @router.post("/account/apikeys", response_model=ApiKeyCreated, status_code=201, responses={**_STEP_UP, 409: {"description": f"`too_many_keys`: at most {MAX_ACTIVE_KEYS} active keys"}, 422: {"description": "expires_at in the past or more than a year away"}})
 def create_account_apikey(body: ApiKeyCreate, response: Response, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Create another API key. The key is shown only in this response. Needs a Hub session with a recent sign-in."""
-    require_recent_hub_session(auth_res, "Creating an API key needs a Hub session, not an API key")
+    require_recent_session(auth_res, "Creating an API key needs a Hub session, not an API key")
     now = datetime.now(timezone.utc)
     if body.expires_at is not None and not now < body.expires_at <= now + KEY_LIFETIME:
         raise HTTPException(status_code=422, detail="expires_at must be in the future and at most a year away")

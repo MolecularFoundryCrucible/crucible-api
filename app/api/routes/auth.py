@@ -21,7 +21,7 @@ def list_sign_in_methods():
     `registration_url` while people can ask for an account."""
     from app.auth.clients import sign_in_enabled
     from app.auth.password_registration import registration_open
-    from app.utils.hub_login import LOCAL_PROVIDER, HubLoginUnavailable, public_api_url
+    from app.auth.login_transactions import LOCAL_PROVIDER, SignInUnavailable, public_api_url
 
     settings = get_settings()
     if not sign_in_enabled():
@@ -32,7 +32,7 @@ def list_sign_in_methods():
         if registration_open():
             try:
                 registration_url = f"{public_api_url()}/oauth/register"
-            except HubLoginUnavailable:
+            except SignInUnavailable:
                 registration_url = None
         methods.append(AuthMethodRead(key=LOCAL_PROVIDER, display_name="Password", kind="password", is_orcid=False, registration_url=registration_url))
     return methods

@@ -258,14 +258,14 @@ def _password_link(user_ref: str) -> tuple[str, str, str, str]:
     from app.api.routes.passwords import link_url
     from app.auth.password_links import LinkRefused, issue_link, link_purpose
     from app.config import get_settings
-    from app.utils.hub_login import HubLoginUnavailable, public_api_url
+    from app.auth.login_transactions import SignInUnavailable, public_api_url
     from app.utils.user_utils import person_by_reference
 
     if not get_settings().auth.password_enabled:
         raise Refused("Password sign-in is off; set CRUCIBLE_AUTH_PASSWORD_ENABLED=true first")
     try:
         base = public_api_url()
-    except HubLoginUnavailable:
+    except SignInUnavailable:
         raise Refused("The public API address is not set, so no link can be made") from None
     with Session(get_engine()) as session, session.begin():
         user = person_by_reference(session, user_ref)

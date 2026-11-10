@@ -583,9 +583,9 @@ def test_reference_client_resumes_after_lost_part_response(flow, tmp_path, monke
 def test_real_authentication_supports_both_credentials(use_engine, flow, monkeypatch, credential_kind):
     from uuid import uuid4
     from sqlmodel import SQLModel
-    from app.tables import ApiToken, HubTokenFamily, HubRefreshToken, HubAccessToken
+    from app.tables import ApiToken, TokenFamily, RefreshToken, AccessToken
     from app.utils import auth_utils
-    from app.utils.hub_tokens import issue_hub_tokens, refresh_hub_tokens, revoke_hub_tokens
+    from app.auth.tokens import issue_tokens, refresh_tokens, revoke_tokens
     from app.api.main import app
 
     client, engine, storage = flow
@@ -597,15 +597,15 @@ def test_real_authentication_supports_both_credentials(use_engine, flow, monkeyp
             session.add(ApiToken(token=credential, user_id=internal_id(session, "owner"), user_unique_id="owner", access_group_id="owner-group"))
             session.commit()
     else:
-        SQLModel.metadata.create_all(engine, tables=[HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__])
-        pair = issue_hub_tokens(engine, internal_id(engine, "owner"), "crucible-hub")
+        SQLModel.metadata.create_all(engine, tables=[TokenFamily.__table__, RefreshToken.__table__, AccessToken.__table__])
+        pair = issue_tokens(engine, internal_id(engine, "owner"), "crucible-hub")
         credential = pair.access_token
     headers = {"Authorization": f"Bearer {credential}"}
     response = client.post(BASE + "/initiate", json={"filename": "auth.bin", "size": len(DATA), "sha256_hash": SHA}, headers=headers)
     assert response.status_code == 200, response.text
     identifier = response.json()["upload_id"]
     if credential_kind == "oauth":
-        pair = refresh_hub_tokens(engine, pair.refresh_token, "crucible-hub")
+        pair = refresh_tokens(engine, pair.refresh_token, "crucible-hub")
         headers = {"Authorization": f"Bearer {pair.access_token}"}
     assert client.get(BASE + f"/{identifier}", headers=headers).status_code == 200
     signed = client.post(BASE + f"/{identifier}/parts", json={"parts": [{"part_number": 1, "crc32c": CRC}]}, headers=headers)
@@ -614,7 +614,7 @@ def test_real_authentication_supports_both_credentials(use_engine, flow, monkeyp
     body = {"upload_id": identifier, "sha256_hash": SHA, "crc32c": CRC}
     assert client.post(BASE + "/complete", json=body, headers=headers).status_code == 200
     if credential_kind == "oauth":
-        revoke_hub_tokens(engine, pair.refresh_token, "crucible-hub")
+        revoke_tokens(engine, pair.refresh_token, "crucible-hub")
         assert client.get(BASE + f"/{identifier}", headers=headers).status_code == 401
         assert client.delete(BASE + f"/{identifier}", headers=headers).status_code == 401
 

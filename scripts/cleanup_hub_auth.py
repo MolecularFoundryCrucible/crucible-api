@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.utils.sql_utils import setup_engine
-from app.utils.hub_auth_maintenance import cleanup_hub_auth
+from app.auth.cleanup import cleanup_sign_in_records
 
 
 def main() -> None:
@@ -24,7 +24,7 @@ def main() -> None:
         if engine is None:
             raise RuntimeError("Database configuration unavailable")
         for _ in range(args.batches if args.commit else 1):
-            counts = cleanup_hub_auth(engine, commit=args.commit, batch_size=args.batch_size)
+            counts = cleanup_sign_in_records(engine, commit=args.commit, batch_size=args.batch_size)
             print(json.dumps({"mode": "commit" if args.commit else "dry-run", "counts": counts}))
             if not any(counts.values()):
                 break

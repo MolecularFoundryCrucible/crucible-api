@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_api_root_path, get_engine
 from app.api.path_params import UserRef
-from app.api.routes.hub_auth import _browser_headers, _require_passwords, _templates
+from app.api.routes.browser_sign_in import _browser_headers, _require_passwords, _templates
 from app.auth.password_links import LinkRefused, issue_link, link_purpose, live_link, use_link
 from app.auth.passwords import MAX_LENGTH, check_new_password
 from app.auth.throttle import HashBusy, begin_code_attempt, client_address, give_back, hash_slot
@@ -20,7 +20,7 @@ from app.api.errors import feature_disabled_response
 from app.config import FeatureDisabled, get_secret, get_settings
 from app.models.identities import PasswordChange, PasswordLinkRead
 from app.utils.auth_utils import authorize_user, caller_row, require_credential_change, require_human_admin_safeguard, require_platform_admin, require_recent_authentication
-from app.utils.hub_login import HubLoginUnavailable, public_api_url
+from app.auth.login_transactions import SignInUnavailable, public_api_url
 from app.utils.permissions import Principal
 from app.utils.user_utils import resolve_user_by_identifier
 
@@ -52,7 +52,7 @@ def issue_password_link(user_ref: UserRef, response: Response, auth_res: Annotat
     _passwords_on()
     try:
         base = public_api_url()
-    except HubLoginUnavailable:
+    except SignInUnavailable:
         raise HTTPException(status_code=503, detail="The public API address is not set") from None
     with Session(get_engine()) as session, session.begin():
         user = resolve_user_by_identifier(session, user_ref)
@@ -101,7 +101,7 @@ def _write_password(engine, user_id: int, password: str, *, first: bool, keep_fa
     from app.auth.events import AuthEventType, record_event
     from app.auth.passwords import store_password
     from app.tables import LocalCredential, User
-    from app.utils.hub_tokens import revoke_all_hub_tokens
+    from app.auth.tokens import revoke_all_tokens
 
     with hash_slot(), Session(engine) as session, session.begin():
         user = session.exec(select(User).where(User.id == user_id).with_for_update()).one()
@@ -109,7 +109,7 @@ def _write_password(engine, user_id: int, password: str, *, first: bool, keep_fa
             raise _PasswordChanged
         store_password(session, user, password)
         if not first:
-            revoke_all_hub_tokens(session, user.id, except_family_id=keep_family)
+            revoke_all_tokens(session, user.id, except_family_id=keep_family)
         record_event(session, AuthEventType.PASSWORD_SET if first else AuthEventType.PASSWORD_CHANGED, user=user, actor=user)
 
 
@@ -169,7 +169,7 @@ def remove_user_password(user_ref: UserRef, auth_res: Annotated[Principal, Depen
     from app.auth.linking import sign_in_methods
     from app.auth.password_links import void_links
     from app.tables import LocalCredential, User
-    from app.utils.hub_tokens import revoke_all_hub_tokens
+    from app.auth.tokens import revoke_all_tokens
 
     with Session(get_engine()) as session, session.begin():
         user = resolve_user_by_identifier(session, user_ref)
@@ -184,7 +184,7 @@ def remove_user_password(user_ref: UserRef, auth_res: Annotated[Principal, Depen
             raise HTTPException(status_code=409, detail={"code": "last_sign_in_method", "message": "This is your only way to sign in; link another login first"})
         session.delete(credential)
         void_links(session, user)
-        revoke_all_hub_tokens(session, user.id)
+        revoke_all_tokens(session, user.id)
         record_event(session, AuthEventType.PASSWORD_REMOVED, user=user, actor=caller_row(session, auth_res))
     return Response(status_code=204)
 
@@ -250,7 +250,7 @@ async def password_link_page(request: Request, token: str | None = Query(default
     await run_in_threadpool(give_back, engine, digest)
     try:
         base = public_api_url()
-    except HubLoginUnavailable:
+    except SignInUnavailable:
         return _done(request, "Unavailable", "Passwords cannot be set on this server right now.", 503)
     response = _browser_headers(RedirectResponse(f"{base}/oauth/password-link", status_code=303))
     response.set_cookie(COOKIE, _serializer("cookie").dumps({"t": token, "n": secrets.token_urlsafe(24)}), max_age=BROWSER_LIFETIME, path=_cookie_path(),
@@ -315,7 +315,7 @@ def _register_cookie_path() -> str:
 def _secure_cookies() -> bool:
     try:
         return public_api_url().startswith("https://")
-    except HubLoginUnavailable:
+    except SignInUnavailable:
         return False
 
 

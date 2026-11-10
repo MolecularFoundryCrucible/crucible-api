@@ -165,7 +165,7 @@ def revoke_all_passwords(engine, *, commit: bool, now: datetime | None = None) -
     from sqlalchemy import delete, update
 
     from app.auth.events import AuthEventType, record_event
-    from app.tables import HubTokenFamily, PasswordToken, UserIdentity
+    from app.tables import TokenFamily, PasswordToken, UserIdentity
 
     current = now or datetime.now(timezone.utc)
     with Session(engine) as session, session.begin():
@@ -177,7 +177,7 @@ def revoke_all_passwords(engine, *, commit: bool, now: datetime | None = None) -
             session.execute(delete(LocalCredential).where(LocalCredential.user_id.in_(user_ids)))
             session.execute(update(PasswordToken).where(PasswordToken.user_id.in_(user_ids), PasswordToken.consumed_at == None, PasswordToken.voided_at == None)  # noqa: E711
                             .values(voided_at=current).execution_options(synchronize_session=False))
-            session.execute(update(HubTokenFamily).where(HubTokenFamily.user_id.in_(user_ids), HubTokenFamily.revoked_at == None)  # noqa: E711
+            session.execute(update(TokenFamily).where(TokenFamily.user_id.in_(user_ids), TokenFamily.revoked_at == None)  # noqa: E711
                             .values(revoked_at=current).execution_options(synchronize_session=False))
             for user in session.exec(select(User).where(User.id.in_(user_ids))).all():
                 record_event(session, AuthEventType.PASSWORD_REMOVED, user=user)

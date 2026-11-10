@@ -17,14 +17,14 @@ from itsdangerous import BadData, URLSafeTimedSerializer
 from sqlmodel import Session
 
 from app.api.dependencies import get_api_root_path, get_engine
-from app.api.routes.hub_auth import _browser_headers, _templates
+from app.api.routes.browser_sign_in import _browser_headers, _templates
 from app.auth.clients import client_by_id
 from app.auth.devices import INTERNAL_CLIENT_ID, decide, device_by_hash, pending_device
 from app.auth.throttle import begin_code_attempt, client_address, give_back
 from app.config import get_secret
 from app.tables import User
-from app.utils.hub_login import HubLoginUnavailable, public_api_url, redeem_approval_code
-from app.utils.hub_tokens import InvalidHubGrant
+from app.auth.login_transactions import SignInUnavailable, public_api_url, redeem_approval_code
+from app.auth.tokens import InvalidGrant
 
 router = APIRouter(prefix="/oauth/device", tags=["auth"])
 COOKIE = "crucible_device_approval"
@@ -79,7 +79,7 @@ async def device_code_entered(request: Request, user_code: str = Form(max_length
     await run_in_threadpool(give_back, engine, digest)
     try:
         base = public_api_url()
-    except HubLoginUnavailable:
+    except SignInUnavailable:
         return _done(request, "Sign-in is unavailable", "Device sign-in is not available on this server.", 503)
     nonce, verifier = secrets.token_urlsafe(24), secrets.token_urlsafe(48)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
@@ -112,7 +112,7 @@ async def device_signed_in(
         return _done(request, "Sign-in failed", "This sign-in did not start in this browser. Start again on your device.", 400)
     try:
         base = public_api_url()
-    except HubLoginUnavailable:
+    except SignInUnavailable:
         return _done(request, "Sign-in is unavailable", "Device sign-in is not available on this server.", 503)
     if iss != base:
         return _done(request, "Sign-in failed", "The answer did not come from this server. Start again on your device.", 400)
@@ -120,7 +120,7 @@ async def device_signed_in(
         return _done(request, "Not approved", "The sign-in was cancelled or refused, so the device was not approved.", 400)
     try:
         user_id, auth_time = await run_in_threadpool(redeem_approval_code, engine, code, browser["v"], INTERNAL_CLIENT_ID, f"{base}/oauth/device/callback")
-    except InvalidHubGrant:
+    except InvalidGrant:
         return _done(request, "Sign-in failed", "This sign-in expired or was already used. Start again on your device.", 400)
     if auth_time is None or datetime.now(timezone.utc) - auth_time > FRESH_SIGN_IN:
         return _done(request, "Sign-in failed", "Approving a device needs a sign-in just now. Start again on your device.", 400)

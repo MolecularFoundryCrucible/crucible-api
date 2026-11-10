@@ -14,12 +14,12 @@ from app import config
 from app.api import main
 from app.api.dependencies import get_engine
 from app.api.routes import device as device_routes
-from app.api.routes import hub_auth as routes
+from app.api.routes import browser_sign_in as routes
 from app.api.routes import oauth as oauth_routes
 from app.auth.devices import USER_CODE_ALPHABET, normalized_user_code
 from app.auth.passwords import store_password
 from app.tables import (
-    DeviceAuthorization, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential, LoginThrottle, User,
+    DeviceAuthorization, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, LocalCredential, LoginThrottle, User,
 )
 
 API_URL = "http://localhost:7777"
@@ -42,7 +42,7 @@ def client(db_engine, monkeypatch):
     for module in (routes, device_routes):
         monkeypatch.setattr(module, "get_api_root_path", lambda: "")
     config.get_settings.cache_clear()
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginTransaction, HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken, LocalCredential, LoginThrottle, DeviceAuthorization)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginTransaction, LoginCode, TokenFamily, RefreshToken, AccessToken, LocalCredential, LoginThrottle, DeviceAuthorization)])
     with Session(db_engine) as session:
         user = User(unique_id="0tmnyhfztdwc1000w2kspzsnh0", username="ada.lovelace", first_name="Ada", last_name="Lovelace")
         session.add(user)
@@ -106,7 +106,7 @@ def test_a_device_is_approved_in_a_browser_and_gets_its_session_once(client, db_
     assert tokens.status_code == 200, tokens.text
     assert tokens.json()["refresh_token"].startswith("chbr_") and abs(tokens.json()["auth_time"] - datetime.now(timezone.utc).timestamp()) < 30
     with Session(db_engine) as session:
-        assert session.exec(select(HubTokenFamily.grant_type)).one() == "urn:ietf:params:oauth:grant-type:device_code"
+        assert session.exec(select(TokenFamily.grant_type)).one() == "urn:ietf:params:oauth:grant-type:device_code"
     allow_polling(db_engine)
     assert poll(client, body["device_code"]).status_code == 400
 
@@ -188,9 +188,9 @@ def test_metadata_names_the_device_endpoint(client):
 def test_cleanup_removes_device_rows_a_day_after_they_expire(client, db_engine):
     from tests.conftest import TEST_TABLES
     from app.tables import AuthEvent
-    from app.utils.hub_auth_maintenance import cleanup_hub_auth
+    from app.auth.cleanup import cleanup_sign_in_records
 
     SQLModel.metadata.create_all(db_engine, tables=list(dict.fromkeys(TEST_TABLES + [AuthEvent.__table__])))
     start_device(client)
-    assert cleanup_hub_auth(db_engine, commit=True, now=datetime.now(timezone.utc) + timedelta(hours=2))["device_authorization"] == 0
-    assert cleanup_hub_auth(db_engine, commit=True, now=datetime.now(timezone.utc) + timedelta(days=2))["device_authorization"] == 1
+    assert cleanup_sign_in_records(db_engine, commit=True, now=datetime.now(timezone.utc) + timedelta(hours=2))["device_authorization"] == 0
+    assert cleanup_sign_in_records(db_engine, commit=True, now=datetime.now(timezone.utc) + timedelta(days=2))["device_authorization"] == 1

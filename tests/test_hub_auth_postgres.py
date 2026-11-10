@@ -15,9 +15,9 @@ from sqlalchemy import event, inspect, text
 from sqlalchemy.engine import make_url
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.tables import DeviceAuthorization, LoginThrottle, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User
-from app.utils.hub_login import exchange_handoff_code
-from app.utils.hub_tokens import InvalidHubGrant, hub_access_user, issue_hub_tokens, refresh_hub_tokens, revoke_hub_tokens
+from app.tables import DeviceAuthorization, LoginThrottle, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User
+from app.auth.login_transactions import exchange_handoff_code
+from app.auth.tokens import InvalidGrant, access_token_user, issue_tokens, refresh_tokens, revoke_tokens
 from tests.people import internal_id
 from app.tables import AuthEvent, PasswordToken, UserIdentity
 
@@ -43,8 +43,8 @@ def pg_engine():
     engine = create_engine(value, connect_args={"options": f"-csearch_path={schema}"})
     try:
         SQLModel.metadata.create_all(engine, tables=[
-            User.__table__, UserIdentity.__table__, AuthEvent.__table__, LoginThrottle.__table__, DeviceAuthorization.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__,
-            HubAccessToken.__table__, HubLoginCode.__table__, HubLoginTransaction.__table__, PasswordToken.__table__,
+            User.__table__, UserIdentity.__table__, AuthEvent.__table__, LoginThrottle.__table__, DeviceAuthorization.__table__, TokenFamily.__table__, RefreshToken.__table__,
+            AccessToken.__table__, LoginCode.__table__, LoginTransaction.__table__, PasswordToken.__table__,
         ])
         with Session(engine) as session, session.begin():
             session.add(User(unique_id=USER, first_name="Test", last_name="Human"))
@@ -62,7 +62,7 @@ def test_exchange_rolls_back_code_and_family_on_issuance_failure(pg_engine, monk
     code_hash = hashlib.sha256(code.encode()).hexdigest()
     callback = "https://example.test/hub/auth/callback"
     with Session(pg_engine) as session, session.begin():
-        session.add(HubLoginCode(
+        session.add(LoginCode(
             code_hash=code_hash, user_id=internal_id(session, USER), user_unique_id=USER, client_id="crucible-hub", callback_uri=callback,
             code_challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode(),
             created_at=NOW, expires_at=NOW + timedelta(minutes=1),
@@ -72,21 +72,21 @@ def test_exchange_rolls_back_code_and_family_on_issuance_failure(pg_engine, monk
         raise RuntimeError("simulated issuance failure")
 
     with monkeypatch.context() as patch:
-        patch.setattr("app.utils.hub_tokens._issue_access", fail)
+        patch.setattr("app.auth.tokens._issue_access", fail)
         with pytest.raises(RuntimeError, match="simulated"):
             exchange_handoff_code(pg_engine, code, verifier, "crucible-hub", callback, now=NOW)
     with Session(pg_engine) as session:
-        assert session.get(HubLoginCode, code_hash).consumed_at is None
-        assert session.exec(select(HubTokenFamily)).all() == []
+        assert session.get(LoginCode, code_hash).consumed_at is None
+        assert session.exec(select(TokenFamily)).all() == []
     pair = exchange_handoff_code(pg_engine, code, verifier, "crucible-hub", callback, now=NOW)
     with Session(pg_engine) as session:
-        assert hub_access_user(session, pair.access_token, now=NOW) == internal_id(session, USER)
-    with pytest.raises(InvalidHubGrant):
+        assert access_token_user(session, pair.access_token, now=NOW) == internal_id(session, USER)
+    with pytest.raises(InvalidGrant):
         exchange_handoff_code(pg_engine, code, verifier, "crucible-hub", callback, now=NOW)
 
 
 def test_concurrent_refresh_keeps_the_session_and_a_later_replay_ends_it(pg_engine):
-    first = issue_hub_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW)
+    first = issue_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW)
     barrier = threading.Barrier(2)
     waited = threading.local()
 
@@ -97,8 +97,8 @@ def test_concurrent_refresh_keeps_the_session_and_a_later_replay_ends_it(pg_engi
 
     def refresh():
         try:
-            return refresh_hub_tokens(pg_engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
-        except InvalidHubGrant:
+            return refresh_tokens(pg_engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
+        except InvalidGrant:
             return None
 
     event.listen(pg_engine, "after_cursor_execute", after_read)
@@ -110,17 +110,17 @@ def test_concurrent_refresh_keeps_the_session_and_a_later_replay_ends_it(pg_engi
     issued = [result for result in results if result is not None]
     assert len(issued) == 2
     with Session(pg_engine) as session:
-        assert hub_access_user(session, issued[0].access_token, now=NOW + timedelta(minutes=1)) == hub_access_user(session, issued[1].access_token, now=NOW + timedelta(minutes=1))
-    refresh_hub_tokens(pg_engine, issued[0].refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(pg_engine, issued[1].refresh_token, "crucible-hub", now=NOW + timedelta(minutes=3))
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(pg_engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=3))
+        assert access_token_user(session, issued[0].access_token, now=NOW + timedelta(minutes=1)) == access_token_user(session, issued[1].access_token, now=NOW + timedelta(minutes=1))
+    refresh_tokens(pg_engine, issued[0].refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(pg_engine, issued[1].refresh_token, "crucible-hub", now=NOW + timedelta(minutes=3))
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(pg_engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=3))
 
 
 @pytest.mark.parametrize("first_operation", ["refresh", "revoke"])
 def test_logout_and_refresh_serialize_without_restoring_session(pg_engine, first_operation):
-    pair = issue_hub_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW)
+    pair = issue_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW)
     both_read = threading.Barrier(2)
     first_finished = threading.Event()
     operation = threading.local()
@@ -137,10 +137,10 @@ def test_logout_and_refresh_serialize_without_restoring_session(pg_engine, first
         operation.name = name
         try:
             if name == "revoke":
-                return revoke_hub_tokens(pg_engine, pair.refresh_token, "crucible-hub", now=NOW)
+                return revoke_tokens(pg_engine, pair.refresh_token, "crucible-hub", now=NOW)
             try:
-                return refresh_hub_tokens(pg_engine, pair.refresh_token, "crucible-hub", now=NOW)
-            except InvalidHubGrant:
+                return refresh_tokens(pg_engine, pair.refresh_token, "crucible-hub", now=NOW)
+            except InvalidGrant:
                 return None
         finally:
             if name == first_operation:
@@ -156,27 +156,27 @@ def test_logout_and_refresh_serialize_without_restoring_session(pg_engine, first
         event.remove(pg_engine, "before_cursor_execute", before_lock)
     assert (refreshed is not None) == (first_operation == "refresh")
     for tokens in [pair] + ([refreshed] if refreshed else []):
-        with Session(pg_engine) as session, pytest.raises(InvalidHubGrant):
-            hub_access_user(session, tokens.access_token, now=NOW)
-        with pytest.raises(InvalidHubGrant):
-            refresh_hub_tokens(pg_engine, tokens.refresh_token, "crucible-hub", now=NOW)
+        with Session(pg_engine) as session, pytest.raises(InvalidGrant):
+            access_token_user(session, tokens.access_token, now=NOW)
+        with pytest.raises(InvalidGrant):
+            refresh_tokens(pg_engine, tokens.refresh_token, "crucible-hub", now=NOW)
 
 
 def test_cleanup_respects_foreign_keys_and_preserves_live_family(pg_engine):
-    from app.utils.hub_auth_maintenance import cleanup_hub_auth
+    from app.auth.cleanup import cleanup_sign_in_records
 
-    expired = issue_hub_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW - timedelta(days=31))
-    live = issue_hub_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW)
-    preview = cleanup_hub_auth(pg_engine, now=NOW, batch_size=1)
+    expired = issue_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW - timedelta(days=31))
+    live = issue_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW)
+    preview = cleanup_sign_in_records(pg_engine, now=NOW, batch_size=1)
     assert preview["hubtokenfamily"] == 1
-    counts = cleanup_hub_auth(pg_engine, commit=True, now=NOW, batch_size=1)
+    counts = cleanup_sign_in_records(pg_engine, commit=True, now=NOW, batch_size=1)
     assert counts == preview
     with Session(pg_engine) as session:
-        assert hub_access_user(session, live.access_token, now=NOW) == internal_id(session, USER)
-        assert len(session.exec(select(HubTokenFamily)).all()) == 1
-        assert len(session.exec(select(HubRefreshToken)).all()) == 1
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(pg_engine, expired.refresh_token, "crucible-hub", now=NOW)
+        assert access_token_user(session, live.access_token, now=NOW) == internal_id(session, USER)
+        assert len(session.exec(select(TokenFamily)).all()) == 1
+        assert len(session.exec(select(RefreshToken)).all()) == 1
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(pg_engine, expired.refresh_token, "crucible-hub", now=NOW)
 
 
 def test_expiry_index_migration_round_trip(pg_engine):
@@ -184,7 +184,7 @@ def test_expiry_index_migration_round_trip(pg_engine):
     spec = importlib.util.spec_from_file_location("hub_expiry_revision", path)
     revision = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(revision)
-    pair = issue_hub_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW)
+    pair = issue_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW)
 
     with pg_engine.connect() as connection:
         context = MigrationContext.configure(connection)
@@ -204,4 +204,4 @@ def test_expiry_index_migration_round_trip(pg_engine):
                 model_index = next(index for index in SQLModel.metadata.tables[table].indexes if index.name == name)
                 assert list(model_index.columns.keys()) == ["expires_at", key]
     with Session(pg_engine) as session:
-        assert hub_access_user(session, pair.access_token, now=NOW) == internal_id(session, USER)
+        assert access_token_user(session, pair.access_token, now=NOW) == internal_id(session, USER)

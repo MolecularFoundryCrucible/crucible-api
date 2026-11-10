@@ -11,7 +11,7 @@ from sqlalchemy import delete, update
 from sqlmodel import Session, select
 
 from app.config import get_settings
-from app.tables import DeviceAuthorization, HubLoginCode, LocalCredential, PasswordToken, User
+from app.tables import DeviceAuthorization, LoginCode, LocalCredential, PasswordToken, User
 
 Purpose = Literal["setup", "reset"]
 
@@ -114,7 +114,7 @@ def use_link(session: Session, token: str, password: str, *, now: datetime | Non
     lock, ends every session, and refuses sign-in codes and device approvals given before it."""
     from app.auth.events import AuthEventType, record_event
     from app.auth.passwords import store_password
-    from app.utils.hub_tokens import revoke_all_hub_tokens
+    from app.auth.tokens import revoke_all_tokens
 
     current = _now(now)
     row = session.exec(select(PasswordToken).where(PasswordToken.token_hash == link_token_hash(token)).with_for_update()).one_or_none()
@@ -130,8 +130,8 @@ def use_link(session: Session, token: str, password: str, *, now: datetime | Non
     credential.trusted_failed_attempts = 0
     credential.blocked_until = None
     credential.locked_at = None
-    revoke_all_hub_tokens(session, user.id, now=current)
-    session.execute(update(HubLoginCode).where(HubLoginCode.user_id == user.id, HubLoginCode.consumed_at == None)  # noqa: E711
+    revoke_all_tokens(session, user.id, now=current)
+    session.execute(update(LoginCode).where(LoginCode.user_id == user.id, LoginCode.consumed_at == None)  # noqa: E711
                     .values(consumed_at=current).execution_options(synchronize_session=False))
     session.execute(update(DeviceAuthorization).where(
         DeviceAuthorization.user_id == user.id, DeviceAuthorization.consumed_at == None, DeviceAuthorization.denied_at == None,  # noqa: E711

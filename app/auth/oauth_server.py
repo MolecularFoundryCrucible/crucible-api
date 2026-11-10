@@ -1,7 +1,7 @@
 """The API's OAuth 2.0 authorization server, on Authlib's protocol classes: the authorization code
 grant with PKCE, refresh with rotation, and revocation (RFC 7009). Authlib parses and checks each
 request and shapes the errors; codes, token families and tokens stay in the API's own tables, and
-are consumed and issued by the functions in app.utils.hub_login and app.utils.hub_tokens."""
+are consumed and issued by the functions in app.auth.login_transactions and app.auth.tokens."""
 import secrets
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -20,9 +20,9 @@ from sqlmodel import Session, select
 
 from app.auth.clients import ClientUnavailable, RegisteredClient, client_by_id
 from app.config import ConfigurationError, optional_secret
-from app.tables import HubAccessToken, HubLoginCode, HubRefreshToken, HubTokenFamily
-from app.utils.hub_login import exchange_handoff_code
-from app.utils.hub_tokens import ACCESS_PREFIX, REFRESH_PREFIX, HubTokenPair, InvalidHubGrant, refresh_hub_tokens, revoke_hub_tokens
+from app.tables import AccessToken, LoginCode, RefreshToken, TokenFamily
+from app.auth.login_transactions import exchange_handoff_code
+from app.auth.tokens import ACCESS_PREFIX, REFRESH_PREFIX, TokenPair, InvalidGrant, refresh_tokens, revoke_tokens
 
 AUTH_METHODS = ["client_secret_basic", "none"]
 
@@ -56,7 +56,7 @@ class FormRequest(OAuth2Request):
         self.address = address
         self.payload = _FormPayload(fields)
         self._form = self.payload.data
-        self.token_pair: HubTokenPair | None = None
+        self.token_pair: TokenPair | None = None
 
     @property
     def args(self):
@@ -156,7 +156,7 @@ class _Credential:
         return ""
 
 
-def token_body(pair: HubTokenPair, now: datetime | None = None) -> dict:
+def token_body(pair: TokenPair, now: datetime | None = None) -> dict:
     current = now or datetime.now(timezone.utc)
     body = {
         "access_token": pair.access_token,
@@ -174,7 +174,7 @@ class CodeGrant(AuthorizationCodeGrant):
 
     def query_authorization_code(self, code, client):
         with Session(self.request.engine) as session:
-            grant = session.exec(select(HubLoginCode).where(HubLoginCode.code_hash == _digest(code))).one_or_none()
+            grant = session.exec(select(LoginCode).where(LoginCode.code_hash == _digest(code))).one_or_none()
         if grant is None or grant.purpose != "sign_in" or grant.consumed_at is not None or datetime.now(timezone.utc) >= _aware(grant.expires_at):
             return None
         if grant.client_id != client.get_client_id():
@@ -192,7 +192,7 @@ class CodeGrant(AuthorizationCodeGrant):
         form = self.request.form
         try:
             pair = exchange_handoff_code(self.request.engine, form["code"], form["code_verifier"], self.request.client.get_client_id(), self.request.payload.redirect_uri or "")
-        except InvalidHubGrant:
+        except InvalidGrant:
             raise InvalidGrantError() from None
         self.request.token_pair = pair
         return 200, token_body(pair), self.TOKEN_RESPONSE_HEADER
@@ -214,12 +214,12 @@ class RefreshGrant(RefreshTokenGrant):
     INCLUDE_NEW_REFRESH_TOKEN = True
 
     def authenticate_refresh_token(self, refresh_token):
-        """Any stored refresh token, spent or not: refresh_hub_tokens must see a reused one to end its family."""
+        """Any stored refresh token, spent or not: refresh_tokens must see a reused one to end its family."""
         if not refresh_token.startswith(REFRESH_PREFIX):
             return None
         with Session(self.request.engine) as session:
-            token = session.get(HubRefreshToken, _digest(refresh_token))
-            family = session.get(HubTokenFamily, token.family_id) if token is not None else None
+            token = session.get(RefreshToken, _digest(refresh_token))
+            family = session.get(TokenFamily, token.family_id) if token is not None else None
         return _Credential(family.client_id, family.user_id) if family is not None else None
 
     def authenticate_user(self, refresh_token):
@@ -227,8 +227,8 @@ class RefreshGrant(RefreshTokenGrant):
 
     def create_token_response(self):
         try:
-            pair = refresh_hub_tokens(self.request.engine, self.request.form["refresh_token"], self.request.client.get_client_id())
-        except InvalidHubGrant:
+            pair = refresh_tokens(self.request.engine, self.request.form["refresh_token"], self.request.client.get_client_id())
+        except InvalidGrant:
             raise InvalidGrantError() from None
         self.request.token_pair = pair
         return 200, token_body(pair), self.TOKEN_RESPONSE_HEADER
@@ -241,12 +241,12 @@ class Revocation(RevocationEndpoint):
         raise NotImplementedError("authenticate_token queries with the request's database")
 
     def _query(self, token_string, engine):
-        model = HubAccessToken if token_string.startswith(ACCESS_PREFIX) else HubRefreshToken if token_string.startswith(REFRESH_PREFIX) else None
+        model = AccessToken if token_string.startswith(ACCESS_PREFIX) else RefreshToken if token_string.startswith(REFRESH_PREFIX) else None
         if model is None:
             return None
         with Session(engine) as session:
             token = session.get(model, _digest(token_string))
-            family = session.get(HubTokenFamily, token.family_id) if token is not None else None
+            family = session.get(TokenFamily, token.family_id) if token is not None else None
         return _Credential(family.client_id, family.user_id, raw=token_string) if family is not None else None
 
     def authenticate_token(self, request, client):
@@ -257,7 +257,7 @@ class Revocation(RevocationEndpoint):
         return token if token is not None and token.check_client(client) else None
 
     def revoke_token(self, token, request):
-        revoke_hub_tokens(request.engine, token.raw, request.client.get_client_id())
+        revoke_tokens(request.engine, token.raw, request.client.get_client_id())
 
 
 class DeviceAuthorization(DeviceAuthorizationEndpoint):
@@ -266,7 +266,7 @@ class DeviceAuthorization(DeviceAuthorizationEndpoint):
     def create_endpoint_response(self, request):
         """RFC 8628 3.1-3.2. Only clients allowed the device grant get codes."""
         from app.auth.devices import DEVICE_LIFETIME, POLL_INTERVAL, create_device_authorization
-        from app.utils.hub_login import public_api_url
+        from app.auth.login_transactions import public_api_url
 
         client = self.authenticate_client(request)
         if not client.check_grant_type(DEVICE_CODE_GRANT_TYPE):
@@ -338,7 +338,7 @@ class DeviceGrant(DeviceCodeGrant):
     def create_token_response(self):
         """Use up the approved device sign-in and issue the session in one transaction."""
         from app.tables import DeviceAuthorization as Row
-        from app.utils.hub_tokens import DEVICE_CODE, issue_hub_tokens_in_session
+        from app.auth.tokens import DEVICE_CODE, issue_tokens_in_session
 
         row = self.request.credential.row
         current = datetime.now(timezone.utc)
@@ -349,8 +349,8 @@ class DeviceGrant(DeviceCodeGrant):
             if claimed is None:
                 raise InvalidGrantError()
             try:
-                pair = issue_hub_tokens_in_session(session, claimed[0], self.request.client.get_client_id(), now=current, auth_time=_aware(claimed[1]) if claimed[1] else None, grant_type=DEVICE_CODE)
-            except InvalidHubGrant:
+                pair = issue_tokens_in_session(session, claimed[0], self.request.client.get_client_id(), now=current, auth_time=_aware(claimed[1]) if claimed[1] else None, grant_type=DEVICE_CODE)
+            except InvalidGrant:
                 raise InvalidGrantError() from None
         self.request.token_pair = pair
         return 200, token_body(pair), self.TOKEN_RESPONSE_HEADER

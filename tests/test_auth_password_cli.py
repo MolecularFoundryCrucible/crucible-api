@@ -9,8 +9,8 @@ from app.auth.password_links import issue_link, live_link
 from app.auth.passwords import store_password
 from app.cli import admin as admin_cli
 from app.cli import auth as auth_cli
-from app.tables import AuthEvent, HubAccessToken, HubRefreshToken, HubTokenFamily, LocalCredential, PasswordToken, User, UserIdentity
-from app.utils.hub_tokens import issue_hub_tokens
+from app.tables import AuthEvent, AccessToken, RefreshToken, TokenFamily, LocalCredential, PasswordToken, User, UserIdentity
+from app.auth.tokens import issue_tokens
 
 LAB = "https://login.lab.example/realms/crucible"
 NEW_LAB = "https://sso.lab.example/realms/crucible"
@@ -29,7 +29,7 @@ def engine(db_engine, use_engine, monkeypatch):
     }.items():
         monkeypatch.setenv(name, value)
     config.get_settings.cache_clear()
-    SQLModel.metadata.create_all(db_engine, tables=[HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__])
+    SQLModel.metadata.create_all(db_engine, tables=[TokenFamily.__table__, RefreshToken.__table__, AccessToken.__table__])
     use_engine(db_engine)
     return db_engine
 
@@ -69,7 +69,7 @@ def test_revoke_passwords_counts_first_then_removes_every_password(engine, capsy
     bob = add_person(engine, "bob", password="another old password for bob", issuer=LAB, subject="bob-at-lab")
     cy = add_person(engine, "cy", issuer=LAB, subject="cy-at-lab")
     for person in (ada, bob, cy):
-        issue_hub_tokens(engine, person, "crucible-hub")
+        issue_tokens(engine, person, "crucible-hub")
     with Session(engine) as session:
         issue_link(session, session.get(User, ada), "reset", actor=None)
         session.commit()
@@ -82,7 +82,7 @@ def test_revoke_passwords_counts_first_then_removes_every_password(engine, capsy
     with Session(engine) as session:
         assert session.exec(select(LocalCredential)).all() == []
         assert session.exec(select(PasswordToken)).one().voided_at is not None
-        revoked = {family.user_id: family.revoked_at for family in session.exec(select(HubTokenFamily)).all()}
+        revoked = {family.user_id: family.revoked_at for family in session.exec(select(TokenFamily)).all()}
         assert revoked[ada] and revoked[bob] and revoked[cy] is None
         assert sorted(session.exec(select(AuthEvent.user_id).where(AuthEvent.event == "password_removed")).all()) == sorted([ada, bob])
 

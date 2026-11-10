@@ -197,6 +197,7 @@ def test_standard_code_exchange_works_once(api, db_engine):
     assert first.status_code == 200, first.text
     body = first.json()
     assert body["token_type"] == "Bearer" and 0 < body["expires_in"] <= 900 and body["refresh_token"].startswith("chbr_")
+    assert body["expires_in"] < body["refresh_expires_in"] <= 90 * 86400 and body["user_unique_id"]
     assert first.headers["cache-control"] == "no-store"
     assert (exchange(api, code).status_code, exchange(api, code).json()["error"]) == (400, "invalid_grant")
     principal = auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=body["access_token"]))

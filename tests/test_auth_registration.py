@@ -107,7 +107,7 @@ def hub_sign_in(hub, subject, *, valid=True):
                                                     "code_challenge_method": "S256", "provider": "lab"}, follow_redirects=False)
     query = parse_qs(urlparse(started.headers["location"]).query)
     fakes["login.example.org"].claims = {"nonce": query["nonce"][0] if valid else "wrong", "sub": subject, "auth_time": int(time.time())}
-    return client.get("/auth/hub/oidc/lab/callback", params={"code": "c", "state": query["state"][0]}, follow_redirects=False)
+    return client.get("/oauth/callback/lab", params={"code": "c", "state": query["state"][0]}, follow_redirects=False)
 
 
 def test_hub_sign_in_shows_the_waiting_page_and_issues_no_code(hub, db_engine):

@@ -72,7 +72,7 @@ def provider_sign_in(world, start_url, *, subject, provider="lab", auth_time=0, 
     fake.claims = {"nonce": query["nonce"][0], "sub": subject, "email": email, **({} if auth_time is None else {"auth_time": int(time.time()) - auth_time})}
     if not keep_cookie:
         client.cookies.clear()
-    path = "/auth/hub/oidc/lab/callback" if provider == "lab" else "/auth/hub/callback"
+    path = "/oauth/callback/lab" if provider == "lab" else "/auth/hub/callback"
     return client.get(path, params={"code": "provider-code", "state": query["state"][0]}, follow_redirects=False)
 
 

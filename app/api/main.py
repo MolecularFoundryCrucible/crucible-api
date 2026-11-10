@@ -315,6 +315,7 @@ app.include_router(identities.router)
 app.include_router(api_keys.router)
 app.include_router(auth.router)
 app.include_router(browser_sign_in.router)
+app.include_router(browser_sign_in.callback_router)
 app.include_router(browser_sign_in.link_router)
 app.include_router(browser_sign_in.password_router)
 app.include_router(oauth.router)
@@ -386,7 +387,7 @@ def custom_openapi():
         for operation in path_item.values():
             if not isinstance(operation, dict):
                 continue
-            if path.startswith("/auth/hub/"):
+            if path.startswith(("/auth/hub/", "/oauth/callback/")):
                 operation["responses"].setdefault("500", {
                     "description": "Authentication request failed; response contains no internal error details",
                 })

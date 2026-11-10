@@ -12,7 +12,7 @@ The routes use exact configured callbacks, OIDC validation, a one-use PKCE-bound
 - Each secret is given one way only: inline, `NAME_FILE`, a file named `NAME` in the secrets directory, or `NAME_VERSION` (a Secret Manager `projects/.../secrets/.../versions/N` or `versions/latest`). Giving one two ways stops the server at startup. Values must be one line of printable ASCII.
 - Every worker reads its secrets at start and refuses to start if one cannot be read (`get_secret` in `app/config.py`). Successful reads are cached per worker; failures are not. Secret Manager lookups time out after ten seconds without retries, use Application Default Credentials, and stay in worker memory.
 - The Hub client secret is shared only with the Hub server; the Hub never needs the ORCID client secret. Keep local environment files at mode `600`.
-- `HUB_AUTH_CALLBACK_URI` must match the Hub's callback exactly; no wildcards. Register the API's `<public API URL>/auth/hub/callback` with ORCID.
+- `HUB_AUTH_CALLBACK_URI` must match the Hub's callback exactly; no wildcards. Register the API's `<public API URL>/oauth/callback/orcid` with ORCID (or keep `/auth/hub/callback` with `legacy_callback: true`).
 
 ## Passwords
 
@@ -69,7 +69,7 @@ A public client has no secret: it sends its `client_id` to `/oauth/token` and `/
 | `scopes` | Space-separated scopes, including `openid`. ORCID uses `openid`. |
 | `token_endpoint_auth_method` | `client_secret_post` for ORCID; otherwise usually `client_secret_basic`. |
 | `registration` | `closed`, `approval` or `open`. Stored now, enforced once registration is built. Until then only ORCID creates accounts; other providers sign in only people already in `user_identity`, and anyone else gets `access_denied`. |
-| `legacy_callback` | Uses `<public API URL>/auth/hub/callback`, for an ORCID client already registered with that address. ORCID only, and at most one provider. Otherwise the callback to register with the provider is `<public API URL>/auth/hub/oidc/{key}/callback`. |
+| `legacy_callback` | `false` for new registrations: the callback to register with the provider is `<public API URL>/oauth/callback/{key}`. `true` uses the deprecated `<public API URL>/auth/hub/callback`, for an ORCID application registered with that address before 4.0.0; ORCID only, and at most one provider. |
 
 A provider whose issuer is exactly `https://orcid.org` or `https://sandbox.orcid.org` is the ORCID provider, and only one may be listed. The client secret never goes in the list. It is `OIDC_{KEY}_CLIENT_SECRET`, for example `OIDC_ORCID_CLIENT_SECRET`, given any of the ways above.
 

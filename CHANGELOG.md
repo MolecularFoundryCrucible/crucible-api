@@ -43,6 +43,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- JSON request bodies over 64 KiB are checked for unstorable characters in the threadpool, so parsing a large body no longer stalls every other request on the worker.
 - The device approval page and the start of linking a login no longer read the database or secrets on the event loop, where a busy connection pool could stall every request on that worker.
 - Deleting a key from `apitoken` (older pods during a rollout, a rollback, or by hand) now also revokes its hashed copy, so a revoked key cannot keep working. Needs migration `2b0ab3a4520a`.
 - Editing a dataset no longer re-publishes or un-publishes it.

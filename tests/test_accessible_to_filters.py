@@ -321,24 +321,17 @@ def test_access_selectors_are_limited(client, db_engine, auth_as):
     assert response.status_code == 422, response.text
 
 
-def test_deprecated_user_routes_preserve_mfid_list_contract(client, db_engine, auth_as):
+def test_the_filter_lists_what_the_removed_user_routes_listed(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
 
-    datasets = client.get("/users/target-user/datasets")
-    samples = client.get("/users/target-user/samples")
+    datasets = client.get("/datasets", params={"accessible_to_user": "target-user"})
+    samples = client.get("/samples", params={"accessible_to_user": "target-user"})
 
     assert datasets.status_code == 200, datasets.text
     assert samples.status_code == 200, samples.text
-    assert datasets.json() == ["ds_target_access"]
-    assert samples.json() == ["sm_target_access"]
-
-
-def test_user_resource_routes_are_deprecated_in_openapi(client):
-    schema = client.get("/openapi.json").json()
-
-    assert schema["paths"]["/users/{user_ref}/datasets"]["get"]["deprecated"] is True
-    assert schema["paths"]["/users/{user_ref}/samples"]["get"]["deprecated"] is True
+    assert [item["unique_id"] for item in datasets.json()["items"]] == ["ds_target_access"]
+    assert [item["unique_id"] for item in samples.json()["items"]] == ["sm_target_access"]
 
 
 def test_dataset_access_reports_effective_role_capped_by_group_standing(client, db_engine, auth_as):

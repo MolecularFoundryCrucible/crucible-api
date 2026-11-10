@@ -16,6 +16,7 @@ from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.build_info import api_version
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, feature_disabled_response
+from app.api.removed import REMOVED_RESPONSE, removed
 from app.general_utils import get_utc_datetime
 from app.tables import (
     AccessGroup,
@@ -45,13 +46,11 @@ from app.models.datasets import (
     ThumbnailCreate, ThumbnailPreviewRead, ThumbnailRead, ThumbnailUpdate,
 )
 from app.models.instrument import InstrumentReferenceRead
-from app.models.ingestion import INGESTION_CLASS_PATTERN, IngestionRequestRead
 from app.models.links import DatasetLinkRead, LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
     UNIQUE_ID_FILTER_DEPRECATION, DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, ResourceSearchQuery)
 from app.models.projects import ProjectReferenceRead, ProjectScope
-from app.models.samples import SampleRead
 from app.services import multipart
 from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
 from app.services.resource_facets import list_dataset_facets
@@ -96,7 +95,6 @@ from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 
 router = APIRouter(tags=["datasets"])
-RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
 DOWNLOAD_SIGNING_WORKERS = 16
 DATASET_PAGINATION = ResourcePaginationSpec(
     kind="dataset",
@@ -1383,7 +1381,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
     Repeating a filename with the same sha256_hash, size, and storage_backend returns the existing record unchanged
     (storage_path and access_note are not compared); any other difference returns 409 `filename_exists` with the
     existing file's MFID and ETag. Non-GCS filenames must be canonical relative POSIX paths (422 otherwise).
-    Use POST /datasets/{dataset_mfid}/files/{file_id}/ingest to trigger ingestion.
+    Use POST /files/{file_id}/ingest to trigger ingestion.
     Requires contributor access.
     '''
 
@@ -1439,21 +1437,10 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": dsid})
 
 
-@router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", response_model=IngestionRequestRead, deprecated = True, responses={501: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`) or file storage is not configured (`storage_not_configured`)"}, 503: {"description": "The request could not be queued (`ingestion_unavailable`); it is recorded as failed"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
-def create_ds_file_ingestion_request(
-    auth_res: Annotated[Principal, Depends(authorize_user)],
-    dsid: DatasetMfid,
-    file_id: str,
-    ingestion_class: Optional[str] = Query(None, pattern=INGESTION_CLASS_PATTERN, description="An ingestor name, such as one from GET /ingestors"),
-    status: Literal['requested', 'not_requested'] = 'requested',
-):
-    '''
-    Creates an ingestion request for a file.
-    Returns error if the dataset associated with the file is not found, or the user does not have access.
-    Requires write access to the dataset.
-    '''
-    from app.api.routes.files import create_file_ingestion_request
-    return create_file_ingestion_request(auth_res, file_id, ingestion_class, status)
+@router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
+def create_ds_file_ingestion_request(dataset_mfid: str, file_id: str):
+    """Removed: use POST /files/{file_id}/ingest."""
+    removed("This route was removed. Request ingestion of a file with POST /files/{file_id}/ingest.")
 
 
 @router.get("/datasets/{dataset_mfid}/keywords", response_model=List[KeywordRead])
@@ -1555,43 +1542,8 @@ def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)],
         return _dataset_sample_link_response(ds, samp)
 
 
-@router.get(
-    "/datasets/{dataset_mfid}/samples",
-    response_model=PaginatedResponse[SampleRead],
-    deprecated=True,
-)
-def read_samples_in_dataset(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
-                            response: Response,
-                            limit: int = Query(default=100, ge=1, le=1000),
-                            offset: int = Query(default=0, ge=0)):
-    '''
-    Returns a paginated list of samples associated with the dataset ID provided.
-    Deprecated: use GET /samples?dataset_mfid={dataset_mfid}.
-    '''
-    response.headers["Deprecation"] = RELATIONSHIP_ROUTE_DEPRECATION
-    with Session(get_engine()) as session:
-        ds = session.exec(
-            select_active(Dataset, dsid, principal=auth_res)
-        ).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
-
-        query = (
-            select(Sample)
-            .select_from(join(Sample, DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id))
-            .where(DatasetSampleLink.dataset_id == ds.id)
-            .where(permission_filter(auth_res, Sample, Permission.READ))
-            .where(deletion_filter_for(Sample))
-        )
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        samples = session.exec(query.offset(offset).limit(limit)).all()
-        project_references = resolve_project_mfids_to_references((s.project_mfid for s in samples), session)
-        owners = owners_of(session, samples)
-        items = [SampleRead.model_validate({
-            **s.model_dump(),
-            **owner_fields(s, owners),
-            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else None,
-            "project": project_references.get(s.project_mfid),
-        }) for s in samples]
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+@router.get("/datasets/{dataset_mfid}/samples", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
+def read_samples_in_dataset(dataset_mfid: str):
+    """Removed: use GET /samples?dataset_mfid={dataset_mfid}."""
+    removed("This route was removed. List a dataset's samples with GET /samples?dataset_mfid={dataset_mfid}.")
 

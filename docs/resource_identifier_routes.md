@@ -96,7 +96,7 @@ Collection filters remain available when a client wants the normal paginated sha
 
 Exact user collection and singleton lookups return the same caller-authorized representation: self and platform administrators may receive email, while other authenticated callers receive `UserPublicRead`. `permissive=true` does not make `unique_id`, `username`, or `email` filters perform substring matching. An exact instrument slug lookup searches every lifecycle state unless the caller explicitly supplies `status`.
 
-`GET /users/by-username/{username}` is deprecated; use `GET /users/{user_ref}`.
+`GET /users/by-username/{username}` was removed in 4.0.0 and answers 410; use `GET /users/{user_ref}`.
 
 ## Client guidance
 

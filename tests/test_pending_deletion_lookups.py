@@ -47,7 +47,6 @@ def records(client, db_engine, auth_as):
     ("/datasets", {"sample_mfid": "{sm}"}),
     ("/datasets/{ds}/parents", {}),
     ("/datasets/{ds}/children", {}),
-    ("/datasets/{ds}/samples", {}),
     ("/ingestion_requests", {"dataset_mfid": "{ds}"}),
     ("/ingestion_requests", {"file_mfid": "f-{ds}"}),
     ("/postprocessing_runs", {"dataset_mfid": "{ds}"}),

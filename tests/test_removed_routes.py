@@ -5,11 +5,16 @@ ROUTES = (
     ("POST", "/account/apikey/regenerate", "POST /account/apikeys"),
     ("POST", "/users/0tmnyhfztdwc1000w2kspzsnh0/apikey", "/users/{user_ref}/apikeys"),
     ("POST", "/users/0tmnyhfztdwc1000w2kspzsnh0/apikey/regenerate", "/users/{user_ref}/apikeys"),
+    ("POST", "/datasets/0tmnyhfztdwc1000w2kspzsnh1/files/0tmnyhfztdwc1000w2kspzsnh2/ingest", "POST /files/{file_id}/ingest"),
+    ("GET", "/datasets/0tmnyhfztdwc1000w2kspzsnh1/samples", "GET /samples?dataset_mfid="),
+    ("GET", "/users/by-username/ada", "GET /users/{user_ref}"),
+    ("GET", "/users/0tmnyhfztdwc1000w2kspzsnh0/datasets", "GET /datasets?accessible_to_user="),
+    ("GET", "/users/0tmnyhfztdwc1000w2kspzsnh0/samples", "GET /samples?accessible_to_user="),
 )
 
 
 @pytest.mark.parametrize("method,path,replacement", ROUTES)
-def test_removed_key_routes_answer_gone_and_name_the_replacement(client, auth_as, method, path, replacement):
+def test_removed_routes_answer_gone_and_name_the_replacement(client, auth_as, method, path, replacement):
     for authenticated in (False, True):
         if authenticated:
             auth_as("0tmnyhfztdwc1000w2kspzsnh0")

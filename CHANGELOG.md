@@ -90,6 +90,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Removed
 
+- **Breaking:** five deprecated routes that no released client calls answer 410 `route_removed` and name their replacement: `POST /datasets/{dataset_mfid}/files/{file_id}/ingest`, `GET /datasets/{dataset_mfid}/samples`, `GET /users/by-username/{username}`, `GET /users/{user_ref}/datasets` and `GET /users/{user_ref}/samples`.
 - `GET /account/apikey`, `POST /account/apikey/regenerate`, `POST /users/{user_ref}/apikey` and `POST /users/{user_ref}/apikey/regenerate` now answer 410 Gone (`route_removed`, naming the replacement): keys cannot be read back, and an API key can no longer renew itself or read someone else's. Use `POST`, `GET` and `DELETE /account/apikeys`, and for administrators `GET` and `DELETE /users/{user_ref}/apikeys`. Hub releases before the next one and nano-crucible 2.1 to 3.3 (`crucible account api-key`) call some of them, so deploy with the client releases.
 
 ### Security

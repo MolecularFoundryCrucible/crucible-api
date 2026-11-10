@@ -137,11 +137,11 @@ def test_ordinary_user_sees_public_shape_without_private_fields(client, db_engin
     assert "api_key_status" not in body
 
 
-def test_by_username_lookup_populates_capabilities_for_self(client, db_engine, auth_as):
+def test_username_lookup_populates_capabilities_for_self(client, db_engine, auth_as):
     _seed(db_engine)
     auth_as(PERSON)
 
-    response = client.get("/users/by-username/alice_researcher")
+    response = client.get("/users/alice_researcher")
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -255,7 +255,7 @@ def test_no_capabilities_key_on_any_user_response(client, db_engine, auth_as, mo
     responses = (
         client.get("/users"),
         client.get(f"/users/{PERSON}"),
-        client.get("/users/by-username/alice_researcher"),
+        client.get("/users/alice_researcher"),
         client.get("/users/search", params={"q": "alice"}),
         client.post("/users/resolve", json={"usernames": ["alice_researcher"]}),
         client.get("/account"),

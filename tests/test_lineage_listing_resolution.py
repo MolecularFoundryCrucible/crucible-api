@@ -95,7 +95,7 @@ def test_read_samples_in_dataset_resolves_project(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
-    resp = client.get("/datasets/ds_parent/samples")
+    resp = client.get("/samples", params={"dataset_mfid": "ds_parent"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["items"][0]["project_id"] == "proj_new"
     assert resp.json()["items"][0]["project"]["project_id"] == "proj_new"

@@ -127,7 +127,7 @@ def _create(values: dict, allow_additional: bool) -> tuple[str, str, str]:
     """Create the administrator and their API key in one transaction."""
     from app.api.dependencies import get_engine
     from app.auth.identity import IdentityTaken
-    from app.models.core_models import AccessGroup, User, get_mfid_value
+    from app.tables import AccessGroup, User, get_mfid_value
     from app.utils.auth_utils import add_apikey
     from app.utils.user_utils import assert_profile_fields_available, commit_user, generate_unique_username, provision_user
 
@@ -212,7 +212,7 @@ def _run_create(args: argparse.Namespace) -> int:
 def _set_role(user_ref: str, role: str) -> tuple[str, str]:
     from app.api.dependencies import get_engine
     from app.auth.events import AuthEventType, record_event
-    from app.models.core_models import User
+    from app.tables import User
     from app.utils.auth_utils import forget_cached_keys
     from app.utils.user_utils import person_by_reference
 
@@ -293,7 +293,7 @@ def _run_password_link(args: argparse.Namespace) -> int:
 def _pending_accounts() -> list[dict]:
     from app.api.dependencies import get_engine
     from app.auth.linking import sign_in_labels
-    from app.models.core_models import User
+    from app.tables import User
 
     with Session(get_engine()) as session:
         users = session.exec(select(User).where(User.pending_at != None).order_by(User.pending_at, User.id)).all()  # noqa: E711

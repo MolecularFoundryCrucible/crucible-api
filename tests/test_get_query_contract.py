@@ -8,7 +8,7 @@ import app.api.routes.instruments as instruments_routes
 import app.api.routes.projects as projects_routes
 import app.api.routes.samples as samples_routes
 
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     Dataset,
     Instrument,

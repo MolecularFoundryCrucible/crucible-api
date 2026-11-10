@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.api.routes import account as account_routes
-from app.models.core_models import User
+from app.tables import User
 from app.utils.permissions import PlatformRole
 
 ME = "0000-0000-0000-0001"

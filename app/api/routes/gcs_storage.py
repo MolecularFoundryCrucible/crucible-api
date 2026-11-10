@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 from app.api.dependencies import get_engine
 from app.api.path_params import DatasetMfid
 from app.config import get_settings
-from app.models.core_models import AssociatedFile, Dataset, UploadSession
+from app.tables import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
 from app.services import multipart

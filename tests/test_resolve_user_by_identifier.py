@@ -7,9 +7,9 @@ from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import User
+from app.tables import User
 from app.utils.user_utils import resolve_user_by_identifier
-from app.models.core_models import UserIdentity
+from app.tables import UserIdentity
 
 SA_MFID = "0tkn2knjast3h0008nyq9zps2c"  # real SA unique_id shape, see test_resource_access_routes.py
 

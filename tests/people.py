@@ -1,6 +1,6 @@
 from sqlmodel import Session, select
 
-from app.models.core_models import User
+from app.tables import User
 
 
 def internal_id(bind, unique_id: str) -> int:
@@ -40,7 +40,7 @@ def user_id_or_none(session: Session, unique_id) -> int | None:
 def add_old_style_key(session: Session, user_id, token: str, token_created: str, **fields):
     """A key as both tables hold it after the backfill: plain in apitoken, hashed in api_key."""
     from app.auth.api_keys import created_at_of, store_key
-    from app.models.core_models import ApiToken
+    from app.tables import ApiToken
 
     owner = session.get(User, user_id)
     session.add(ApiToken(token=token, user_id=user_id, user_unique_id=owner.unique_id, access_group_id=owner.unique_id, token_created=token_created, **fields))

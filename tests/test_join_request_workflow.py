@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 import app.api.routes.join_requests as join_requests_routes
 from app.general_utils import get_utc_datetime
-from app.models.core_models import (
+from app.tables import (
     AccessGroup, AccessGroupJoinRequest, DeletionRequest, Project, Resource, ResourceACL, User, UserAccessGroupLink,
 )
 from app.utils.permissions import AccessGroupType, PlatformRole, Role

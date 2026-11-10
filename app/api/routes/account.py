@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from app.api.removed import REMOVED_RESPONSE, removed
 from app.api.dependencies import get_engine
 from app.general_utils import get_utc_datetime, if_match_satisfied
-from app.models.core_models import Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
+from app.tables import Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
 from app.models.preferences import MAX_DOCUMENT_BYTES, PREFERENCES_SCHEMA_VERSION, PreferencesDocument, PreferencesRead, RecentResourceRead, RecentResourceRecord, serialized_size
 from app.api.routes.join_requests import join_request_filters, list_join_requests_page
 from app.models.join_requests import JoinRequestRead, JoinRequestScope, JoinRequestSort, JoinRequestStatus

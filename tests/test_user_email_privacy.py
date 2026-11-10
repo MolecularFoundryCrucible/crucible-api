@@ -3,7 +3,7 @@ from sqlmodel import Session, select
 
 from app.api.main import app
 from app.api.routes.users import list_users, read_user
-from app.models.core_models import User
+from app.tables import User
 from app.models.query_params import UserListQuery
 from app.models.users import UserPublicRead, UserRead
 from app.utils.permissions import PlatformRole, Principal

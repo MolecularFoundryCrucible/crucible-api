@@ -7,7 +7,7 @@ nothing.
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import AccessGroup, Dataset, ResourceACL, Sample
+from app.tables import AccessGroup, Dataset, ResourceACL, Sample
 from app.utils.permissions import AccessGroupType, PUBLIC_GROUP_NAME
 from app.utils.sql_utils import visibility_filter_for
 

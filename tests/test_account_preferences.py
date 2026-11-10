@@ -3,7 +3,7 @@ import json
 import pytest
 from sqlmodel import Session, select
 
-from app.models.core_models import User, UserPreferences
+from app.tables import User, UserPreferences
 
 ME = "0000-0002-0000-0001"
 OTHER = "0000-0002-0000-0002"

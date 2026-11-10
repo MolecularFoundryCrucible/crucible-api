@@ -26,7 +26,7 @@ from sqlalchemy.dialects import postgresql, sqlite
 from sqlmodel import Session, select
 
 from app.config import get_secret, get_settings
-from app.models.core_models import LocalCredential, LoginThrottle
+from app.tables import LocalCredential, LoginThrottle
 
 UNKNOWN_FREE_FAILURES = 4
 UNKNOWN_LIMIT = 90
@@ -257,7 +257,7 @@ def _record_failure(engine, decision: AttemptDecision) -> None:
     """A checked, wrong password goes into the sign-in history, and so does the lock it caused.
     Attempts refused before checking are not recorded, so the limits also bound the history."""
     from app.auth.events import AuthEventType, record_event
-    from app.models.core_models import User
+    from app.tables import User
     from app.utils.hub_login import HubLoginUnavailable, public_api_url
 
     try:

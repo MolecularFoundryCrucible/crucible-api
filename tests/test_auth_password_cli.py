@@ -9,7 +9,7 @@ from app.auth.password_links import issue_link, live_link
 from app.auth.passwords import store_password
 from app.cli import admin as admin_cli
 from app.cli import auth as auth_cli
-from app.models.core_models import AuthEvent, HubAccessToken, HubRefreshToken, HubTokenFamily, LocalCredential, PasswordToken, User, UserIdentity
+from app.tables import AuthEvent, HubAccessToken, HubRefreshToken, HubTokenFamily, LocalCredential, PasswordToken, User, UserIdentity
 from app.utils.hub_tokens import issue_hub_tokens
 
 LAB = "https://login.lab.example/realms/crucible"

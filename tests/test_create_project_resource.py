@@ -7,7 +7,7 @@ become resources.
 """
 from sqlmodel import select
 
-from app.models.core_models import AccessGroup, Project, Resource, ResourceACL, User
+from app.tables import AccessGroup, Project, Resource, ResourceACL, User
 from app.utils.permissions import PlatformRole
 
 

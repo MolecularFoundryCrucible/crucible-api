@@ -3,7 +3,7 @@ from datetime import date, timedelta
 import pytest
 from sqlmodel import Session
 
-from app.models.core_models import User
+from app.tables import User
 from app.utils.auth_utils import authenticate_user
 from app.utils.permissions import Principal
 from tests.people import add_old_style_key, internal_id

@@ -1,6 +1,6 @@
 from sqlmodel import Session
 
-from app.models.core_models import Dataset, Sample
+from app.tables import Dataset, Sample
 
 
 SAMPLE_MFID = "0tmfkc1dk4r84000xjz5j6pqr4"

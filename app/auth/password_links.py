@@ -11,7 +11,7 @@ from sqlalchemy import delete, update
 from sqlmodel import Session, select
 
 from app.config import get_settings
-from app.models.core_models import DeviceAuthorization, HubLoginCode, LocalCredential, PasswordToken, User
+from app.tables import DeviceAuthorization, HubLoginCode, LocalCredential, PasswordToken, User
 
 Purpose = Literal["setup", "reset"]
 

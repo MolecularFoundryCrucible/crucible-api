@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from sqlalchemy.dialects import postgresql
 from sqlmodel import select
 
-from app.models.core_models import Dataset
+from app.tables import Dataset
 from app.utils.search_utils import (
     apply_trigram_search,
     configure_trigram_search,

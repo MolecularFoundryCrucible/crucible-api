@@ -4,7 +4,7 @@ Not started. Documented here so the scope doesn't need re-deriving later.
 
 ## Why
 
-The SQLModel class is already `Resource` (`app/models/core_models.py`), but the physical Postgres table is still `idtype` — a naming holdover the class name never matched. Same shape of naming-clarity fix as the `ResourceACL.role` → `permission` rename: the code already calls it what it is, the schema hasn't caught up.
+The SQLModel class is already `Resource` (`app/tables.py`), but the physical Postgres table is still `idtype` — a naming holdover the class name never matched. Same shape of naming-clarity fix as the `ResourceACL.role` → `permission` rename: the code already calls it what it is, the schema hasn't caught up.
 
 ## Scope, verified by direct search — no route or utility code is affected
 
@@ -12,7 +12,7 @@ Everything goes through the `Resource` ORM class (`select(Resource).where(...)`)
 
 The only things that actually need to change:
 
-**`app/models/core_models.py` — 4 lines:**
+**`app/tables.py` — 4 lines:**
 - `Resource.__tablename__ = "idtype"` → `"resource"`
 - `ResourceACL.mfid`'s `foreign_key="idtype.mfid"` → `"resource.mfid"`
 - `ScientificMetadataBinary.unique_id`'s `foreign_key="idtype.mfid"` → `"resource.mfid"`

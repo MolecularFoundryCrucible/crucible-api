@@ -4,7 +4,7 @@ from sqlmodel import Session
 
 import app.api.routes.datasets as datasets_routes
 from app.api.routes.datasets import update_dataset
-from app.models.core_models import Dataset, Instrument, Resource
+from app.tables import Dataset, Instrument, Resource
 from app.models.datasets import DatasetUpdate
 from app.utils.permissions import PlatformRole, Principal
 

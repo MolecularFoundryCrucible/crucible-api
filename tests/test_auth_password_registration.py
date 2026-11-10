@@ -8,7 +8,7 @@ from app import config
 from app.api.main import app
 from app.api.routes import passwords as routes
 from app.auth.throttle import attempt_password
-from app.models.core_models import (
+from app.tables import (
     AccessGroup, AuthEvent, DeviceAuthorization, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential,
     LoginThrottle, PasswordToken, User, UserAccessGroupLink,
 )

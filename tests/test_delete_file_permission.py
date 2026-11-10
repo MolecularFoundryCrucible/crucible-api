@@ -5,7 +5,7 @@ a lower bar than that. No test previously covered this route at all.
 """
 from sqlmodel import Session
 
-from app.models.core_models import AccessGroup, AssociatedFile, Dataset, Resource, ResourceACL, User, UserAccessGroupLink
+from app.tables import AccessGroup, AssociatedFile, Dataset, Resource, ResourceACL, User, UserAccessGroupLink
 from app.utils.permissions import Role
 
 

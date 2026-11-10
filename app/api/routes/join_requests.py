@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 from app.api.dependencies import get_engine
 from app.api.path_params import ProjectRef
 from app.general_utils import get_utc_datetime
-from app.models.core_models import AccessGroup, AccessGroupJoinRequest, DeletionRequest, Project, User
+from app.tables import AccessGroup, AccessGroupJoinRequest, DeletionRequest, Project, User
 from app.models.facets import FacetBucket, FacetResponse, ProjectFacetBucket, RequesterFacetBucket
 from app.models.join_requests import (
     JoinRequestCapabilities, JoinRequestCreate, JoinRequestFacetField, JoinRequestRead, JoinRequestReview,

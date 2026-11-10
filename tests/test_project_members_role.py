@@ -4,10 +4,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import AccessGroup, Project, ResourceACL, User, UserAccessGroupLink
+from app.tables import AccessGroup, Project, ResourceACL, User, UserAccessGroupLink
 from app.api.routes.projects import _get_project_users
 from app.utils.permissions import Principal
-from app.models.core_models import UserIdentity
+from app.tables import UserIdentity
 
 
 def _engine():

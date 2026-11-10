@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import Session
 
-from app.models.core_models import Dataset, Resource, Sample, User, UserIdentity
+from app.tables import Dataset, Resource, Sample, User, UserIdentity
 from app.utils.permissions import PlatformRole
 from app.utils.user_utils import person_by_reference, resolve_user, resolve_user_by_identifier, user_by_id_or_orcid
 from app.utils.user_utils import provision_user

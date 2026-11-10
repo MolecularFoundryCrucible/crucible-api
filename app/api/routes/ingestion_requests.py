@@ -5,7 +5,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Dataset, IngestionRequest
+from app.tables import Dataset, IngestionRequest
 from app.models.ingestion import IngestionRequestRead, IngestionRequestUpdate
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission

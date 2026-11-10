@@ -20,7 +20,7 @@ from app.api.dependencies import get_engine
 from app.api.routes import auth as auth_routes
 from app.api.routes import hub_auth as routes
 from app.config import get_settings, missing_required_settings
-from app.models.core_models import HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserIdentity
+from app.tables import HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserIdentity
 from tests.test_auth_providers import LAB_ENTRY, ORCID_ENTRY, FakeProvider
 
 HUB_CALLBACK = "https://hub.example/hub/auth/callback"
@@ -627,7 +627,7 @@ def test_no_metadata_without_clients(oauth_client, monkeypatch):
 
 
 def test_a_sign_in_records_the_client_it_came_through(oauth_client, remote, db_engine):
-    from app.models.core_models import AuthEvent
+    from app.tables import AuthEvent
 
     link(db_engine, LAB_ISSUER, "lab-user")
     client_answer(lab_sign_in(oauth_client, remote))

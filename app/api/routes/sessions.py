@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.api.dependencies import get_engine
 from app.api.path_params import UserRef
 from app.auth.sessions import ActiveSession, active_sessions, end_session, end_sessions
-from app.models.core_models import AuthEvent, User
+from app.tables import AuthEvent, User
 from app.models.identities import AuthEventRead, SessionRead
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, caller_row, require_human_admin_safeguard, require_platform_admin, require_recent_hub_session

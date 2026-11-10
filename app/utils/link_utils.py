@@ -3,7 +3,7 @@ from typing import List, Optional, Sequence
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
-from app.models.core_models import (
+from app.tables import (
     Dataset,
     DatasetLink,
     DatasetSampleLink,

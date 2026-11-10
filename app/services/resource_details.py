@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from app.models.access import EntryCapabilities
 from app.models.access_groups import AccessGroupMemberRead
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     Dataset,
     DeletionRequest,

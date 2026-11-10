@@ -8,7 +8,7 @@ from app.api.routes.service_accounts import (
     list_service_accounts,
     update_service_account_platform_role,
 )
-from app.models.core_models import User
+from app.tables import User
 from app.models.users import ServiceAccountPlatformRoleUpdate
 from app.utils.permissions import PlatformRole, Principal
 from tests.people import internal_id, add_old_style_key

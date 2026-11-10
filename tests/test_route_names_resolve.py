@@ -22,15 +22,11 @@ pyflakes_api = pytest.importorskip(
 from pyflakes.reporter import Reporter  # noqa: E402
 
 CHECKED_DIRS = ["app/api/routes", "app/utils", "app/models"]
-FILES = sorted(p for d in CHECKED_DIRS for p in pathlib.Path(d).glob("*.py"))
+FILES = sorted([*(p for d in CHECKED_DIRS for p in pathlib.Path(d).glob("*.py")), pathlib.Path("app/tables.py")])
 
 # Unused imports and star-import noise are style, not breakage. Only names
 # that do not resolve, and syntax errors, can fail a request at runtime.
 FATAL = ("undefined name", "invalid syntax", "syntax error")
-
-# app/models/core_models.py imports Column twice. Pre-existing on main, and
-# harmless — both names refer to the same object.
-KNOWN = {("app/models/core_models.py", "redefinition of unused 'Column'")}
 
 
 class _Collect:
@@ -55,7 +51,6 @@ def test_no_undefined_names(path):
     fatal = [
         m for m in reporter.messages
         if any(f in m.lower() for f in FATAL)
-        and not any(f in m and k in m for f, k in KNOWN)
     ]
     assert not fatal, (
         f"{path} uses names that are not defined in scope:\n  "

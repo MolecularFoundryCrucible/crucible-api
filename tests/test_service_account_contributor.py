@@ -1,7 +1,7 @@
 from sqlalchemy import update
 from sqlmodel import Session, select
 
-from app.models.core_models import AssociatedFile, Dataset, DatasetSampleLink, Resource, Sample
+from app.tables import AssociatedFile, Dataset, DatasetSampleLink, Resource, Sample
 from app.utils.permissions import PlatformRole
 
 

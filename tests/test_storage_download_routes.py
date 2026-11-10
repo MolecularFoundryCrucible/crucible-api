@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 import app.api.routes.gcs_storage as gcs_storage
 import app.storage.gcs as google
-from app.models.core_models import AssociatedFile, Dataset, IngestionRequest, Resource
+from app.tables import AssociatedFile, Dataset, IngestionRequest, Resource
 from app.utils.permissions import PlatformRole
 
 DS = "0t3qajrnzhtn7000x6s0x427hg"

@@ -5,7 +5,7 @@ from sqlalchemy import exists, func
 from sqlmodel import select
 
 from app.general_utils import is_valid_mfid
-from app.models.core_models import Dataset, Instrument, Project
+from app.tables import Dataset, Instrument, Project
 from app.models.instrument import InstrumentReferenceRead
 
 _INSTRUMENT_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{2,24}$')

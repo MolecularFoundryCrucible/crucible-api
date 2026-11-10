@@ -22,7 +22,7 @@ from app.auth.clients import client_by_id
 from app.auth.devices import INTERNAL_CLIENT_ID, decide, device_by_hash, pending_device
 from app.auth.throttle import begin_code_attempt, client_address, give_back
 from app.config import get_secret
-from app.models.core_models import User
+from app.tables import User
 from app.utils.hub_login import HubLoginUnavailable, public_api_url, redeem_approval_code
 from app.utils.hub_tokens import InvalidHubGrant
 

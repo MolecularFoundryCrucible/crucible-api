@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import Instrument, Project
+from app.tables import Instrument, Project
 from app.utils.instrument_utils import (
     assert_instrument_id_available,
     resolve_instrument_id_to_mfid,

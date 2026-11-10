@@ -48,7 +48,7 @@ from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 
 from app.api.main import app
-from app.models.core_models import (
+from app.tables import (
     User, AccessGroup, UserAccessGroupLink, ResourceACL, Resource, Dataset,
     AssociatedFile, IngestionRequest, Project, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
@@ -202,7 +202,7 @@ def auth_as():
             from sqlmodel import Session, select
 
             from app.api.dependencies import get_engine
-            from app.models.core_models import User
+            from app.tables import User
 
             try:
                 with Session(get_engine()) as session:

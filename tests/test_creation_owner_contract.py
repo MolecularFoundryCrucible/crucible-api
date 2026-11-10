@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.api.routes.datasets import create_dataset
 from app.api.routes.samples import create_sample
-from app.models.core_models import AccessGroup, Dataset, ResourceACL, Sample, User, UserAccessGroupLink
+from app.tables import AccessGroup, Dataset, ResourceACL, Sample, User, UserAccessGroupLink
 from app.models.datasets import DatasetCreate
 from app.models.samples import SampleCreate
 from app.utils.permissions import (

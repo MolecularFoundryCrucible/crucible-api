@@ -2,7 +2,7 @@ from sqlalchemy.dialects import postgresql
 
 from app.api.routes.resources import search_chunks
 from app.models.ai import ChunkHit, ChunkSearchRequest
-from app.models.core_models import ResourceEmbedding
+from app.tables import ResourceEmbedding
 from app.utils.permissions import GroupMembership, Principal, Role
 
 

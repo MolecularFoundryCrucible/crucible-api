@@ -9,7 +9,7 @@ group, unable to edit or delete something it's supposed to own.
 """
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, User, UserAccessGroupLink
+from app.tables import AccessGroup, User, UserAccessGroupLink
 from app.utils.permissions import PlatformRole
 
 
@@ -74,7 +74,7 @@ def test_explicit_unique_id_must_be_mfid(client, db_engine, auth_as):
 
 
 def test_explicit_unique_id_must_not_collide_with_a_resource_or_group(client, db_engine, auth_as):
-    from app.models.core_models import AccessGroup, Resource
+    from app.tables import AccessGroup, Resource
 
     resource_mfid = "0tp5res0000000000000000001"
     group_mfid = "0tp5gr0000000000000000001a"

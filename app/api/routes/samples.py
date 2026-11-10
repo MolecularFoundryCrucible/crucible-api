@@ -11,7 +11,7 @@ from sqlmodel import and_, Session, select
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ChildSampleMfid, ParentSampleMfid, SampleMfid
 from app.general_utils import get_utc_datetime
-from app.models.core_models import (
+from app.tables import (
     Dataset, DatasetSampleLink,
     Project, Resource, Sample, SampleLink, ScientificMetadataBinary,
 )

@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import ServiceAccountRef
-from app.models.core_models import AccessGroup, Resource, User
+from app.tables import AccessGroup, Resource, User
 from app.models.pagination import PaginatedResponse
 from app.models.users import (
     ServiceAccountAdminDetail,
@@ -146,7 +146,7 @@ def create_service_account(
                 raise HTTPException(status_code=409, detail=f"unique_id '{body.unique_id}' already exists.")
             unique_id = body.unique_id
         else:
-            from app.models.core_models import get_mfid_value
+            from app.tables import get_mfid_value
             unique_id = get_mfid_value()
 
         user = User(

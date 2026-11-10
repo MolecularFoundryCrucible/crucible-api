@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 from app.api.dependencies import get_engine
 from app.auth.identity import retry_after_concurrent_first_write
 from app.general_utils import is_orcid
-from app.models.core_models import ORCID_ISSUERS, User, UserIdentity, get_utc_datetime
+from app.tables import ORCID_ISSUERS, User, UserIdentity, get_utc_datetime
 
 BATCH_SIZE = 1000
 

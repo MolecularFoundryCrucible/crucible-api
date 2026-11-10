@@ -15,7 +15,7 @@ from sqlalchemy import update
 from sqlmodel import Session, select
 
 from app.config import get_secret
-from app.models.core_models import DeviceAuthorization
+from app.tables import DeviceAuthorization
 
 USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ"
 USER_CODE_LENGTH = 8

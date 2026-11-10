@@ -3,7 +3,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Resource, ResourceACL, User, UserAccessGroupLink
+from app.tables import AccessGroup, Resource, ResourceACL, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PUBLIC_GROUP_NAME, PlatformRole, Role
 
 

@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 
 import app.api.routes.deletion as deletion_routes
 import app.utils.deletion_utils as deletion_utils
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     Dataset,
     DeletionAuditLog,
@@ -238,7 +238,7 @@ def test_forced_deletion_removes_recent_resource_entries(db_engine, resource_typ
 
 def test_forced_deletion_removes_postprocessing_runs(db_engine):
     from app.general_utils import get_utc_datetime
-    from app.models.core_models import PostprocessingRun
+    from app.tables import PostprocessingRun
     group_id, _ = _setup(db_engine)
     with Session(db_engine) as session:
         session.add(PostprocessingRun(dataset_mfid="resource-to-delete", pipeline="rga_analysis", requested_at=get_utc_datetime()))

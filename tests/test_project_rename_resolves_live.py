@@ -7,7 +7,7 @@ that no longer resolves to anything. resolve_project_mfids_to_ids batch
 """
 from sqlmodel import Session
 
-from app.models.core_models import AccessGroup, Dataset, Project, Resource, ResourceACL, Sample, User, UserAccessGroupLink
+from app.tables import AccessGroup, Dataset, Project, Resource, ResourceACL, Sample, User, UserAccessGroupLink
 from app.utils.permissions import PlatformRole
 
 

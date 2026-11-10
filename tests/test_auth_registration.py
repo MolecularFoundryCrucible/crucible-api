@@ -9,7 +9,7 @@ import tests.test_auth_providers as provider_tests
 from app.api.main import app
 from app.auth.registration import expire_pending_users
 from app.auth.sign_in import NOT_LINKED, SignInRefused, resolve_sign_in
-from app.models.core_models import (
+from app.tables import (
     DeviceAuthorization,
     LoginThrottle,
     AccessGroup, AuthEvent, Dataset, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserAccessGroupLink, UserIdentity,
@@ -71,7 +71,7 @@ def test_waiting_accounts_get_no_hub_tokens_or_api_key(db_engine, use_engine):
     from fastapi import HTTPException
     from fastapi.security import HTTPAuthorizationCredentials
 
-    from app.models.core_models import ApiToken
+    from app.tables import ApiToken
     from app.utils import auth_utils
 
     use_engine(db_engine)

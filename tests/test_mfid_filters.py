@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import Session
 
-from app.models.core_models import AccessGroup, Dataset, DeletionRequest, Instrument, Project, Resource, ResourceACL, Sample, User
+from app.tables import AccessGroup, Dataset, DeletionRequest, Instrument, Project, Resource, ResourceACL, Sample, User
 from app.utils.permissions import Role
 
 ME = "0000-0004-0000-0101"

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, ResourceACL, User
+from app.tables import AccessGroup, ResourceACL, User
 from app.models.query_params import InstrumentAffiliation, InstrumentSearchQuery
 from app.utils.auth_utils import load_principal
 from app.utils.permissions import AccessGroupType

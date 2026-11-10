@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, DatasetLink, Project, Resource, ResourceACL, Sample, SampleLink
+from app.tables import AccessGroup, Dataset, DatasetLink, Project, Resource, ResourceACL, Sample, SampleLink
 from app.utils.permissions import Role
 
 USER = "lineage-user"

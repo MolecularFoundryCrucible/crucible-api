@@ -2,7 +2,7 @@ from sqlalchemy import func, literal, or_
 from sqlmodel import Session
 
 import app.api.routes.users as users_routes
-from app.models.core_models import User
+from app.tables import User
 from app.utils.permissions import Principal
 
 

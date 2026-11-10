@@ -73,7 +73,7 @@ def test_service_account_matching_itself_is_allowed():
 def test_identity_group_is_found_through_membership_not_its_name(db_engine):
     from sqlmodel import Session
 
-    from app.models.core_models import AccessGroup
+    from app.tables import AccessGroup
     from app.utils.user_utils import identity_group_of, identity_group_owner, provision_user
 
     with Session(db_engine) as session:

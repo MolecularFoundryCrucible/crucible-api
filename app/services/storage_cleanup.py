@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from sqlmodel import Session, select
 
-from app.models.core_models import AssociatedFile, FileVersion, UploadSession
+from app.tables import AssociatedFile, FileVersion, UploadSession
 from app.services import multipart
 from app.services.file_versions import waiting
 from app.services.storage_downloads import owned_object

@@ -5,7 +5,7 @@ target project.
 """
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, Project, Sample, User, UserAccessGroupLink
+from app.tables import AccessGroup, Dataset, Project, Sample, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 

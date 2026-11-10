@@ -19,7 +19,7 @@ from sqlalchemy import update
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Dataset, Instrument, Sample, User
+from app.tables import Dataset, Instrument, Sample, User
 
 BATCH_SIZE = 1000
 

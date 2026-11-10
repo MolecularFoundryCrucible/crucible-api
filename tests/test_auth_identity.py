@@ -14,7 +14,7 @@ from sqlmodel import Session, SQLModel, select
 from app.api.main import app
 from app.api.routes import users as users_routes
 from app.auth.identity import IdentityTaken, ensure_identity
-from app.models.core_models import User, UserIdentity
+from app.tables import User, UserIdentity
 from app.utils.auth_utils import encode_token
 from app.utils.permissions import PlatformRole
 from tests.people import internal_id
@@ -118,7 +118,7 @@ def test_one_person_cannot_hold_two_orcids_in_the_database(db_engine):
 
 @pytest.fixture
 def hub_tables(db_engine):
-    from app.models.core_models import HubLoginCode, HubLoginTransaction
+    from app.tables import HubLoginCode, HubLoginTransaction
 
     SQLModel.metadata.create_all(db_engine, tables=[HubLoginCode.__table__, HubLoginTransaction.__table__])
 
@@ -126,7 +126,7 @@ def hub_tables(db_engine):
 def test_hub_sign_in_writes_the_identity_row_for_new_and_existing_users(db_engine, hub_tables):
     from datetime import datetime, timedelta, timezone
 
-    from app.models.core_models import HubLoginTransaction
+    from app.tables import HubLoginTransaction
     from app.utils.hub_login import create_handoff_code
 
     now = datetime.now(timezone.utc)
@@ -143,7 +143,7 @@ def test_hub_sign_in_writes_the_identity_row_for_new_and_existing_users(db_engin
 def test_hub_sign_in_uses_the_hub_issuer(db_engine, hub_tables, monkeypatch, orcid_provider_settings):
     from datetime import datetime, timedelta, timezone
 
-    from app.models.core_models import HubLoginTransaction
+    from app.tables import HubLoginTransaction
     from app.utils.hub_login import create_handoff_code
 
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
@@ -591,7 +591,7 @@ def test_concurrent_first_write_keeps_one_row_and_both_callers_succeed(pg_engine
 
 @pytest.fixture
 def pg_sign_in(pg_engine, monkeypatch):
-    from app.models.core_models import AccessGroup, ApiKey, ApiToken, AuthEvent, HubLoginCode, UserAccessGroupLink
+    from app.tables import AccessGroup, ApiKey, ApiToken, AuthEvent, HubLoginCode, UserAccessGroupLink
 
     SQLModel.metadata.create_all(pg_engine, tables=[AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, ApiKey.__table__, HubLoginCode.__table__, AuthEvent.__table__])
     return pg_engine
@@ -612,7 +612,7 @@ def race(count, sign_in):
 
 
 def assert_one_person(engine):
-    from app.models.core_models import AccessGroup, UserAccessGroupLink
+    from app.tables import AccessGroup, UserAccessGroupLink
 
     with Session(engine) as session:
         assert session.exec(select(User.unique_id)).all() == [ORCID]
@@ -653,7 +653,7 @@ def test_two_new_people_with_the_same_name_get_different_usernames_on_postgres(p
     from app.api.routes import auth as auth_routes
     from app.auth import sign_in as sign_in_module
     from app.auth.identity import retry_after_concurrent_first_write
-    from app.models.core_models import User
+    from app.tables import User
 
     real_provision_user = sign_in_module.provision_user
     both_looked = Barrier(2)
@@ -719,7 +719,7 @@ def test_first_sign_in_committed_between_the_two_lookups_is_found_on_postgres(pg
 
 
 def tokens(engine):
-    from app.models.core_models import ApiToken
+    from app.tables import ApiToken
 
     with Session(engine) as session:
         return session.exec(select(ApiToken.token)).all()

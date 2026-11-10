@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 import app.api.routes.deletion as deletion_routes
 import app.api.routes.resources as resources_routes
 from app.api.main import app
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     Dataset,
     DeletionRequest,

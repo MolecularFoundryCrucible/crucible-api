@@ -11,7 +11,7 @@ from app.auth.api_keys import store_key
 from app.auth.password_links import issue_link
 from app.auth.passwords import store_password
 from app.auth.throttle import attempt_password
-from app.models.core_models import (
+from app.tables import (
     AuthEvent, DeviceAuthorization, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential, LoginThrottle,
     PasswordToken, User,
 )

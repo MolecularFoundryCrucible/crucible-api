@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, select
 
-from app.models.core_models import Instrument, Resource, UploadSession, User
+from app.tables import Instrument, Resource, UploadSession, User
 from app.services import multipart
 from app.utils.permissions import PlatformRole, Principal
 

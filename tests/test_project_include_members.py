@@ -9,7 +9,7 @@ the project's own unique_id instead.
 """
 from sqlmodel import Session
 
-from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
+from app.tables import AccessGroup, Project, User, UserAccessGroupLink
 from app.utils.permissions import PlatformRole, Role
 
 

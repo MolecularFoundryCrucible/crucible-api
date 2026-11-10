@@ -3,7 +3,7 @@ surrounds the request."""
 from sqlalchemy.sql import literal
 from sqlmodel import Session, select
 
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     AccessGroupJoinRequest,
     Dataset,

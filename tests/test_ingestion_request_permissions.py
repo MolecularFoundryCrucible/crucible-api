@@ -1,6 +1,6 @@
 from sqlmodel import Session
 
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     AssociatedFile,
     Dataset,

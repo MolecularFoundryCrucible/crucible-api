@@ -3,7 +3,7 @@ from datetime import timedelta
 import pytest
 from sqlmodel import Session, select
 
-from app.models.core_models import AssociatedFile, FileVersion, UploadSession
+from app.tables import AssociatedFile, FileVersion, UploadSession
 from app.services import multipart as service
 from app.services.file_versions import RestoreRefused, restore_latest
 from app.services.storage_cleanup import run_cleanup

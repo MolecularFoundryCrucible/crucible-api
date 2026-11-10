@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, Resource, ResourceACL, Sample
+from app.tables import AccessGroup, Dataset, Resource, ResourceACL, Sample
 from app.utils.permissions import PUBLIC_GROUP_NAME, PlatformRole, Role
 from app.utils.sql_utils import is_public
 from app.utils.user_utils import provision_user

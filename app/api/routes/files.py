@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import (
+from app.tables import (
     AssociatedFile,
     Dataset,
     IngestionRequest,

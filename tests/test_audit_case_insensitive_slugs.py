@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.models.core_models import Instrument, Project
+from app.tables import Instrument, Project
 
 
 AUDIT_PATH = Path(__file__).parents[1] / "migrations/data/20261005_audit_case_insensitive_slugs.py"

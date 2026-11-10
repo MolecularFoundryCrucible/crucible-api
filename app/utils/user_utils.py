@@ -9,7 +9,7 @@ from anyascii import anyascii
 from sqlmodel import select
 from app.auth.identity import default_orcid_issuer, ensure_identity, find_identity
 from app.general_utils import is_orcid, is_valid_mfid
-from app.models.core_models import AccessGroup, User, UserAccessGroupLink
+from app.tables import AccessGroup, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 logger = logging.getLogger(__name__)
@@ -122,7 +122,7 @@ def email_in_use(session, email: Optional[str], exclude_orcid: Optional[str] = N
 
 def assert_username_kept_for_password(session, user, update_data: dict) -> None:
     """A password signs in with the username, so an account with one cannot clear it."""
-    from app.models.core_models import LocalCredential
+    from app.tables import LocalCredential
 
     if "username" in update_data and not update_data["username"] and session.get(LocalCredential, user.id) is not None:
         raise HTTPException(status_code=409, detail={"code": "username_required", "message": "This account signs in with a password, so it needs a username"})
@@ -192,7 +192,7 @@ def provision_user(session, *, unique_id: str, first_name: str, last_name: str, 
 def identity_group_of(session, user_id: int) -> Optional[AccessGroup]:
     """A person's own access group, found through their owner membership rather than its name,
     so renaming the group never loses it."""
-    from app.models.core_models import UserAccessGroupLink
+    from app.tables import UserAccessGroupLink
 
     return session.exec(
         select(AccessGroup)
@@ -202,7 +202,7 @@ def identity_group_of(session, user_id: int) -> Optional[AccessGroup]:
 
 
 def identity_group_owner(session, group_id: int) -> Optional[User]:
-    from app.models.core_models import UserAccessGroupLink
+    from app.tables import UserAccessGroupLink
 
     return session.exec(
         select(User)
@@ -359,7 +359,7 @@ def sql_add_user_to_access_group(orcid, group_name, session, role=None, group_ty
     via the relationship would leave it null, which fails closed to viewer,
     so a newly added project member would land read-only.
     """
-    from app.models.core_models import UserAccessGroupLink
+    from app.tables import UserAccessGroupLink
     from app.utils.permissions import AccessGroupType, Role
 
     user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -400,7 +400,7 @@ def sql_add_user_to_access_group(orcid, group_name, session, role=None, group_ty
 def close_pending_join_requests(session, accessgroup_id, user, granted_role, actor=None):
     from sqlalchemy import update
     from app.general_utils import get_utc_datetime
-    from app.models.core_models import AccessGroupJoinRequest
+    from app.tables import AccessGroupJoinRequest
 
     session.execute(
         update(AccessGroupJoinRequest)

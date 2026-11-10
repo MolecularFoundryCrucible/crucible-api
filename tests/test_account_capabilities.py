@@ -2,7 +2,7 @@ import pytest
 from sqlmodel import Session
 
 from app.api.routes.account import _account_capabilities
-from app.models.core_models import User
+from app.tables import User
 from app.utils.permissions import PlatformRole, Principal
 
 

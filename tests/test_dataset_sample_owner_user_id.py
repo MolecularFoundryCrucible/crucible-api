@@ -4,7 +4,7 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
-from app.models.core_models import Dataset, Instrument, Resource, Sample, User
+from app.tables import Dataset, Instrument, Resource, Sample, User
 from app.utils.permissions import PlatformRole
 
 OLD = "0000-0002-1825-0097"

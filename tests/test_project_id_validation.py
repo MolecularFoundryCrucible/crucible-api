@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import AccessGroup, Instrument, Project, User
+from app.tables import AccessGroup, Instrument, Project, User
 from app.models.projects import ProjectCreate
 from app.utils.project_utils import (
     RESERVED_PROJECT_IDS, assert_project_id_available, validate_project_id,

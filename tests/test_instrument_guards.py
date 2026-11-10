@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import AccessGroup, Instrument, Resource, ResourceACL, User
+from app.tables import AccessGroup, Instrument, Resource, ResourceACL, User
 from app.models.instrument import InstrumentUpdate
 from app.utils.auth_utils import require_permission, resource_capabilities
 from app.utils.permissions import GroupMembership, Permission, PlatformRole, Principal, Role

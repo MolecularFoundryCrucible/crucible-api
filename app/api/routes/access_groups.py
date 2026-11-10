@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.routes.join_requests import create_join_request
-from app.models.core_models import AccessGroup, Instrument, Project, User, UserAccessGroupLink
+from app.tables import AccessGroup, Instrument, Project, User, UserAccessGroupLink
 from app.models.access_groups import AccessGroupCreate, AccessGroupMemberRead, AccessGroupRead
 from app.models.join_requests import JoinRequestCreate, JoinRequestRead
 from app.utils.auth_utils import authorize_user, require_platform_admin

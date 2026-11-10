@@ -1,4 +1,4 @@
-import app.models.core_models as tables
+import app.tables as tables
 from app.api.main import app
 
 

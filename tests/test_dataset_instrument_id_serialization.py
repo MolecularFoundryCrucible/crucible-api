@@ -14,7 +14,7 @@ GET /samples (list).
 """
 from sqlmodel import Session
 
-from app.models.core_models import Dataset, DatasetSampleLink, Instrument, Resource, Sample, User
+from app.tables import Dataset, DatasetSampleLink, Instrument, Resource, Sample, User
 from app.utils.permissions import PlatformRole
 
 

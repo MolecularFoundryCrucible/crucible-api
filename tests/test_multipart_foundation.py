@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.api.routes import gcs_storage
-from app.models.core_models import Dataset, Resource, UploadSession
+from app.tables import Dataset, Resource, UploadSession
 from app.models.uploads import UploadComplete
 from app.utils.deletion_utils import _hard_delete_dataset
 from app.utils.multipart_config import MultipartStorageConfig

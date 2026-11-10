@@ -3,7 +3,7 @@ from enum import Enum
 
 from sqlmodel import Session
 
-from app.models.core_models import AuthEvent, User
+from app.tables import AuthEvent, User
 
 logger = logging.getLogger(__name__)
 

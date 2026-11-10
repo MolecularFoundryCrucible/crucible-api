@@ -5,7 +5,7 @@ import pytest
 from sqlmodel import Session, select
 
 from app.cli.__main__ import main
-from app.models.core_models import AccessGroup, ApiToken, User, UserAccessGroupLink
+from app.tables import AccessGroup, ApiToken, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 

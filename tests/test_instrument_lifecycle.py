@@ -1,7 +1,7 @@
 """Instrument ownership, operator groups, service-account bindings, and dataset provenance grants."""
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, Instrument, Project, ResourceACL, User, UserAccessGroupLink
+from app.tables import AccessGroup, Dataset, Instrument, Project, ResourceACL, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 

@@ -14,7 +14,7 @@ from app.api.removed import REMOVED_RESPONSE, removed
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import DatasetMfid, UserRef
 from app.general_utils import is_orcid, is_valid_mfid
-from app.models.core_models import (
+from app.tables import (
     UserIdentity,
     AccessGroup, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
 )

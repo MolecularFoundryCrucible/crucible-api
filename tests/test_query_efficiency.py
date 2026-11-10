@@ -8,7 +8,7 @@ from sqlmodel import Session
 import app.api.routes.join_requests as join_requests_routes
 import app.api.routes.deletion as deletion_routes
 import app.api.routes.files as files_routes
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     AccessGroupJoinRequest,
     AssociatedFile,
@@ -190,7 +190,7 @@ def test_file_detail_uses_authorized_dataset_without_lazy_load(db_engine):
 
 
 def _grants_world(db_engine, people, projects):
-    from app.models.core_models import ResourceACL, Resource, User
+    from app.tables import ResourceACL, Resource, User
     with Session(db_engine) as session:
         session.add(Resource(mfid="shared-ds", resource_type="dataset"))
         session.add(Dataset(unique_id="shared-ds", dataset_name="shared"))
@@ -224,7 +224,7 @@ def test_member_grants_resolve_principals_in_constant_queries(db_engine, people,
 
 
 def test_adding_a_file_does_not_load_the_datasets_other_files(client, db_engine, auth_as):
-    from app.models.core_models import AssociatedFile, Dataset, Resource
+    from app.tables import AssociatedFile, Dataset, Resource
     from app.utils.permissions import PlatformRole
     with Session(db_engine) as session:
         dataset = Dataset(unique_id="ds-many", dataset_name="d")

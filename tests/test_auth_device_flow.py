@@ -18,7 +18,7 @@ from app.api.routes import hub_auth as routes
 from app.api.routes import oauth as oauth_routes
 from app.auth.devices import USER_CODE_ALPHABET, normalized_user_code
 from app.auth.passwords import store_password
-from app.models.core_models import (
+from app.tables import (
     DeviceAuthorization, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential, LoginThrottle, User,
 )
 
@@ -187,7 +187,7 @@ def test_metadata_names_the_device_endpoint(client):
 
 def test_cleanup_removes_device_rows_a_day_after_they_expire(client, db_engine):
     from tests.conftest import TEST_TABLES
-    from app.models.core_models import AuthEvent
+    from app.tables import AuthEvent
     from app.utils.hub_auth_maintenance import cleanup_hub_auth
 
     SQLModel.metadata.create_all(db_engine, tables=list(dict.fromkeys(TEST_TABLES + [AuthEvent.__table__])))

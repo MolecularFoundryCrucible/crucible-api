@@ -3,7 +3,7 @@ import pytest
 import sqlalchemy
 from sqlmodel import Session, select
 
-from app.models.core_models import ApiToken, Project, User
+from app.tables import ApiToken, Project, User
 from app.models.query_params import UserListQuery
 from app.utils.permissions import PlatformRole
 from tests.people import internal_id, add_old_style_key
@@ -678,7 +678,7 @@ def test_per_project_role_on_user_projects_route(client, db_engine, auth_as):
         session.add(proj)
         session.commit()
         session.refresh(proj)
-        from app.models.core_models import AccessGroup, UserAccessGroupLink
+        from app.tables import AccessGroup, UserAccessGroupLink
         group = session.exec(select(AccessGroup).where(
             AccessGroup.group_name == proj.unique_id)).one_or_none()
         if group is None:

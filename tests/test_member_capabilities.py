@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from app.api.main import app
-from app.models.core_models import AccessGroup, Dataset, Resource, ResourceACL, User, UserAccessGroupLink
+from app.tables import AccessGroup, Dataset, Resource, ResourceACL, User, UserAccessGroupLink
 from app.utils.permissions import PlatformRole, Role
 from tests.test_join_request_workflow import ALICE, CONTRIBUTOR, EDITOR, OWNER, act, world  # noqa: F401
 

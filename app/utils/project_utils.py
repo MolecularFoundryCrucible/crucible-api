@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import and_, func
 from sqlmodel import select
-from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
+from app.tables import AccessGroup, Project, User, UserAccessGroupLink
 from app.models.projects import ProjectReferenceRead
 from app.general_utils import is_valid_mfid
 from app.utils.permissions import AccessGroupType, Role

@@ -2,7 +2,7 @@ import pytest
 from sqlmodel import Session, select
 
 import app.api.routes.samples as samples_routes
-from app.models.core_models import Resource, ResourceACL, Sample, User
+from app.tables import Resource, ResourceACL, Sample, User
 
 
 def test_sample_creation_rolls_back_every_row_when_acl_creation_fails(

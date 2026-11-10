@@ -2,10 +2,10 @@
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
+from app.tables import AccessGroup, Project, User, UserAccessGroupLink
 from app.utils.project_utils import is_project_group, is_project_member, sql_get_projects_for_user
 from app.utils.permissions import AccessGroupType
-from app.models.core_models import UserIdentity
+from app.tables import UserIdentity
 
 
 def _engine():

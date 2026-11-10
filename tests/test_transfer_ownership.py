@@ -8,7 +8,7 @@ unless ?confirm=true.
 """
 from sqlmodel import Session, select
 
-from app.models.core_models import (
+from app.tables import (
     AccessGroup, Dataset, Project, Resource, ResourceACL, User, UserAccessGroupLink)
 from app.utils.permissions import AccessGroupType, Role
 

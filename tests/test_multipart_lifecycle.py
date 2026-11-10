@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 import app.api.routes.gcs_storage as gcs_storage
 import app.storage.gcs as google
 from app.api.routes import multipart as routes
-from app.models.core_models import AccessGroup, AssociatedFile, Dataset, DeletionRequest, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
+from app.tables import AccessGroup, AssociatedFile, Dataset, DeletionRequest, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
 from app.models.datasets import file_etag
 from app.services import multipart as service
 from app.storage import ObjectInfo, Part, StorageFailure, UploadMissing
@@ -583,7 +583,7 @@ def test_reference_client_resumes_after_lost_part_response(flow, tmp_path, monke
 def test_real_authentication_supports_both_credentials(use_engine, flow, monkeypatch, credential_kind):
     from uuid import uuid4
     from sqlmodel import SQLModel
-    from app.models.core_models import ApiToken, HubTokenFamily, HubRefreshToken, HubAccessToken
+    from app.tables import ApiToken, HubTokenFamily, HubRefreshToken, HubAccessToken
     from app.utils import auth_utils
     from app.utils.hub_tokens import issue_hub_tokens, refresh_hub_tokens, revoke_hub_tokens
     from app.api.main import app

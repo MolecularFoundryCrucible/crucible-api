@@ -2,7 +2,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.routes.projects import _validate_service_account_project_role
-from app.models.core_models import User
+from app.tables import User
 from app.utils.permissions import PlatformRole, Role
 
 

@@ -35,7 +35,7 @@ from app.api.dependencies import get_engine
 from app.cli.db import guarded_database
 # The only module in app/models declaring table=True models. Importing it is
 # what populates SQLModel.metadata for autogenerate to diff against.
-import app.models.core_models  # noqa: F401
+import app.tables  # noqa: F401
 
 from alembic import context
 

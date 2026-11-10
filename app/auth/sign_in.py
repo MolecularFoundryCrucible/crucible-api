@@ -6,7 +6,7 @@ from app.auth.events import AuthEventType, record_event
 from app.auth.identity import IdentityTaken, ensure_identity, find_identity
 from app.config import ORCID_ISSUERS, get_settings
 from app.general_utils import is_orcid
-from app.models.core_models import User, get_mfid_value
+from app.tables import User, get_mfid_value
 from app.utils.permissions import AccessGroupType, Role
 from app.utils.user_utils import provision_user, sql_add_user_to_access_group
 

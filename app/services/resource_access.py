@@ -1,7 +1,7 @@
 from sqlmodel import Session, select
 
 from app.models.access import AccessGrantRead, EntryCapabilities
-from app.models.core_models import AccessGroup, Dataset, Instrument, Project, Resource, ResourceACL, Sample, User
+from app.tables import AccessGroup, Dataset, Instrument, Project, Resource, ResourceACL, Sample, User
 from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, Principal, Role, effective_role
 
 

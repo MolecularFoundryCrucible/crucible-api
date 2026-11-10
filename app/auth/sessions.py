@@ -9,7 +9,7 @@ from sqlalchemy import update
 from sqlmodel import Session, select
 
 from app.auth.clients import client_by_id
-from app.models.core_models import HubTokenFamily, User
+from app.tables import HubTokenFamily, User
 
 
 @dataclass(frozen=True)

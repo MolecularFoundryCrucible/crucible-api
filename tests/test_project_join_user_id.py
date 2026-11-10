@@ -9,7 +9,7 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, AccessGroupJoinRequest, Project, ResourceACL, User, UserAccessGroupLink
+from app.tables import AccessGroup, AccessGroupJoinRequest, Project, ResourceACL, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole
 
 LEAD = "0000-0001-1111-1111"

@@ -3,7 +3,7 @@ from sqlalchemy import and_, case, exists, func, literal, or_
 from sqlmodel import Session, select
 
 from app.utils.user_utils import owned_by
-from app.models.core_models import (
+from app.tables import (
     Dataset,
     DatasetSampleLink,
     Instrument,

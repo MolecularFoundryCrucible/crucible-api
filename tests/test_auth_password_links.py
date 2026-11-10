@@ -19,7 +19,7 @@ from app.auth.password_links import issue_link, link_token_hash
 from app.auth.passwords import store_password
 from app.auth.throttle import attempt_password
 from app.cli import admin as admin_cli
-from app.models.core_models import (
+from app.tables import (
     AuthEvent, DeviceAuthorization, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential, LoginThrottle,
     PasswordToken, User,
 )

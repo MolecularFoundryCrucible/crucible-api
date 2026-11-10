@@ -17,7 +17,7 @@ from app.build_info import api_version
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, feature_disabled_response
 from app.general_utils import get_utc_datetime
-from app.models.core_models import (
+from app.tables import (
     AccessGroup,
     AssociatedFile,
     Dataset,

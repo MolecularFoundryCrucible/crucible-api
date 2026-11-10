@@ -15,7 +15,7 @@ instead of resolving live from project_mfid.
 """
 from sqlmodel import Session
 
-from app.models.core_models import Dataset, DatasetLink, DatasetSampleLink, Instrument, Project, Resource, Sample, SampleLink, User
+from app.tables import Dataset, DatasetLink, DatasetSampleLink, Instrument, Project, Resource, Sample, SampleLink, User
 from app.utils.permissions import PlatformRole
 
 

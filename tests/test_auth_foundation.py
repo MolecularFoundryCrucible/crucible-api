@@ -7,8 +7,8 @@ from sqlmodel import Session, select
 
 from app.auth.events import AuthEventType, record_event
 from app.auth.identity import orcid_of
-from app.models.core_models import AccessGroup, AuthEvent, HubLoginTransaction, User, UserIdentity
-from app.models.core_models import HubLoginCode
+from app.tables import AccessGroup, AuthEvent, HubLoginTransaction, User, UserIdentity
+from app.tables import HubLoginCode
 from app.utils.user_utils import generate_unique_username, provision_user
 from tests.test_hub_tokens import ORCID_PROVIDER
 from sqlmodel import SQLModel

@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlmodel import Session
 
-from app.models.core_models import (
+from app.tables import (
     AccessGroup, DeletionRequest, Instrument, Project, Resource, ResourceACL, User, UserAccessGroupLink,
 )
 from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, PlatformRole, Role

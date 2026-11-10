@@ -22,6 +22,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. This index
 
 ## Authentication and operations
 
+- [Upgrading from 3.3.1 to 4.0.0](upgrading/3.3-to-4.0.md): ordered steps for Kubernetes deployments, Compose installations and client authors, with every migration, setting change and removed route.
 - [Installing with Docker Compose](../deploy/compose/README.md): running Crucible on one machine, secrets, the first administrator, backups, upgrades, and reverse proxies.
 - [Hub authentication overview](hub_auth_overview.md): sign-in, the API tables, refresh, logout, and cleanup.
 - [Hub login integration](hub_login_design.md): the implemented contract and integration requirements.

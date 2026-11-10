@@ -7,7 +7,7 @@ FastAPI service for Crucible's scientific records: datasets, samples, projects, 
 - Production: [Swagger UI](https://crucible.lbl.gov/api/v3/docs), [ReDoc](https://crucible.lbl.gov/api/v3/redoc), [OpenAPI JSON](https://crucible.lbl.gov/api/v3/openapi.json)
 - Staging: [Swagger UI](https://crucible.lbl.gov/testapi-staging/docs), [OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json)
 - Each [GitHub release](https://github.com/MolecularFoundryCrucible/crucible-api/releases) carries its OpenAPI document (`crucible-api.json`) and digest.
-- [Documentation index](docs/README.md), [changelog](CHANGELOG.md), [client migration summary](docs/archive/client_migration_summary.md)
+- [Documentation index](docs/README.md), [changelog](CHANGELOG.md), [upgrading from 3.3.1 to 4.0.0](docs/upgrading/3.3-to-4.0.md)
 
 The deployed OpenAPI document is authoritative for routes, schemas, parameters, and deprecations. `GET /health/ready` reports the running version, commit, and database revision.
 

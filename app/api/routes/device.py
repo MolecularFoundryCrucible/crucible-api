@@ -93,6 +93,12 @@ async def device_code_entered(request: Request, user_code: str = Form(max_length
     return response
 
 
+def _person_name(engine, user_id: int) -> str:
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        return " ".join(part for part in (user.first_name, user.last_name) if part) or user.username or user.unique_id
+
+
 @router.get("/callback", response_class=HTMLResponse, responses={400: {"description": "The sign-in cannot be matched to this browser, or it failed", "content": {"text/html": {}}}})
 async def device_signed_in(
     request: Request,
@@ -127,9 +133,7 @@ async def device_signed_in(
     device = await run_in_threadpool(device_by_hash, engine, started["d"])
     if device is None:
         return _done(request, "Code expired", "The code expired or was already used. Start again on your device.", 400)
-    with Session(engine) as session:
-        user = session.get(User, user_id)
-        person = " ".join(part for part in (user.first_name, user.last_name) if part) or user.username or user.unique_id
+    person = await run_in_threadpool(_person_name, engine, user_id)
     client = client_by_id(device.client_id)
     token = _serializer("decision").dumps({"d": device.device_hash, "u": user_id, "t": auth_time.isoformat(), "n": browser["n"]})
     return _page(request, "device_confirm.html", {

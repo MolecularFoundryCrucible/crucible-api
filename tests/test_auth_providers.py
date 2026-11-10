@@ -444,3 +444,9 @@ async def test_discovery_address_drops_a_trailing_slash_but_the_issuer_stays_exa
     providers.forget_clients()
     with pytest.raises(providers.ProviderUnavailable):
         await providers.authorization_url(get_settings().auth.providers[0], CALLBACK, "s", "n")
+
+
+def test_compose_bundle_finds_people_by_their_recorded_logins():
+    environment = yaml.safe_load((REPO / "deploy/compose/compose.yaml").read_text())["x-api"]["environment"]
+    assert environment["CRUCIBLE_AUTH_IDENTITY_LOOKUP"] == "${CRUCIBLE_AUTH_IDENTITY_LOOKUP:-true}"
+

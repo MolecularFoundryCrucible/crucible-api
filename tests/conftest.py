@@ -16,6 +16,12 @@ with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as _key_file
                "client_email": TEST_SERVICE_ACCOUNT, "client_id": "1", "token_uri": "https://oauth2.googleapis.com/token"}, _key_file)
 atexit.register(os.unlink, _key_file.name)
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _key_file.name
+# An empty environment file, so a developer's own ./.env (real database and API credentials) never
+# reaches a test.
+with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as _env_file:
+    pass
+atexit.register(os.unlink, _env_file.name)
+os.environ["DB_CONF_FILE"] = _env_file.name
 os.environ.pop("MULTIPART_UPLOAD_SIGNER", None)
 
 for _name, _value in {

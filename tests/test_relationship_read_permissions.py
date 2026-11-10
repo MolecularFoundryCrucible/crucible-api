@@ -150,12 +150,11 @@ def test_sample_dataset_relationships_filter_both_directions(client, db_engine, 
     _, group_id = _setup(db_engine)
     _authorize(auth_as, group_id)
 
-    samples = client.get("/datasets/dataset_accessible/samples")
+    samples = client.get("/samples", params={"dataset_mfid": "dataset_accessible"})
     datasets = client.get("/datasets", params={"sample_mfid": "sample_accessible"})
 
     assert samples.status_code == 200, samples.text
     assert samples.json()["items"] == []
-    assert samples.headers["deprecation"] == "@1788307200"
     assert datasets.status_code == 200, datasets.text
     assert datasets.json()["items"] == []
 

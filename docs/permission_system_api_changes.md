@@ -222,7 +222,7 @@ GET /samples?accessible_to_project={project_a}&accessible_to_project={project_b}
 GET /projects?accessible_to_user={user_ref}&accessible_to_project={project_ref}
 ```
 
-`GET /users/{user_ref}/datasets` and `GET /users/{user_ref}/samples` are deprecated compatibility routes. They now use the same effective-role and deletion filtering as the canonical collections but retain their existing unpaginated `List[str]` MFID responses for current Nano clients.
+`GET /users/{user_ref}/datasets` and `GET /users/{user_ref}/samples` were removed in 4.0.0 and answer 410; `GET /datasets?accessible_to_user={user_ref}` and `GET /samples?accessible_to_user={user_ref}` list the same records, with the same effective-role and deletion filtering.
 
 ### User email disclosure
 

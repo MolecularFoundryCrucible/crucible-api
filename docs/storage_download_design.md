@@ -113,7 +113,7 @@ Known clients are unaffected: nano sets `storage_path` only for non-GCS backends
 
 ## Ingestion
 
-`POST /files/{file_id}/ingest` and the deprecated dataset-scoped route resolve the object through `resolve_storage_object` before creating the request. A record that fails the rule returns 409 with the rule that failed, and no request is created or dispatched. This replaces the bucket-name generation check in `app/api/routes/files.py`.
+`POST /files/{file_id}/ingest` resolves the object through `resolve_storage_object` before creating the request. A record that fails the rule returns 409 with the rule that failed, and no request is created or dispatched. This replaces the bucket-name generation check in `app/api/routes/files.py`.
 
 ## Errors
 

@@ -94,16 +94,6 @@ def test_email_compatibility_get_is_case_insensitive(client, db_engine, auth_as)
     assert response.headers["content-location"] == f"/users/{PERSON_ORCID}"
 
 
-def test_by_username_compatibility_get_returns_canonical_location(client, db_engine, auth_as):
-    _setup(db_engine)
-    auth_as(OTHER_ORCID)
-
-    response = client.get("/users/by-username/alice_researcher")
-
-    assert response.status_code == 200, response.text
-    assert response.json()["unique_id"] == PERSON_ORCID
-    assert "email" not in response.json()
-    assert response.headers["content-location"] == f"/users/{PERSON_ORCID}"
 
 
 def test_missing_singleton_returns_404(client, db_engine, auth_as):
@@ -199,8 +189,6 @@ def test_user_routes_document_user_ref(client):
         ("/users/{user_ref}/apikey/verify", "get"),
         ("/users/{user_ref}/apikey", "delete"),
         ("/users/{user_ref}/platform_role", "patch"),
-        ("/users/{user_ref}/datasets", "get"),
-        ("/users/{user_ref}/samples", "get"),
         ("/users/{user_ref}/datasets/{dataset_mfid}", "get"),
         ("/users/{user_ref}/access_groups/{group_name}", "post"),
         ("/users/{user_ref}/access_groups", "get"),

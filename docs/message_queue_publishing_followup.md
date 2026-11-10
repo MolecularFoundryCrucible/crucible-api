@@ -8,7 +8,7 @@ These routes publish a RabbitMQ message from inside the API request:
 
 | Route | Publisher | Routing key |
 | --- | --- | --- |
-| `POST /files/{file_id}/ingest` (and deprecated `POST /datasets/{dataset_mfid}/files/{file_id}/ingest`) | `create_file_ingestion_request` in `app/api/routes/files.py` | `ingestion-{RMQ_ROUTING_SUFFIX}-{small,medium,large}`, tier from file size |
+| `POST /files/{file_id}/ingest` | `create_file_ingestion_request` in `app/api/routes/files.py` | `ingestion-{RMQ_ROUTING_SUFFIX}-{small,medium,large}`, tier from file size |
 | `POST /datasets/{dataset_mfid}/postprocess`, and the four deprecated analysis routes (`carrier_segmentation`, `insitu_spec_aggregation`, `rga_analysis`, `mosaic_stitch`) | `start_postprocessing_run` and `_publish` in `app/api/routes/pipelines.py` | the pipeline's routing key |
 
 Each publish goes through `send_pika_message` in `app/utils/rmq_utils.py`, which opens a new `pika.BlockingConnection`, publishes once to the default exchange, and closes the connection. The route waits for this before responding.

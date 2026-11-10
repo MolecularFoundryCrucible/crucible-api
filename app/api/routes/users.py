@@ -16,9 +16,9 @@ from app.api.path_params import DatasetMfid, UserRef
 from app.general_utils import is_orcid, is_valid_mfid
 from app.tables import (
     UserIdentity,
-    AccessGroup, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
+    AccessGroup, Dataset, Project, Resource, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
 )
-from app.utils.auth_utils import caller_row, forget_cached_keys, authorize_user, fetch_acl_rows, permission_filter, require_human_admin_safeguard, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
+from app.utils.auth_utils import caller_row, forget_cached_keys, authorize_user, fetch_acl_rows, require_human_admin_safeguard, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor,
 )
@@ -418,19 +418,10 @@ def search_users(
     return PaginatedResponse(limit=limit, items=results)
 
 
-@router.get("/users/by-username/{username}", response_model=Union[UserRead, UserPublicRead], deprecated=True)
-def get_user_by_username(username: str, response: Response,
-                         auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Deprecated: use GET /users/{user_ref}. Email is visible only to self and platform administrators.'''
-    with Session(get_engine()) as session:
-        user = session.exec(select(User).where(User.username == username.lower(), User.pending_at == None)).one_or_none()  # noqa: E711
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        response.headers["Content-Location"] = f"/users/{user.unique_id}"
-        if auth_res.is_user(user) or auth_res.is_platform_admin:
-            key_status = _admin_key_status(session, auth_res, user)
-            return _user_read(auth_res, user, key_status=key_status, with_capabilities=True)
-        return _user_public_read(auth_res, user, with_capabilities=True)
+@router.get("/users/by-username/{username}", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
+def get_user_by_username(username: str):
+    """Removed: use GET /users/{user_ref}, which takes a username."""
+    removed("This route was removed. GET /users/{user_ref} takes a username, an ORCID or a service-account MFID.")
 
 
 def _canonical_user_id(user_ref: str) -> str:
@@ -784,32 +775,16 @@ def delete_user_apikey(
     return Response(status_code=204)
 
 
-@router.get("/users/{user_ref}/datasets", response_model=List[str], deprecated=True)
-def read_user_datasets(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''
-    Deprecated compatibility route returning dataset MFIDs. Use GET /datasets?accessible_to_user={user_ref}.
-    '''
-    with Session(get_engine()) as session:
-        access_principal = resolve_access_principal(session, auth_res, user_ref)
-        return session.exec(
-            select(Dataset.unique_id)
-            .where(permission_filter(access_principal, Dataset))
-            .where(deletion_filter_for(Dataset))
-            .order_by(Dataset.unique_id.desc())
-        ).all()
+@router.get("/users/{user_ref}/datasets", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
+def read_user_datasets(user_ref: str):
+    """Removed: use GET /datasets?accessible_to_user={user_ref}."""
+    removed("This route was removed. List the datasets a person can read with GET /datasets?accessible_to_user={user_ref}.")
 
 
-@router.get("/users/{user_ref}/samples", response_model=List[str], deprecated=True)
-def read_user_samples(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Deprecated compatibility route returning sample MFIDs. Use GET /samples?accessible_to_user={user_ref}.'''
-    with Session(get_engine()) as session:
-        access_principal = resolve_access_principal(session, auth_res, user_ref)
-        return session.exec(
-            select(Sample.unique_id)
-            .where(permission_filter(access_principal, Sample))
-            .where(deletion_filter_for(Sample))
-            .order_by(Sample.unique_id.desc())
-        ).all()
+@router.get("/users/{user_ref}/samples", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
+def read_user_samples(user_ref: str):
+    """Removed: use GET /samples?accessible_to_user={user_ref}."""
+    removed("This route was removed. List the samples a person can read with GET /samples?accessible_to_user={user_ref}.")
 
 
 @router.get("/users/{user_ref}/datasets/{dataset_mfid}", response_model=EffectiveResourceAccessRead)

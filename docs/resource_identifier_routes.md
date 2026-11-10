@@ -1,41 +1,28 @@
-# Resource identifier routes
+# Resource identifiers
 
-Status: identifier conventions apply to every route. The production identifier audit below must pass before deploying shape-based path resolution.
+This page describes the identifiers of records and users, the references that path segments, query parameters and request bodies accept, and the naming of those parameters.
 
-This document is the API and Python client contract for stable identifiers, human-readable handles, and how routes accept them.
+## Identifiers
 
-## Identifier rules
-
-- Projects, samples, datasets, instruments, and service accounts use an MFID as their stable identifier.
-- People use an ORCID as their stable identifier.
-- API responses expose the stable identifier as `unique_id`.
-- Project slugs use `project_id`; instrument slugs use `instrument_id`; users also have a `username` and `email`.
-- New or renamed project and instrument slugs must contain 3 to 25 characters. MFIDs contain exactly 26 characters. Usernames contain at most 24 lowercase characters. ORCIDs follow the `NNNN-NNNN-NNNN-NNNN` pattern, and emails contain `@`.
-- Project and instrument slugs are unique and matched case-insensitively. Responses return the slug with its stored casing.
+- Projects, samples, datasets, instruments and service accounts have an MFID: 26 characters of lowercase Crockford Base32. MFIDs are never reused.
+- A human user's stable identifier is the ORCID iD for an account created through ORCID sign-in, and an MFID for an account created through password registration or another identity provider. An ORCID linked to an account resolves to that account wherever a user reference is accepted.
+- Responses expose the stable identifier as `unique_id`.
+- Projects have a `project_id` slug and instruments an `instrument_id` slug: 3 to 25 letters, digits, `_` or `-`, starting with a letter or digit, unique and matched case-insensitively. Responses return the stored casing.
+- Users also have a `username` (at most 24 lowercase characters, starting with a letter) and an `email`.
 - Sample and dataset names are not identifiers. Samples and datasets are addressed only by MFID.
 
-Because the forms never overlap, the API resolves a single value by its shape without ambiguity.
+The forms do not overlap: an email contains `@`, an ORCID matches `NNNN-NNNN-NNNN-NNNN`, an MFID is 26 characters, and slugs and usernames are shorter. A reference is resolved by its shape: a valid MFID is looked up as an MFID, anything else as a slug or username.
 
 ## Parameter naming
 
-A parameter's suffix states what it accepts, so a client can tell from the name alone what to send.
-
-| Suffix | Meaning | Matching | Examples |
-|---|---|---|---|
-| `x_id` | Canonical stable identity (ORCID, or MFID for a service account), or the slug for projects and instruments | Exact; slugs case-insensitive | `owner_id`, `user_id`, `project_id`, `instrument_id` |
-| `x_mfid`, `{mfid}` | The MFID | Exact | `project_mfid`, `instrument_mfid`, `dataset_mfid` |
-| `x_ref`, `{x_ref}` | Any identifier form for that entity | Resolved by shape | `member_ref`, `{user_ref}`, `{project_ref}` |
-| Bare noun | An expanded object, in responses only | n/a | `owner`, `lead`, `members` |
-
-| Entity | Paths | Query parameters and bodies |
+| Suffix | Accepts | Examples |
 |---|---|---|
-| Project, instrument | `{x_ref}` | `x_id` and `x_mfid` as an agreeing pair (422 if they disagree) |
-| User, service account | `{x_ref}` | `x_ref` for lookups that accept an ORCID, service-account MFID, username, or email; `x_id` only for exact stored-value filters such as `owner_id` |
-| Dataset, sample | `{x_mfid}` | `x_mfid` |
+| `x_id` | The stable identity of a user, or the slug of a project or instrument | `owner_id`, `project_id`, `instrument_id` |
+| `x_mfid`, `{mfid}` | The MFID only | `project_mfid`, `instrument_mfid`, `{dataset_mfid}` |
+| `x_ref`, `{x_ref}` | Any reference form for that entity, resolved by shape | `member_ref`, `{user_ref}`, `{project_ref}` |
+| Bare noun | An expanded object, in responses only | `owner`, `lead`, `members` |
 
-The `_id` suffix never names an MFID in new fields. Legacy response fields that did so are deprecated and kept alongside their `_mfid` replacement.
-
-New parameters follow these rules. Existing parameters that accept a user reference under a bare name (`owner` and `new_owner` in request bodies, `project_lead`, `accessible_to_user`) predate them and remain supported; renaming them to `_ref` forms with deprecated aliases is planned separately. The same applies to the `POST /users/resolve` body field `orcids`: it is matched against `unique_id`, so it accepts ORCIDs and service-account MFIDs despite the name, the response is keyed by `unique_id`, and clients keep sending `orcids` until the wire field is renamed with the deferred body-field renames.
+The `_id` suffix does not name an MFID in current fields. Response fields that did so are deprecated and returned alongside their `_mfid` replacement. Some request fields predate this rule and take a user reference under a bare name: `owner` and `new_owner` in request bodies, `project_lead`, and `accessible_to_user`.
 
 ## Path segments
 
@@ -43,94 +30,62 @@ New parameters follow these rules. Existing parameters that accept a user refere
 |---|---|
 | `{project_ref}` | Project MFID or `project_id` slug |
 | `{instrument_ref}` | Instrument MFID or `instrument_id` slug |
-| `{user_ref}` | ORCID, service-account MFID, or username. Email still resolves for existing clients but is deprecated in paths because URLs are written to access logs. |
-| `{service_account_ref}` | Service-account MFID or username. Human users are rejected with 404. |
-| `{dataset_mfid}`, `{sample_mfid}`, `{mfid}`, `{entity_mfid}` | MFID only |
+| `{user_ref}` | `unique_id` (ORCID or MFID), linked ORCID, or username. Email still resolves but is deprecated in paths because URLs are written to access logs. |
+| `{service_account_ref}` | Service-account MFID or username. A human user returns 404. |
+| `{principal}` in `/resources/{mfid}/access/{kind}/{principal}` | A user reference when `kind` is `users`, a project reference when `kind` is `projects` |
+| `{dataset_mfid}`, `{sample_mfid}`, `{parent_dataset_mfid}`, `{child_dataset_mfid}`, `{parent_sample_mfid}`, `{child_sample_mfid}`, `{mfid}`, `{entity_mfid}`, `{resource_mfid}`, `{file_mfid}` | MFID only |
+| `{file_id}` | File MFID |
+| `{group_name}` | Raw access-group name; used only by administrator routes under `/access_groups` and `/users/{user_ref}/access_groups` |
 
-Examples:
+The route resolves a reference once and uses the stable identifier for authorization and queries. An unknown reference returns 404. `GET /users/{user_ref}`, `GET /projects/{project_ref}` and `GET /instruments/{instrument_ref}` add a `Content-Location` header with the canonical path when the request used another form.
 
 ```http
 GET    /projects/{project_ref}
 POST   /projects/{project_ref}/users/{user_ref}
-GET    /instruments/{instrument_ref}
 POST   /instruments/{instrument_ref}/service_accounts/{service_account_ref}
-GET    /users/{user_ref}
-GET    /service_accounts/{service_account_ref}
-PUT    /resources/{mfid}/access/users/{user_ref}
-PUT    /resources/{mfid}/access/projects/{project_ref}
+PUT    /resources/{mfid}/access/{kind}/{principal}
 GET    /project_graph/{project_ref}
 GET    /datasets/{dataset_mfid}
 ```
 
-Each segment is documented in OpenAPI with the forms it accepts. The route resolves the reference once and uses the stable identifier for authorization and queries. An unknown reference returns 404.
+## Query parameters and bodies
 
-`GET /users/{user_ref}` and `GET /projects/{project_ref}` add a `Content-Location` header with the canonical path when the request used a non-canonical form.
-
-## Bodies and query parameters
-
-Projects and instruments use a pair of optional fields. Either may be supplied; when both are supplied they must identify the same resource, otherwise the request fails with 422. An unknown slug or MFID returns 404.
+Projects and instruments are named by a pair of optional fields. Either may be sent; when both are sent they must name the same record, otherwise the request returns 422. An unknown slug or MFID returns 404.
 
 | Where | Fields |
 |---|---|
 | `POST /datasets`, `POST /samples` | `project_id`, `project_mfid` |
 | `POST /datasets`, `PUT /datasets/{dataset_mfid}/instrument` | `instrument_id`, `instrument_mfid` |
 | `POST /resources/{mfid}/project` | `project_id`, `project_mfid` |
-| `GET /datasets`, `GET /samples`, facets, search | `project_id`, `project_mfid` |
+| `GET /datasets`, `GET /samples`, their facet and search routes | `project_id`, `project_mfid` |
 | `GET /datasets`, `GET /datasets/facets` | `instrument_id`, `instrument_mfid` |
 
-User references in bodies use one field that accepts an ORCID, service-account MFID, username, or email (`owner`, `new_owner`, `project_lead`). Exact owner filters use `owner_id`, which takes the stable identity. Access selectors (`accessible_to_user`, `accessible_to_project`) accept any form.
+User references in bodies (`owner`, `new_owner`, `project_lead`) and the exact owner filter `owner_id` accept a `unique_id`, linked ORCID, username or email. The access selectors `accessible_to_user` and `accessible_to_project` accept any form of their entity.
 
 Responses that reference a project or instrument include both the slug and the MFID, for example `project_id` and `project_mfid`, or a nested reference with `unique_id` and the slug.
 
-## Exact human lookup
+## Exact lookups by handle
 
-Collection filters remain available when a client wants the normal paginated shape:
-
-| Lookup | Request | Result count |
+| Lookup | Request | Results |
 |---|---|---|
 | Project slug | `GET /projects?project_id={slug}` | Zero or one |
 | Instrument slug | `GET /instruments?instrument_id={slug}` | Zero or one |
-| Username | `GET /users?username={username}` | Zero or one |
+| Username | `GET /users?username={username}` | Zero or one per value |
 | Email | `GET /users?email={email}` | Zero or one |
-| User stable ID | `GET /users?unique_id={orcid_or_mfid}` | Zero or one |
+| User stable ID or linked ORCID | `GET /users?unique_id={id}` | Zero or one per value |
 
-Exact user collection and singleton lookups return the same caller-authorized representation: self and platform administrators may receive email, while other authenticated callers receive `UserPublicRead`. `permissive=true` does not make `unique_id`, `username`, or `email` filters perform substring matching. An exact instrument slug lookup searches every lifecycle state unless the caller explicitly supplies `status`.
+Exact user lookups return the same representation as `GET /users/{user_ref}`: the user and platform administrators may receive email, other callers receive `UserPublicRead`. `permissive=true` does not make these filters match substrings. An exact instrument slug lookup searches every status unless `status` is given.
 
-`GET /users/by-username/{username}` was removed in 4.0.0 and answers 410; use `GET /users/{user_ref}`.
+`POST /users/resolve` is deprecated; use the repeatable `unique_id` and `username` filters of `GET /users`. Its body field `orcids` is matched against `unique_id`, so it also accepts service-account MFIDs.
+
+`GET /users/by-username/{username}` was removed in 4.0.0 and returns 410 `route_removed`; use `GET /users/{user_ref}`.
+
+## Naming exceptions
+
+`AssociatedFileRead` names the file MFID `mfid` instead of `unique_id`, and exposes both the internal `dataset_id` and `dataset_mfid`.
 
 ## Client guidance
 
-Clients should expose explicit keyword arguments (`project_id=`, `project_mfid=`, `instrument_id=`, `instrument_mfid=`) and build the request themselves. Because path segments accept either form, a client may put whichever identifier it has into a `{x_ref}` segment without a resolve-then-request round trip. Store MFIDs for durable references.
+Clients expose explicit keyword arguments (`project_id=`, `project_mfid=`, `instrument_id=`, `instrument_mfid=`) and build the request themselves. Because `{x_ref}` segments accept every form, a client can send whichever identifier it holds without a separate lookup. Store MFIDs for durable references.
 
-## Production identifier audit
-
-Shape-based resolution relies on no slug or username looking like an MFID, ORCID, or email. The read-only staging audit on 2026-10-06 found none across 6,850 projects, 45 instruments, and 3,034 users, and every service account has an MFID identity. Run the same audit against production before deploying:
-
-```sql
-SELECT project_id FROM project
-WHERE project_id ~ '^[0-9a-hjkmnp-tv-z]{26}$'
-   OR project_id ~ '^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$'
-   OR project_id LIKE '%@%';
-SELECT instrument_id FROM instrument
-WHERE instrument_id ~ '^[0-9a-hjkmnp-tv-z]{26}$'
-   OR instrument_id ~ '^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$'
-   OR instrument_id LIKE '%@%';
-SELECT username FROM "user"
-WHERE username ~ '^[0-9a-hjkmnp-tv-z]{26}$' OR username LIKE '%@%';
-SELECT unique_id, username FROM "user"
-WHERE is_service_account AND unique_id !~ '^[0-9a-hjkmnp-tv-z]{26}$';
-```
-
-Every query should return no rows. `POST /service_accounts` only accepts an MFID `unique_id`, so new service accounts always have one; a legacy service account with a non-MFID `unique_id` would resolve only by username through `{service_account_ref}`.
-
-Legacy slugs longer than 25 characters (48 projects and 2 instruments in staging) remain addressable because resolution falls back to slug matching for anything that is not a valid MFID.
-
-## Deferred work
-
-- `AssociatedFileRead` calls the file identifier `mfid` instead of `unique_id` and exposes both `dataset_id` (internal) and `dataset_mfid`. A future compatibility plan should standardize those public names.
-- `GET /access_groups/{group_name}` and `/users/{user_ref}/access_groups/{group_name}` take raw access-group names and remain administrator tools outside this convention.
-
-## Related documentation
-
-- Route index: [`app/api/routes/readme.md`](../app/api/routes/readme.md)
-- Permission migration API changes: [`docs/permission_system_api_changes.md`](permission_system_api_changes.md)
+See also [Permissions](permissions.md).

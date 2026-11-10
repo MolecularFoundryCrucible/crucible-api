@@ -1,45 +1,50 @@
-# Resource graph API
+# Resource graph
 
-## Operation
+This page describes the links between samples and datasets, the bounded graph route `GET /resources/{resource_mfid}/graph`, and the whole-graph routes used by nano-crucible.
 
-`GET /resources/{resource_mfid}/graph` returns a bounded graph rooted at a readable sample or dataset. Missing, deleted, inaccessible, project, and instrument roots return 404.
+## Links
 
-The legacy graph routes remain available and unchanged.
+Samples and datasets have two kinds of relationship:
 
-## Query parameters
+- **Lineage**, between two samples or two datasets, from parent to child. The optional `relationship_type` describes the child relative to the parent: `is_derived_from`, `is_part_of`, or null when unspecified.
+- **Association**, between a sample and a dataset, undirected and without a type.
 
-- `depth`: maximum selected-edge distance from the root, from 0 through 3. The default is 1.
-- `direction`: lineage traversal direction, one of `both`, `upstream`, or `downstream`. The default is `both`.
-- `relationship_kind`: repeatable `lineage` or `association` filter. Omitting it includes both kinds.
-- `relationship_type`: repeatable `is_derived_from`, `is_part_of`, or `unspecified` lineage filter. `unspecified` selects stored null values. Supplying this filter without including the lineage kind returns 422.
+| Route | Purpose |
+|---|---|
+| `POST`, `DELETE /samples/{parent_sample_mfid}/children/{child_sample_mfid}` | Create or remove sample lineage; `POST` accepts `relationship_type` |
+| `POST`, `DELETE /datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}` | Create or remove dataset lineage; `POST` accepts `relationship_type` |
+| `POST`, `DELETE /datasets/{dataset_mfid}/samples/{sample_mfid}` | Create or remove an association |
+| `GET /samples/{child_sample_mfid}/parents`, `GET /samples/{parent_sample_mfid}/children` | Readable parents or children; filterable by `relationship_type` |
+| `GET /datasets/{child_dataset_mfid}/parents`, `GET /datasets/{parent_dataset_mfid}/children` | Readable parents or children; filterable by `relationship_type` |
+| `GET /resources/{mfid}/links` | Immediate lineage and associations of one record |
+| `GET /samples?dataset_mfid=`, `GET /datasets?sample_mfid=` | Associated records as a filtered collection |
 
-Every traversed relationship consumes one depth. Direction applies only to lineage. Associations are undirected and may be traversed from either endpoint. Relationship-kind and relationship-type filters affect both traversal and returned edges.
+Creating a link between records of the same project requires `contributor` on the parent (the dataset, for an association) and read access to the other record; across projects it requires `editor` on both. Linking a record to itself returns 422 `self_link`, and a lineage link that would create a cycle returns 409 `lineage_cycle`. Re-creating an existing lineage link without `relationship_type` keeps the stored type. Records pending deletion cannot be linked (409 `pending_deletion`). `GET /datasets/{dataset_mfid}/samples` was removed in 4.0.0 and returns 410 `route_removed`; use `GET /samples?dataset_mfid=`.
 
-## Nodes
+## Bounded graph
 
-Every node includes:
+`GET /resources/{resource_mfid}/graph` returns a bounded graph rooted at a readable sample or dataset. A missing, pending-deletion or unreadable root, or a project or instrument, returns 404.
 
-- `mfid`
-- `resource_type`
-- nullable `name`
-- shortest `traversal_depth` from the root
-- nullable `has_more_relationships`
-- `expansion_availability` with `upstream_lineage`, `downstream_lineage`, and `associations` booleans
-- nullable compact `project` reference
+| Parameter | Values | Default |
+|---|---|---|
+| `depth` | 0 to 3: maximum number of relationships from the root | 1 |
+| `direction` | `both`, `upstream`, `downstream`; applies to lineage only | `both` |
+| `relationship_kind` | Repeatable `lineage`, `association` | Both |
+| `relationship_type` | Repeatable `is_derived_from`, `is_part_of`, `unspecified` (stored null); lineage only | All |
 
-Sample nodes also include nullable `sample_type`. Dataset nodes also include nullable `measurement`, `data_format`, and compact `instrument` reference.
+Every traversed relationship consumes one level of depth. Associations can be traversed from either end. The kind and type filters apply to both traversal and returned edges. `relationship_type` without `lineage` in `relationship_kind` returns 422.
 
-`expansion_availability` evaluates all three expansion channels even when the request selects only one relationship kind or lineage direction. `upstream_lineage` reports additional readable parents, `downstream_lineage` reports additional readable children, and `associations` reports additional readable sample-dataset relationships. A value is `true` when at least one authorized relationship edge in that channel is absent from the response and `false` when every authorized relationship edge in that channel is present. Lineage availability respects the request's relationship-type filter.
+### Nodes
 
-`has_more_relationships` remains the aggregate compatibility field scoped to the request's relationship kinds, direction, and relationship-type filters. Its value is derived from the corresponding expansion channels.
+Every node has `mfid`, `resource_type`, nullable `name`, `traversal_depth` (shortest distance from the root), nullable `has_more_relationships`, `expansion_availability` and a nullable compact `project` reference. Sample nodes add nullable `sample_type`; dataset nodes add nullable `measurement`, `data_format` and a compact `instrument` reference.
 
-## Edges
+`expansion_availability` has three booleans, `upstream_lineage`, `downstream_lineage` and `associations`, evaluated whatever kinds and direction the request selects. Each is `true` when at least one readable relationship in that channel is absent from the response. Lineage availability respects the `relationship_type` filter. `has_more_relationships` aggregates the channels selected by the request.
 
-Lineage edges use parent MFID as `source_mfid` and child MFID as `target_mfid`, regardless of traversal direction. `relationship_type` describes the child relative to the parent and is `is_derived_from`, `is_part_of`, or null.
+### Edges
 
-Association edges are undirected and use sample MFID as `source_mfid` and dataset MFID as `target_mfid`. Their `relationship_type` is always null.
+Every edge has `id`, `kind`, `directed`, `source_mfid`, `target_mfid` and `relationship_type`. Lineage edges are directed from parent (`source_mfid`) to child (`target_mfid`) whatever the traversal direction. Association edges are undirected, with the sample as `source_mfid`, the dataset as `target_mfid`, and a null `relationship_type`.
 
-Edge IDs are deterministic composite identities:
+Edge IDs are stable and do not change when a lineage relationship type changes:
 
 ```text
 lineage:sample:{parent_mfid}:{child_mfid}
@@ -47,32 +52,29 @@ lineage:dataset:{parent_mfid}:{child_mfid}
 association:sample:{sample_mfid}:dataset:{dataset_mfid}
 ```
 
-Changing a lineage relationship type does not change its edge ID.
+### Limits and completeness
 
-## Bounds and completeness
+A response holds at most 500 nodes and 1,000 edges, reported in `node_limit` and `edge_limit`. The limits are fixed by the server.
 
-The server returns at most 500 nodes and 1,000 edges. These are server-owned limits and are included in every response.
+- `root_mfid` is the root, `requested_depth` the requested depth, and `returned_depth` the greatest node depth returned.
+- `has_more` reports readable relationships beyond the returned graph.
+- `truncated` reports that a limit prevented a complete response for the requested depth, and `truncation_reasons` contains `node_limit`, `edge_limit` or both.
 
-- `requested_depth` is the requested maximum distance.
-- `returned_depth` is the greatest node depth returned.
-- `has_more` reports readable selected topology beyond the returned graph.
-- `truncated` reports that a node or edge limit prevented a complete response for the requested depth.
-- `truncation_reasons` may contain `node_limit`, `edge_limit`, or both.
+Nodes are ordered by traversal depth, resource type and MFID; edges by kind, source MFID, target MFID and relationship type.
 
-Nodes are ordered by traversal depth, resource type, and MFID. Edges are ordered by kind, source MFID, target MFID, and relationship type.
+### Authorization
 
-## Authorization
+The root and every candidate node are authorized before traversal. The route never returns or traverses through a record the caller cannot read or a record pending deletion, and completeness fields count only relationships the caller can read.
 
-The API authorizes the root and every candidate endpoint before traversal. It does not return or traverse through inaccessible or actively deleted resources. Completeness metadata is calculated only from topology the caller may read.
+### Incremental expansion
 
-## Incremental expansion
+Clients request `depth=1`, offer parent, child or association expansion from `expansion_availability`, re-root at the selected node with the matching filters, and merge nodes and edges by MFID and edge ID. The route accepts no client-selected limits, resource-type filters or continuation tokens.
 
-Clients should normally request `depth=1`. A client can offer parent, child, or association expansion directly from the corresponding `expansion_availability` value, reroot at that node with the matching filters, and merge nodes and edges by their stable identities. No continuation token is required for this workflow.
+## The older graph routes
 
-## Initial contract boundaries
+`GET /entity_graph_cte/{entity_mfid}?recursive={bool}` returns the records linked to one sample or dataset, or with `recursive=true` everything connected to it. `GET /project_graph/{project_ref}` returns all samples and datasets of a project, connected or not. Both return the NetworkX node-link shape (`directed`, `multigraph`, `graph`, `nodes`, `edges`) without the bounds above. nano-crucible, its `tree` command and Crucible Labs use them; neither is deprecated in 4.0.0.
 
-The initial operation does not accept client-selected node or edge limits, resource-type traversal filters, continuation tokens, or graph revision validators. The server-owned bounds and reroot-and-merge expansion keep the first contract bounded without adding stateful traversal semantics.
-
-## Database deployment
-
-Revision `5c8e1a4d7b20` adds concurrent indexes on `samplelink.parent_sample_id` and `datasetsamplelink.dataset_id` for reverse traversal. It contains no data backfill and may run while the previous API version remains available.
+- The starting dataset or sample must be readable and not pending deletion; otherwise the route returns 404. An unknown project returns 404.
+- Traversal visits only readable samples and datasets that are not pending deletion, and never crosses a record the caller cannot read to reach one beyond it.
+- A project graph holds only the readable samples and datasets of that project that are not pending deletion.
+- Platform administrators in elevated mode skip the access checks, but records pending deletion stay hidden.

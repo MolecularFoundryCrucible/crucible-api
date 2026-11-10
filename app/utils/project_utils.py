@@ -225,8 +225,8 @@ def is_project_member(user_id: int, proj_id: str, session) -> bool:
 
 def is_project_owner(user_id: int, proj_id: str, session) -> bool:
     """Whether the user holds `owner` standing in proj_id's own access group —
-    the real definition of "project lead" (see docs/permission_system_plan.md,
-    "Project lead becomes a role"). `Project.project_lead_orcid` is a
+    the real definition of "project lead" (see docs/permissions.md,
+    "The project lead"). `Project.project_lead_orcid` is a
     denormalized display pointer kept in sync by transfer_ownership; this is
     what authorization actually reads.
 

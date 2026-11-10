@@ -6,7 +6,7 @@ real reader (reassign_resource_project's previous_project_id, now resolved
 via a live join through Project instead) and no other live consumer,
 owner_orcid was written at creation and never read anywhere. Built ahead of
 an actual need rather than in response to one, and the one real use doesn't
-need a denormalized column. See docs/permission_system_plan.md.
+need a denormalized column. See docs/permissions.md.
 
 Already applied and backfilled on staging (20260810_backfill_accessgroup_kind.py,
 now deleted) — this is a genuine forward revert, not an edit of a migration

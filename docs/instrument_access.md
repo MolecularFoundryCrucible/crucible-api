@@ -1,10 +1,12 @@
 # Instrument access
 
-An instrument has two independent access mechanisms. Managing an instrument does not grant access to the data recorded with it.
+This page covers who manages an instrument record and how service accounts bound to an instrument reach its datasets. Roles, grants and the service-account ceiling are defined in [Permissions](permissions.md#instruments-and-service-accounts); "platform administrator" below means an administrator in elevated mode ([explicit privilege mode](explicit_privilege_mode_design.md)).
 
-| Mechanism | Who is in it | What it controls |
+An instrument has two independent access mechanisms. No role on the instrument grants access to the datasets recorded with it: maintainers read those only through their own ownership, project membership or explicit grants.
+
+| Mechanism | Members | Controls |
 |---|---|---|
-| Instrument record ACL | The owner and any maintainers granted a role on the instrument | The instrument's own details, lifecycle status, service-account bindings, and further grants |
+| Grants on the instrument record | The owner and any maintainers granted a role on the instrument | The instrument's details, lifecycle status, service-account bindings, and further grants |
 | Instrument operator group | Bound service accounts only | `contributor` on every dataset assigned to the instrument |
 
 ## Maintainers
@@ -12,12 +14,12 @@ An instrument has two independent access mechanisms. Managing an instrument does
 Maintainers are ordinary grants on the instrument record, managed through the generic resource access routes:
 
 ```http
-PUT    /resources/{instrument_mfid}/access/users/{user_ref}
-DELETE /resources/{instrument_mfid}/access/users/{user_ref}
-GET    /resources/{instrument_mfid}/access
+PUT    /resources/{mfid}/access/users/{principal}
+DELETE /resources/{mfid}/access/users/{principal}
+GET    /resources/{mfid}/access
 ```
 
-`user_ref` accepts an ORCID, service-account MFID, or username (email still resolves but is deprecated in paths). The same routes take `/access/projects/{project_ref}` with a project MFID or slug. Managing grants requires `admin` on the instrument, and a caller cannot grant above their own role. Ownership changes only through `POST /resources/{instrument_mfid}/transfer_ownership`.
+A user `principal` is an ORCID, service-account MFID or username (an email still resolves but is deprecated in paths). `/access/projects/{principal}` takes a project MFID or slug. Managing grants requires `admin` on the instrument, and a caller cannot grant above their own role. Ownership changes only through `POST /resources/{mfid}/transfer_ownership`.
 
 | Role | Edit details | Change status | Bind service accounts | Grant access |
 |---|---|---|---|---|
@@ -25,30 +27,28 @@ GET    /resources/{instrument_mfid}/access
 | `admin` | yes | yes | yes | up to `admin` |
 | `owner` | yes | yes | yes | up to `admin` |
 
-No instrument role grants access to datasets assigned to the instrument. Maintainers read those datasets only through their own ownership, project membership, or explicit grants.
+Details are edited with `PATCH /instruments/{instrument_ref}`. The status is changed with `POST /instruments/{instrument_ref}/status?status=`, which takes `active`, `maintenance` or `decommissioned`. `instrument_ref` is the instrument MFID or `instrument_id` slug.
 
 ## Reading maintainers
 
-`GET /instruments/{instrument_ref}?include_members=true` and the exact slug lookup `GET /instruments?instrument_id={slug}&include_members=true` return `members`, a list of `AccessGrantRead` entries for the people and projects holding a role on the instrument record, ordered from `owner` down. The operator group, public access, and system groups are excluded.
+`GET /instruments/{instrument_ref}?include_members=true` and the exact slug lookup `GET /instruments?instrument_id={slug}&include_members=true` return `members`, a list of `AccessGrantRead` entries for the users and projects holding a role on the instrument record, ordered from `owner` down. The operator group, public access and system groups are excluded. `include_members=true` on `GET /instruments` without `instrument_id` returns 422.
 
-`members` is returned to any caller who holds a role on the instrument record and to platform administrators. Other callers, including bound service accounts and callers who can read the instrument only through public access, receive `members: null`. Using `include_members=true` on `GET /instruments` without `instrument_id` returns 422.
+`members` is returned to callers who hold a role on the instrument record other than through public access, and to platform administrators. Other callers, including bound service accounts and callers who read the instrument only through public access, receive `members: null`. `GET /resources/{mfid}/access`, the full grant listing, is readable by the same callers.
 
-`GET /resources/{instrument_mfid}/access` is the full ACL listing, readable by the same callers as `members`; changing grants requires `admin`.
-
-Instrument collection and singleton responses include `role`, the caller's own effective role on the instrument record (`owner`, `admin`, `editor`, or another granted role), or `null`. Bound service accounts receive `null` because operator binding is not a record role.
+Instrument list and detail responses include `role`, the caller's effective role on the instrument record, or `null`. Bound service accounts receive `null`, because binding is not a role on the record.
 
 ## Finding instruments a caller manages
 
 `GET /instruments` and `GET /instruments/search` accept repeatable `affiliation` values:
 
-- `owner`: the caller's identity holds `owner` on the instrument.
-- `maintainer`: the caller's identity holds `editor` or `admin` on the instrument.
+- `owner`: the caller's identity group holds `owner` on the instrument.
+- `maintainer`: the caller's identity group holds `editor` or `admin` on the instrument.
 
 Repeated values combine with OR, so `affiliation=owner&affiliation=maintainer` lists every instrument the caller owns or maintains.
 
 ## Operator group
 
-Each instrument has one operator group named after its MFID. Assigning a dataset to the instrument grants this group `contributor` on the dataset, at creation or through `PUT /datasets/{dataset_mfid}/instrument`.
+Assigning a dataset to the instrument, at creation or through `PUT /datasets/{dataset_mfid}/instrument`, grants the operator group `contributor` on the dataset (see [dataset instrument assignment](dataset_instrument_assignment.md)).
 
 ```http
 GET    /instruments/{instrument_ref}/service_accounts
@@ -56,26 +56,27 @@ POST   /instruments/{instrument_ref}/service_accounts/{service_account_ref}
 DELETE /instruments/{instrument_ref}/service_accounts/{service_account_ref}
 ```
 
-`instrument_ref` accepts the instrument MFID or `instrument_id` slug, and `service_account_ref` the service-account MFID or username. Listing is open to the same callers as `members` (a role on the instrument other than through public access, or platform administrator), and each entry's `capabilities.can_remove` is true only for callers who may unbind it. Binding and unbinding require `admin` on the instrument, so the instrument owner and admin maintainers manage bindings. Only service accounts can be bound. The deprecated generic `POST /users/{user_ref}/access_groups/{group_name}` rejects human users for instrument groups with 409.
-
-A bound service account reaches every dataset assigned to the instrument at `contributor`. If a service account's key is exposed, rotate it through `POST /service_accounts/{service_account_ref}/rotate_key` (platform administrators only) or unbind it.
-
-The operator group holds no grant on the instrument record itself. Instruments created before this change carried an `editor` grant for their operator group; `migrations/data/20261005_remove_instrument_group_record_grants.py` removes it.
+- `service_account_ref` is the service account's MFID or username; a reference to anything other than a service account returns 404. Unbinding an account that is not bound returns 404.
+- Listing is open to the callers who may read `members`; other callers receive 403. Each entry's `capabilities.can_remove` is true only for callers who may unbind it.
+- Binding and unbinding require `admin` on the instrument, so the owner and `admin` maintainers manage bindings. Each route returns the updated list.
+- A bound service account reaches every dataset assigned to the instrument at `contributor`. If its key is exposed, a platform administrator rotates it with `POST /service_accounts/{service_account_ref}/rotate_key`, or the account is unbound.
+- The deprecated `POST /users/{user_ref}/access_groups/{group_name}` rejects human users for instrument groups with 409.
+- The operator group, named after the instrument's MFID, holds no grant on the instrument record itself.
 
 ## Display names
 
-`instrument_name` is free-text display, not an identifier. Use `unique_id` or `instrument_id` to refer to an instrument. Dataset responses resolve `instrument_name` from the assigned instrument, so renaming an instrument is reflected immediately. Legacy datasets without a registered instrument keep their stored label. See [dataset instrument assignment](dataset_instrument_assignment.md) for the deprecated name-based lookups.
+`instrument_name` is a free-text display name, not an identifier: an instrument is referenced by `unique_id` or `instrument_id`. Dataset responses read `instrument_name` from the assigned instrument, so a rename appears in every dataset response, and a dataset without an instrument returns `null`. Deprecated name-based lookups are described in [dataset instrument assignment](dataset_instrument_assignment.md).
 
 ## Deleting an instrument
 
 An instrument can be permanently deleted only when no datasets are assigned to it. Two paths exist:
 
 ```http
-POST   /resources/{instrument_mfid}/delete          # request, admin on the instrument
+POST   /resources/{mfid}/delete          # request, admin on the instrument
 PATCH  /deletion_requests/{request_id}?status=approved
-DELETE /resources/{instrument_mfid}?force=true[&confirm=true]
+DELETE /resources/{mfid}?force=true[&confirm=true]
 ```
 
-`DELETE` requires owner or platform-admin authority. Without `confirm=true` it returns a preview and deletes nothing; with `confirm=true` it executes, and still returns 409 with the blocking dataset count if datasets were assigned in the meantime. The preview reports what the deletion removes: `service_accounts_unbound` for the operator group's bindings, and `removed_grants` for any access grants the operator group holds on other resources.
+`DELETE` requires `owner` on the instrument or a platform administrator. Without `confirm=true` it returns a preview and deletes nothing; with `confirm=true` it executes. Either call returns 409 with the blocking dataset count while datasets are assigned. The preview reports `service_accounts_unbound`, the operator group's bindings, and `removed_grants`, the grants the operator group holds on other resources.
 
-Deleting an instrument removes its operator access group, the group's grants, the service-account bindings, and the instrument's own records. The service-account User rows survive. A `DeletionAuditLog` row is written on both paths, and the `instrument_id` slug is free to reuse afterwards. See the [database deletion contract](database_deletion_contract.md) for the full behavior.
+Deletion removes the operator group, its grants, the service-account bindings and the instrument's own records; the service accounts themselves remain. A `DeletionAuditLog` row is written on both paths, and the `instrument_id` slug can be reused afterwards. See [Deletion](database_deletion_contract.md) for the full behavior.

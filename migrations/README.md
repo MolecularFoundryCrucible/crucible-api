@@ -1,109 +1,89 @@
 # Database migrations
 
-Use Alembic revisions in `migrations/versions/` for schema changes and reviewed scripts in `migrations/data/` for audits, backfills, and one-time data cleanup.
+Schema changes are Alembic revisions in `migrations/versions/`. One-time data corrections are scripts in `migrations/data/`. Commands read the database settings from the environment, or from the file named by `DB_CONF_FILE`.
 
-## New installations
-
-`python -m app.cli db upgrade` brings the configured database to the latest schema:
-
-- An empty database (no tables in `public`) gets `migrations/schema/baseline_<revision>.sql` in one transaction, including the `vector` and `pg_trgm` extensions and the `public` access group, is stamped at that revision, and then gets the migrations after it. If the baseline fails, nothing is left behind; if a later migration fails, the database stays at the last completed revision and running the command again continues from there.
-- A database with `alembic_version` gets its pending migrations (`alembic upgrade head`).
-- A database with tables but no `alembic_version` is refused.
-- Concurrent runs wait for each other (PostgreSQL advisory lock).
-
-`vector` is not a trusted extension, so either the database user is a superuser or an administrator creates both extensions in the database first (`CREATE EXTENSION vector; CREATE EXTENSION pg_trgm;`); the application user then only needs to own the database.
-
-The database named by `ALEMBIC_PRODUCTION_DATABASE` (default `crucible`) is refused unless `--yes-this-is-production` is given, the same guard as `alembic -x yes-this-is-production=true`; set it to an empty value on installations without a separate production database.
-
-Readiness (`/health/ready`) expects the migration heads of the running code when `EXPECTED_DB_REVISIONS` is not set.
-
-### The schema baseline
-
-The old migration chain cannot build a database from nothing, so new installations start from a schema baseline: the schema of staging at a known revision (`BASELINE_REVISION` in `app/cli/db.py`). To check that a fresh installation matches staging:
+## Applying migrations
 
 ```bash
-DB_SERVER=127.0.0.1:55433 DB_USERNAME=postgres DB_DATABASE=crucible_fresh PGDB_PW=test \
-  .venv/bin/python -m app.cli db upgrade
-
-PGPASSWORD=... scripts/compare_schema.sh \
-  postgresql://postgres:test@127.0.0.1:55433/crucible_fresh \
-  postgresql://crucible-api-user@127.0.0.1:5433/crucible-staging
+python -m app.cli db upgrade
 ```
 
-`scripts/compare_schema.sh` dumps both schemas with the PostgreSQL 17 client in read-only sessions and exits 1 on any difference. On 2026-10-26 at `b8f2d6e41c07` (read-only comparisons):
+- An empty database receives the schema baseline, then every later revision.
+- A database already managed by Alembic receives its pending revisions.
+- A database with tables but no `alembic_version` table is refused.
+- Concurrent runs are serialized.
+- A revision waits at most `ALEMBIC_LOCK_TIMEOUT` (5 s) for a table lock; if it times out, run the command again.
 
-- Fresh installation vs staging: two differences that exist on staging only, an empty legacy `source` schema and an empty comment on the `public` schema (the baseline leaves schema and extension comments out because they require ownership the application user may not have).
-- Fresh installation vs production: one difference. `fk_project_project_lead_orcid_user` is `NOT VALID` on production, as revision `1bb842c39928` created it for legacy projects whose lead has no user row; a fresh installation enforces it fully. Staging was validated by hand at some point.
+A new database requires the `vector` and `pg_trgm` extensions. Either the database user is a superuser, or an administrator creates both extensions beforehand.
 
-To move the baseline to a newer revision (optional; the migrations after it keep working), dump staging at that revision and regenerate:
+## Production databases
+
+The database named by `ALEMBIC_PRODUCTION_DATABASE` (default `crucible`) is refused without an explicit flag, including for read-only commands:
 
 ```bash
-docker run --rm --network host -e PGPASSWORD postgres:17 pg_dump --schema-only --no-owner --no-privileges \
-  postgresql://crucible-api-user@127.0.0.1:5433/crucible-staging > staging_schema.sql
-.venv/bin/python scripts/make_schema_baseline.py staging_schema.sql <revision>
+DB_CONF_FILE=.env.prod python -m app.cli db upgrade --yes-this-is-production
+DB_CONF_FILE=.env.prod alembic -x yes-this-is-production=true current
 ```
 
-Then update `BASELINE_REVISION`, delete the old baseline file, and run the comparison above.
+Before a production migration:
+
+1. Confirm which database the settings point to.
+2. Take a backup.
+3. Read the upgrade guide for the release in `docs/upgrading/`; some releases require steps before or after the migration.
 
 ## Schema changes
 
-Generate and review a revision before applying it:
+1. Edit the table in `app/tables.py`.
+2. Generate a revision against a migrated local database, then review it manually:
 
-```bash
-DB_CONF_FILE=.env.local .venv/bin/alembic revision --autogenerate -m "describe the change"
-DB_CONF_FILE=.env.local .venv/bin/alembic upgrade head
-```
+   ```bash
+   DB_CONF_FILE=.env.local uv run alembic revision --autogenerate -m "describe the change"
+   DB_CONF_FILE=.env.local uv run alembic upgrade head
+   ```
 
-The file named by `DB_CONF_FILE` must provide the database password as `PGDB_PW` or `PGDB_PW_VERSION` (a full `projects/<project>/secrets/<secret>/versions/<n>` path read with your Application Default Credentials); there is no built-in Secret Manager default. Data scripts that import API route modules also need `CRUCIBLE_SECRET_KEY` the same way.
+3. Confirm there is a single head: `uv run alembic heads`.
 
-Production commands require the explicit safety flag, including read-only Alembic commands:
-
-```bash
-DB_CONF_FILE=.env.prod \
-.venv/bin/python -m app.cli db upgrade --yes-this-is-production
-
-DB_CONF_FILE=.env.prod \
-.venv/bin/alembic -x yes-this-is-production=true current
-
-DB_CONF_FILE=.env.prod \
-.venv/bin/alembic -x yes-this-is-production=true upgrade head
-```
-
-Before a production migration, confirm the target database, take the required backup, pause incompatible writers, inspect the revision chain, and run any revision-specific preconditions. Do not assume `upgrade head` is safe when a migration has ordered data steps or application deployment checkpoints.
+Add tables and columns; do not drop or rename anything the previous release still reads. The migration runs while the previous version is still serving requests.
 
 ## Data changes
 
-Data scripts should default to read-only or rollback behavior. Review their output before using `--commit`. Production writes additionally require `--yes-this-is-production` when the script supports that guard.
+- A step that every upgraded installation must run is a server command (`python -m app.cli ...`), because the image does not contain `migrations/data/`.
+- A one-time correction for a single deployment is a dated script in `migrations/data/`, run from a checkout.
+
+Both report the planned changes and write only with `--commit`. On the production database they also require `--yes-this-is-production`.
 
 ```bash
-DB_CONF_FILE=.env.prod \
-.venv/bin/python migrations/data/<script>.py \
-  --yes-this-is-production
-
-DB_CONF_FILE=.env.prod \
-.venv/bin/python migrations/data/<script>.py \
-  --commit \
-  --yes-this-is-production
+DB_CONF_FILE=.env.prod uv run python migrations/data/<script>.py --yes-this-is-production            # report
+DB_CONF_FILE=.env.prod uv run python migrations/data/<script>.py --yes-this-is-production --commit   # write
 ```
 
-Scripts in `migrations/data/` are dated and record one-time work; most have already run in production. The August 2026 permission rollout and the September 2026 timestamp and contributor-role migrations are complete; do not replay their procedures (they are in git history). Accepted production cleanup items are in [production migration data follow-ups](../docs/archive/production_migration_data_followups.md).
+The scripts in `migrations/data/` are a record of work already performed. Do not rerun an old script without reviewing it first.
 
-## Loading rows that carry their own ids
+## Sequences after partial data loads
 
-Copying rows from another database with their `id` values (a subset of production into staging, a partial restore) does not move the id sequences. The next insert then draws an id that already exists and fails on a duplicate key, which the API reports as a bare 500; because each failed insert uses up one value, it looks intermittent. A full `pg_dump` and restore is not affected: it carries the sequence values.
-
-After any such load, run:
+Copying rows from another database together with their `id` values (a subset of production into staging, a partial restore) does not advance the id sequences. The next insert then fails with a duplicate key error, which the API reports as a 500. A full dump and restore is not affected.
 
 ```bash
-python -m app.cli db sequences            # lists sequences behind their tables; exit 1 if any
-python -m app.cli db sequences --commit   # moves them up to their tables' highest ids
+python -m app.cli db sequences            # lists counters behind their tables; exit 1 if any
+python -m app.cli db sequences --commit   # moves them up
 ```
 
-The check reads only; `--commit` never moves a sequence backwards and needs `--yes-this-is-production` on the production database.
+## Schema baseline
+
+A new database is created from `migrations/schema/baseline_<revision>.sql`, the schema at a known revision (`BASELINE_REVISION` in `app/cli/db.py`), because the oldest revisions cannot build a database from an empty state.
+
+To move the baseline to a newer revision (optional):
+
+```bash
+pg_dump --schema-only --no-owner --no-privileges <database at that revision> > schema.sql
+uv run python scripts/make_schema_baseline.py schema.sql <revision>
+```
+
+Then update `BASELINE_REVISION`, delete the old baseline file, and compare a fresh database with the source: `scripts/compare_schema.sh <fresh database url> <source database url>` exits 1 on any difference.
 
 ## Connecting to Cloud SQL
 
-Authenticate with Application Default Credentials and run the Cloud SQL Auth Proxy on an unused local port, then point an untracked environment file at it. Confirm the database name before any write.
+Run the Cloud SQL Auth Proxy on a free local port and point an untracked environment file at it. Confirm the database name before any write.
 
 ```bash
 cloud-sql-proxy --address 127.0.0.1 --port 5433 <project>:<region>:<instance>

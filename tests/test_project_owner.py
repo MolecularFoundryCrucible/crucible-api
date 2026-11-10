@@ -1,14 +1,14 @@
 """is_project_owner is the real "project lead" check now — Project.
 project_lead_orcid is a denormalized display pointer, not read for
-authorization (see docs/permission_system_plan.md, "Project lead becomes a
-role"). The one subtlety: it must confirm proj_id is an actual project before
+authorization (see docs/permissions.md, "The project
+lead"). The one subtlety: it must confirm proj_id is an actual project before
 checking standing, since owner standing in a caller's own ORCID group is
 trivially true for everyone and would otherwise let `?group_name=<my orcid>`
 impersonate project-lead authorization in access_groups.py's join-request
 routes.
 
 The access group is keyed by the project's MFID (Project.unique_id), not its
-project_id — see docs/permission_system_plan.md, "Groups".
+project_id — see docs/permissions.md, "Groups".
 """
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool

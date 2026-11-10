@@ -1,5 +1,5 @@
 """visibility_filter_for narrows a listing by the public ACL entry, not the
-legacy `public` column — the whole point per docs/permission_system_plan.md
+legacy `public` column — the whole point per docs/permissions.md
 (Core Concepts -> Public resources). These seed a dataset/sample with no
 `public` column value at all, so a filter reading that column would find
 nothing.

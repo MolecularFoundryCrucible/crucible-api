@@ -998,7 +998,7 @@ def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authori
 #   it doesn't fit what a personal group means. Whatever access she keeps
 #   should come from an actual standing elsewhere (e.g. project membership).
 #
-# See docs/permission_system_plan.md, Future Work -> Ownership transfer.
+# See docs/permissions.md, "Changing access".
 # ---------------------------------------------------------------------------
 
 def _transfer_project_ownership(session, mfid: str, new_owner: User) -> Optional[User]:

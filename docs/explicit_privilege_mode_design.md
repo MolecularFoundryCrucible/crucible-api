@@ -1,40 +1,33 @@
 # Explicit privilege mode
 
-## Status
+The `Crucible-Privilege-Mode` request header selects whether a platform administrator's privileges apply to a request. This page covers how the mode is resolved, the response headers, the account profile and the audit log; roles and grants are described in [Permissions](permissions.md).
 
-Implemented as an additive API contract (`Crucible-Privilege-Mode` header). No database migration is required.
+## Modes
 
-The feature separates a platform administrator's assigned role from the authority applied to an individual request. Existing clients retain their current behavior when they omit the new header.
+| Mode | Effect |
+|---|---|
+| `normal` | The caller is authorized only through their own groups and grants. Platform role `admin` is ignored; platform role `contributor` still applies. |
+| `elevated` | Platform role `admin` applies, and the caller passes every permission check. |
 
-## Request contract
+Routes that require authentication accept the optional header with either value. Any other value returns 422.
 
-Authenticated routes accept the optional header:
+## Mode resolution
 
-```http
-Crucible-Privilege-Mode: normal
-```
+| Request | Human platform administrator | Service account with platform role `admin` | Other caller |
+|---|---|---|---|
+| Header omitted, API key | `elevated` (compatibility default) | `elevated` (compatibility default) | `normal` |
+| Header omitted, session | `normal` | Not applicable | `normal` |
+| `normal` | `normal` | `normal` | `normal` |
+| `elevated` | `elevated` | 403 | 403 |
 
-or:
+- Only a human platform administrator may request `elevated`. Any other caller, including a service account with platform role `admin`, receives 403 "Caller is not eligible for elevated privilege mode".
+- The compatibility default applies to API keys only: an administrator's API key, human or service account, acts elevated when the header is omitted. A script that should not act with administrator rights sends `normal`. A session, from the authorization code flow or the device authorization flow, acts normal unless the request carries `elevated`.
+- The API never retries a request or falls back to elevated mode.
+- Making a service account a platform administrator (`PATCH /service_accounts/{service_account_ref}` with `platform_role: admin`) requires a human administrator in elevated mode in a browser session authenticated within the last ten minutes. An API key receives 403 `hub_session_required`; see [Authentication](sign_in.md#operations-that-require-recent-browser-authentication).
 
-```http
-Crucible-Privilege-Mode: elevated
-```
+## Response headers
 
-The API resolves it as follows:
-
-| Request | Human platform administrator | Other caller |
-|---|---|---|
-| Header omitted | Existing elevated behavior | Existing behavior |
-| `normal` | Ordinary ACL, group, public, and resource permissions only | Existing non-admin behavior |
-| `elevated` | Platform-administrator authority | `403 Forbidden` |
-
-An unsupported value returns `422 Unprocessable Content`. Service accounts cannot explicitly request elevated mode. An existing administrator service account retains its previous authority only when the header is omitted, as a temporary compatibility behavior.
-
-The Hub should send `normal` for routine requests and `elevated` only for a deliberate platform-administration workflow. The API never retries or falls back to elevated mode.
-
-## Response contract
-
-After authentication and mode resolution, responses return the applied mode:
+Responses to requests whose mode was resolved carry the applied mode:
 
 ```http
 Crucible-Privilege-Mode: normal
@@ -49,11 +42,11 @@ Elevated responses use:
 Cache-Control: private, no-store
 ```
 
-Existing stricter cache directives remain intact. The request and successful response headers are published in the checked-in OpenAPI contract.
+In elevated mode this replaces any `Cache-Control` set by the route. In normal mode a route's own `Cache-Control` is kept, and `private` is set only when the route set none. Requests rejected before the mode is resolved (401, or 403 for an ineligible `elevated`) receive no `Crucible-Privilege-Mode` header. The request and response headers are published in the OpenAPI document.
 
 ## Account profile
 
-`GET /account/profile` reports assigned eligibility separately from capabilities effective for the current request:
+`GET /account/profile` reports the caller's eligibility separately from the capabilities in effect for the current request (excerpt):
 
 ```json
 {
@@ -64,6 +57,7 @@ Existing stricter cache directives remain intact. The request and successful res
   },
   "capabilities": {
     "can_manage_service_accounts": false,
+    "can_manage_users": false,
     "can_create_project": true,
     "can_register_instrument": true,
     "can_create_sample": true,
@@ -73,46 +67,37 @@ Existing stricter cache directives remain intact. The request and successful res
 }
 ```
 
-`platform_role` is the assigned platform entitlement. `can_elevate` is true only for a human platform administrator. `effective_privilege_mode` and `capabilities` describe the mode applied to that profile request. Resource-specific capabilities continue to describe the effective mode used for their request.
-
-The Hub can discover elevation eligibility with one normal profile request. It should refetch the profile in elevated mode after activation to obtain elevated capabilities.
+`platform_role` is the assigned platform role. `can_elevate` is true only for a human platform administrator. `effective_privilege_mode` and `capabilities` describe the mode applied to the profile request, and resource-specific `capabilities` in other responses describe the mode of their own request. A client discovers eligibility with one profile request in normal mode, and requests the profile again in elevated mode to obtain the elevated capabilities.
 
 ## Implementation
 
-Authentication loads the original principal, then resolves an authorization context once per request. Normal mode derives an effective principal without the administrator platform role while preserving its identity and ACL group memberships. Existing route dependencies and permission helpers receive that effective principal, including routes that inspect `is_platform_admin` directly.
+`authorize_user` (`app/utils/auth_utils.py`) resolves the mode once per request with `resolve_authorization_context` (`app/utils/permissions.py`). In normal mode routes receive a copy of the caller's `Principal` with platform role `none` in place of `admin`, with identity and group memberships unchanged, so every permission check, including direct tests of `is_platform_admin`, sees an ordinary caller. The original principal is retained for the account profile and the audit log.
 
-The original principal remains available for eligibility reporting and audit data. This keeps privilege selection centralized instead of adding mode checks to individual routes.
+## Audit log
 
-## Operational audit logs
+Every elevated request, explicit or by the compatibility default, and every rejected request for `elevated` from an authenticated caller, writes one application log line at INFO level: a JSON object with `"event": "privileged_request"` and these fields.
 
-Explicit and compatibility-default elevated requests emit a structured `privileged_request` application log containing:
+| Field | Content |
+|---|---|
+| `actor_id` | The caller's `unique_id` |
+| `privilege_mode` | Always `elevated` |
+| `mode_source` | `explicit` or `compatibility_default` |
+| `method`, `route` | HTTP method and route template |
+| `target_mfid` | The `mfid` or `*_mfid` path parameter, or null |
+| `request_id` | The `X-Request-ID` value |
+| `status` | Response status code |
+| `duration_ms` | Request duration |
+| `timestamp` | UTC time, ISO 8601 |
 
-- Actor identifier
-- Applied mode and whether it was explicit or inherited from the compatibility default
-- HTTP method and route template
-- Target MFID when present in the route
-- Request ID
-- Response status
-- Duration
-- UTC timestamp
+Credentials, API keys, request bodies and signed URLs are not logged. The log is the only record; no database table stores privileged requests.
 
-Rejected explicit elevation attempts are logged after authentication. Credentials, request bodies, signed URLs, and API keys are not logged. Phase one uses application logs and does not add an audit table or Alembic revision.
+## Client guidance
 
-## Client behavior
-
-- Send `normal` centrally for routine collection, detail, graph, search, and mutation requests.
-- Use `authorization.can_elevate` to expose deliberate administration entry points.
-- Send `elevated` only from a trusted server-side administration client.
+- Send `normal` on routine collection, detail, graph, search and mutation requests.
+- Use `authorization.can_elevate` to expose administration entry points, and send `elevated` only for deliberate administration from a trusted server-side client.
 - Verify that the response `Crucible-Privilege-Mode` matches the requested mode.
-- Never retry a `403` or `404` with elevated mode automatically.
-- Include privilege mode in cache identity or isolate elevated request caches.
-- End elevation on explicit deactivation, expiration, logout, account or server change, and browser-session termination.
+- Never retry a 403 or 404 in elevated mode automatically.
+- Include the privilege mode in cache keys, or keep elevated responses out of shared caches.
+- End elevation on explicit deactivation, expiry, sign-out, account or server change, and end of the browser session.
 
-The current header selects authority but is not a second authentication factor. A stolen administrator credential can still request elevation.
-
-## Future work
-
-- Change omitted mode to normal only in a future breaking API version after clients have migrated.
-- Consider short-lived, server-issued privilege leases with recent authentication, expiration, revocation, and optional justification.
-- Consider durable database-backed audit history if application-log retention and querying are insufficient.
-- Define explicit privilege propagation for future asynchronous operations that outlive the initiating request.
+The header selects authority but is not a second authentication factor: a stolen administrator credential can request elevation.

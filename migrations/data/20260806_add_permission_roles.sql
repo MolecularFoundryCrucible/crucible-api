@@ -1,5 +1,5 @@
 -- Phase 1 (expand) of the permission system redesign.
--- See docs/permission_system_plan.md -> Migration path.
+-- See the migration path in the original plan: git show 0443fdd:docs/permission_system_plan.md
 --
 -- ADDITIVE ONLY. Nothing is dropped and no behaviour changes: read/write and
 -- both public columns stay populated, and the old checks stay in force. The

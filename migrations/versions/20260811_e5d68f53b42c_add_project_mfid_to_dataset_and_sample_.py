@@ -3,7 +3,7 @@
 Repoints Dataset/Sample's project reference from the mutable Project.project_id
 label onto the immutable Project.unique_id (MFID), and Dataset's instrument
 reference onto Instrument.unique_id — same principle, same session, see
-docs/permission_system_plan.md "Project identity: mfid vs project_id".
+docs/permissions.md, "Project identity: MFID and `project_id`".
 
 Additive only: project_id/instrument_name stay, nothing is dropped yet.
 sample.project_mfid is Sample's first-ever project FK (project_id itself has

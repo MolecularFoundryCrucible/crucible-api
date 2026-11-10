@@ -4,7 +4,7 @@ Classifies each access group by kind, instead of inferring it from
 group_name. owner_orcid marks a personal ORCID group; resource_mfid marks a
 project's or instrument's own group. Mutually exclusive by a CHECK
 constraint — reserved groups (admin, public) and orphans have neither set.
-See docs/permission_system_plan.md, "Membership lived in two tables."
+See docs/permissions.md, "Membership".
 
 Nullable on existing rows until the backfill runs:
     DB_CONF_FILE=.env python migrations/data/<date>_backfill_accessgroup_kind.py --commit

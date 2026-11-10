@@ -1,119 +1,105 @@
-# GET query contract
+# Collection queries
 
-Status: deployed to production on 2026-09-15 from `main` commit `24a24ab9ce74b01f841750df7003091ce4b57119` with database revision `3f2b6a9c1d84`.
+This page describes the filtering, sorting, pagination and facet behavior that list routes share. The OpenAPI document defines each parameter.
 
-The generated OpenAPI document defines the complete parameter schemas. This document records shared behavior and compatibility decisions. Any contract change here must also be reflected in the API implementation, tests, generated OpenAPI, and the Hub handoff document before the Hub consumes it. Do not update the Hub repository without explicit authorization.
+## Validation
 
-## Common collection behavior
+Dataset, sample, project and instrument collections, `GET /users/{user_ref}/projects`, the dataset and sample facet routes, the dataset, sample, project and instrument search routes, and singleton routes reject unknown query parameters with 422. `GET /users` ignores unknown parameters, logs them and adds the header `Deprecation: @1799280000`.
 
-Dataset, sample, project, and instrument collections use endpoint-specific query models and reject unknown parameters with 422. They share these controls where applicable:
+Repeated values of one filter use OR semantics unless stated otherwise; different filters combine with AND. Authorization and the exclusion of records pending deletion apply before pagination.
 
-- `accessible_to_user` and `accessible_to_project` constrain effective access. Platform contributors and administrators may select another user or project; ordinary callers remain limited to themselves and projects where they hold standing.
-- Repeatable `affiliation=owner` selects resources authoritatively owned by the current caller.
-- Repeatable `member_ref` on `GET /projects` selects projects where every listed user holds standing in the project's access group (AND semantics, like `accessible_to_user`, with the same rule for selecting another user). It accepts an ORCID, service-account MFID, username, or email. Repeatable `member_role` restricts those memberships to the listed roles (OR semantics) and requires `member_ref`. Unlike `accessible_to_user`, `member_ref` excludes projects reached only through resource grants.
-- Project and instrument collection and singleton items include `role`: the caller's project membership role, or the caller's effective role on the instrument record. Public access is not a role. Bound instrument service accounts are operators and receive `null`.
-- Repeatable `mfid` (at most 100 values, OR semantics) selects records by MFID, for batch lookups. MFIDs the caller cannot read, missing ones, and records pending deletion are omitted; results follow the collection's normal order, so clients key them by MFID. Projects found by `mfid` include projects the caller is not a member of, as an exact `project_id` lookup does, and instruments found by `mfid` include every status unless `status` is given. On datasets and samples `unique_id` is a deprecated alias of `mfid` (reported through the `Deprecation` response header); sending both is 422.
-- `owner_id` is the preferred exact person or service-account owner filter. `owner_orcid` remains a deprecated alias on supported routes.
-- `project_id`, `project_mfid`, and `project_scope=assigned|shared|all` constrain project relationships on dataset and sample collections.
-- `creation_time_gte`, `creation_time_lte`, `modification_time_gte`, and `modification_time_lte` require timezone-aware values.
-- `include_total=true` requests an exact authorization-filtered count. `false` suppresses it. Omission preserves each route's previous count behavior.
-- `include_metadata`, `include_links`, and `include_owner` control representation expansion without changing row membership or cursor identity.
+## Filters
 
-Repeated values use OR within one filter family. Different filter families compose with AND. Authorization and active-resource filtering are always applied before pagination.
+These filters apply to the dataset, sample, project and instrument collections where each is declared:
+
+- `accessible_to_user` and `accessible_to_project` (at most 10 values each, AND semantics) keep records that every listed user or project can access. Ordinary callers may select only themselves and projects where they hold standing; platform contributors and administrators may select any user or project.
+- `affiliation` relates each result to the caller: `owner` and `member` on datasets and samples, `owner` on projects, `owner` and `maintainer` on instruments. `member` matches records reached through the caller's own grants, so records visible only because they are public are excluded. `affiliation` cannot be combined with an exact owner filter (422).
+- `mfid` (at most 100 values) selects records by MFID for batch lookups. MFIDs the caller cannot read, missing MFIDs and records pending deletion are omitted, and results keep the collection's order, so clients key them by MFID. On projects it finds projects the caller is not a member of; on instruments it searches every status unless `status` is given. On datasets and samples `unique_id` is a deprecated alias of `mfid` (header `Deprecation: @1792540800`); sending both returns 422.
+- `owner_id` is the exact owner filter and accepts a `unique_id`, a linked ORCID, a username or an email. Deprecated aliases: `owner_orcid` on datasets and samples, `owner` on instruments. An alias combined with `owner_id` must name the same owner (422).
+- `project_id` and `project_mfid` select one project on datasets, samples, their facets and search routes; `project_scope=assigned|shared|all` (default `assigned`) chooses the relationship and requires one of them. Datasets also accept `instrument_id` and `instrument_mfid`; `instrument_name` is deprecated.
+- `visibility=all|public|private` restricts datasets and samples by public visibility.
+- `creation_time_gte`, `creation_time_lte`, `modification_time_gte` and `modification_time_lte` are inclusive. A value without an offset is read as UTC. A lower bound after its upper bound returns 422.
+- Datasets and samples expose `*_is_null` filters for the faceted nullable fields (for example `measurement_is_null`, `owner_id_is_null`, `project_mfid_is_null`). Omission does not constrain nullability, `true` selects null values and `false` non-null values. `true` combined with a value for the same field returns 422.
+- On projects, `member_ref` (at most 10 values, AND semantics) keeps projects where every listed user holds a membership; it accepts an ORCID, service-account MFID, username or email, follows the same selection rule as `accessible_to_user`, and excludes projects reached only through resource grants. `member_role` restricts those memberships to the listed roles and requires `member_ref`.
+- Projects and instruments accept `active_since`. Activity is recorded at most hourly.
+- Instruments default to `status=active` unless `status`, `instrument_id` or `mfid` is given.
+
+`include_metadata`, `include_links`, `include_owner` and `include_members` change the representation only, never the rows or the cursor. `include_members` on a collection requires an exact `project_id` or `instrument_id`. Project and instrument items include `role`: the caller's project membership role, or the caller's effective role on the instrument record. Public access is not a role, and bound instrument service accounts receive `null`.
 
 ## Sorting
 
-Dataset and sample collections accept `sort=created|updated|name` and `direction=asc|desc`. Omitting `sort` preserves the legacy `unique_id DESC` order. Every order uses `unique_id` as a deterministic tie-breaker, and null primary values sort last.
+| Collection | `sort` values | Default order |
+|---|---|---|
+| `GET /datasets`, `GET /samples` | `created`, `updated`, `name` | `unique_id` descending |
+| `GET /projects`, `GET /users/{user_ref}/projects` | `project_id`, `title`, `created`, `updated`, `activity` | `project_id` ascending, then `unique_id` ascending |
+| `GET /instruments` | `instrument_id`, `name`, `created`, `updated`, `activity` | `creation_time` descending, nulls last, then `unique_id` descending |
+| `GET /users` | `name`, `username`, `unique_id`, `email`, `last_active` | `name` ascending |
 
-Project collections accept `sort=project_id|title|created|updated` and instrument collections accept `sort=instrument_id|name|created|updated`, with `direction=asc|desc`. An explicit sort without `direction` defaults to `desc` for `created` and `updated` and `asc` otherwise; `direction` without `sort` returns 422. `title`, `instrument_id`, and `name` (the instrument display name) are case-insensitive; project `project_id` sorts by the stored slug. `updated` uses `modification_time`, falling back to `creation_time`. `GET /users/{user_ref}/projects` accepts the same project sorts. Omitting `sort` keeps the defaults: projects `project_id ASC, unique_id ASC`, instruments `creation_time DESC NULLS LAST, unique_id DESC`. The user collection accepts `sort=name|username|unique_id|email` with `direction=asc|desc` (default `asc`). All user sorts are case-insensitive, use `unique_id` as tie-breaker, and place nulls last; `name` sorts by last name then first name, and `email` is administrator only. Omitting `sort` is equivalent to `sort=name&direction=asc`.
+`direction` is `asc` or `desc`. On datasets and samples it defaults to `desc`. On projects and instruments an explicit sort defaults to `desc` for `created`, `updated` and `activity` and to `asc` otherwise. On users it defaults to `asc`. `direction` without `sort` returns 422 on datasets, samples, projects and instruments.
 
-Mutable sorts are live views. An item can move between pages if its name or modification time changes during traversal. Clients should restart pagination after a mutation or refresh.
+Every order uses `unique_id` as the final tie-breaker and places null values last. `updated` uses `modification_time`, falling back to `creation_time`. `name` on datasets, samples and instruments, project `title`, `instrument_id` and every user sort are case-insensitive; project `project_id` sorts by the stored slug. User `name` sorts by last name, then first name. `email` and `last_active` user sorts, and the `active_since`, `inactive_since` and `never_active` user filters, are restricted to platform administrators (403).
+
+Mutable sorts are live views: an item can move between pages when its name or modification time changes during traversal. Clients restart pagination after a mutation.
 
 ## Pagination
 
-All four collections retain offset pagination and support opaque cursor pagination. The user collection also supports both. Dataset and sample routes also accept legacy raw MFID cursors only with the default order. New responses emit signed versioned cursors.
+Responses use the envelope `{total, limit, offset, items, next_cursor}`. A null `next_cursor` is the only end-of-collection signal.
 
-Cursors bind the continuation position to the authenticated principal, resource kind, sort, direction, and normalized result filters. Changing that context returns 422. Page size, representation expansion, and `include_total` may change while following a cursor. Every page reapplies authorization.
+| Pagination | Routes | `limit` default and maximum |
+|---|---|---|
+| Cursor, with `offset` accepted | `GET /datasets`, `GET /samples`, `GET /projects`, `GET /instruments`, `GET /users`, `GET /users/{user_ref}/projects`, `GET /join_requests`, `GET /deletion_requests`, `GET /deletion_audit`, `GET /embeddings` | 100, 1000 |
+| Cursor only | `GET /account/apikeys`, `GET /account/sessions`, `GET /account/auth-events` and their `/users/{user_ref}/...` counterparts | 50, 200 |
+| Cursor only | `GET /datasets/facets`, `GET /samples/facets` | 100, 1000 |
+| Cursor only | `GET /join_requests/facets` | 50, 200 |
+| Offset only | `GET /files`, `GET /ingestion_requests`, `GET /postprocessing_runs`, `GET /service_accounts`, `GET /projects/{project_ref}/users`, `GET /datasets/{child_dataset_mfid}/parents`, `GET /datasets/{parent_dataset_mfid}/children`, `GET /samples/{child_sample_mfid}/parents`, `GET /samples/{parent_sample_mfid}/children`, `GET /account/join_requests` (deprecated) | 100, 1000 |
+| One page, no continuation | `GET /datasets/search`, `GET /samples/search`, `GET /projects/search`, `GET /instruments/search`, `GET /users/search`, `GET /resources/metadata/search` | 20, 50 |
 
-If both cursor and offset are supplied, cursor takes precedence for compatibility. One extra row is queried to determine whether `next_cursor` is present. A null cursor is the only end-of-collection signal.
+Search routes require `q` of at least 3 characters.
+
+Cursors are opaque and signed. A cursor is bound to the authenticated principal, the collection, the sort, the direction and the result filters; changing any of them returns 422. `limit`, the representation parameters and `include_total` may change between pages. Every page reapplies authorization. When both `cursor` and `offset` are sent, `cursor` takes precedence. Offset pagination on `/datasets` and `/samples` is deprecated. In the default order, dataset and sample routes also accept a bare MFID as a cursor, retained for older clients.
+
+`include_total=true` computes an exact, authorization-filtered `total` and `false` omits it. When it is omitted, datasets and samples return `total` only on the first page (no cursor, `offset=0`), while projects, instruments, `GET /users` and `GET /users/{user_ref}/projects` always return it.
 
 ## Anchored pages
 
-Dataset and sample collections accept `anchor_mfid` to start an inclusive page at a resource in the requested authorized, filtered, and ordered collection.
+`GET /datasets` and `GET /samples` accept `anchor_mfid` to start an inclusive page at one record of the authorized, filtered and ordered collection.
 
-- `anchor_mfid` cannot be combined with a cursor or an explicitly supplied offset.
-- Missing, inaccessible, deleted, wrong-type, or filter-excluded anchors return 404.
-- The first item is the anchor and the page continues in the requested direction.
-- The returned `next_cursor` is an ordinary continuation cursor. Do not resend the anchor when following it.
-- A client can obtain both sides of a local sequence with two anchored requests using identical filters and opposite directions, then reverse one side and remove the duplicate anchor.
+- `anchor_mfid` cannot be combined with `cursor` or an explicit `offset` (422).
+- A missing, unreadable, pending-deletion or filter-excluded anchor returns 404.
+- The first item is the anchor and the page continues in the requested direction. The returned `next_cursor` is an ordinary cursor; do not resend the anchor with it.
+- Two anchored requests with identical filters and opposite directions return both sides of a record; reverse one side and remove the duplicate anchor.
 
-Anchoring is supported only for datasets and samples.
+## Facets
 
-## Facets and null filters
+`GET /datasets/facets` and `GET /samples/facets` return authorization-filtered values and counts for one `field`. They do not return records.
 
-`GET /datasets/facets` and `GET /samples/facets` return authorization-filtered selectable values and counts. They do not return grouped resources or provide a general aggregation language.
+| Route | `field` values |
+|---|---|
+| `GET /datasets/facets` | `session`, `measurement`, `data_format`, `owner`, `instrument`, `project` |
+| `GET /samples/facets` | `sample_type`, `owner`, `project` |
 
-Dataset fields:
+Each bucket has `value`, `count` and a canonical `label`. Text labels equal their stored values. Owner labels use the nonblank full name, then username, then stable identifier; project labels the nonblank title, then project ID, then MFID; instrument labels the nonblank instrument name, then instrument ID, then MFID. Unresolved relationships use the raw stored value. The null bucket has a null label. Owner, project and instrument buckets also include stable identifiers and public-safe references when available.
 
-- `session`
-- `measurement`
-- `data_format`
-- `owner`
-- `instrument`
-- `project`
+Facet routes accept `sort=value|label|count` (default `value`) and `direction=asc|desc` (default `asc`). Label ordering is case-insensitive. Label and count ties break by raw value ascending, and the null bucket always sorts last. A continuation request must resend the same field, filters, sort and direction; `limit` may change. Facet pages are live views, so changes between requests can move buckets.
 
-Sample fields:
+## Users
 
-- `sample_type`
-- `owner`
-- `project`
+`GET /users` declares `unique_id`, `username`, `email`, `first_name`, `last_name`, `q`, `search_fields`, `permissive`, `is_service_account`, `pending`, `platform_role`, `active_since`, `inactive_since`, `never_active`, `include_total`, `limit`, `cursor`, `offset`, `sort` and `direction`.
 
-Text values are preserved exactly. Every bucket returns an optional canonical `label`. Text-facet labels equal their stored values. Owner labels use nonblank full name, username, then stable identifier. Project labels use nonblank title, project ID, then MFID. Instrument labels use nonblank instrument name, instrument ID, then MFID. Unresolved relationships use the raw stored value. Null buckets have null labels and always sort after concrete values. Owner, project, and instrument buckets also include stable identifiers and public-safe resolved references when available.
+- Exact `unique_id`, `username` and `email` filters search every user and return the same representation as `GET /users/{user_ref}`. `unique_id` and `username` are repeatable (at most 100 values each).
+- Without an exact filter, platform administrators receive the full directory with email and platform roles; other callers receive public-safe profiles of users who share an access group with them.
+- `first_name` and `last_name` are case-insensitive substrings with `permissive=true` (default) and exact otherwise. `permissive` does not affect the exact filters.
+- `q` is a case-insensitive substring search over first name, last name, username, unique ID and, for platform administrators, email. Repeatable `search_fields` restricts `q` to the named fields and requires it.
+- `platform_role`, `pending`, the activity filters and `email` in `search_fields` are restricted to platform administrators (403).
 
-Facet endpoints accept `sort=value|label|count` and `direction=asc|desc`. The default `sort=value&direction=asc` preserves raw stored-value ordering. Label ordering uses a case-insensitive canonical label key. Count ordering uses the requested count direction. Label and count ties break by raw stored value ascending, and null remains last. Resolved labels do not affect value or count ordering.
+`user_capabilities` is set on `GET /users/{user_ref}` and every `GET /users` item. Platform administrators also receive `api_key_status` on each item that has a key.
 
-Facet pages use bounded opaque cursor pagination. Continuation requests must resend the same field, filters, sort, and direction; the limit may change. Cursors are bound to the authenticated principal and complete result-shaping query context, and authorization is reapplied on every request. Pagination is a live view, so changes to resources or authorization between requests can move buckets and may cause duplicates or omissions.
+## Singleton routes
 
-Dataset and sample list routes expose matching `*_is_null` filters. Omission does not constrain nullability, `true` selects null values, and `false` selects non-null values. Combining `true` with a concrete value for the same field returns 422.
+Singleton routes accept only representation parameters such as `include_metadata`, `include_links`, `include_owner`, `include_members` and the deprecated sample `include_datasets` (replaced by `include_links`).
 
-Calendar facets remain deferred. The producer-supplied dataset `timestamp` is unconstrained text and is unsuitable for reliable server-side calendar grouping. A future calendar facet should use API-owned `creation_time` and explicit UTC semantics.
+## Removed routes
 
-## User collection
+`GET /users/{user_ref}/datasets` and `GET /users/{user_ref}/samples` were removed in 4.0.0 and return 410 `route_removed`; use `GET /datasets?accessible_to_user=` and `GET /samples?accessible_to_user=`. `GET /datasets/{dataset_mfid}/samples` was removed; use `GET /samples?dataset_mfid=`.
 
-`GET /users` uses its own query model. Exact `unique_id`, `username`, and `email` filters search every user and return the same authorized representation as the singleton route; `unique_id` and `username` are repeatable (at most 100 values each, OR semantics), which replaces the deprecated `POST /users/resolve`; broad listings return public-safe profiles scoped to users who share an access group, or the full directory with email and platform roles for platform administrators.
-
-Declared filters are `unique_id`, `username`, `email`, `first_name`, `last_name`, `q`, `search_fields`, `permissive`, `is_service_account`, and `platform_role`. `first_name` and `last_name` are case-insensitive substrings with `permissive=true` (the default) and exact otherwise. `q` is a case-insensitive substring search. By default it matches first name, last name, username, unique ID, and, for platform administrators only, email. Repeatable `search_fields` (`first_name`, `last_name`, `username`, `unique_id`, `email`) restricts `q` to the named fields with OR semantics and requires `q`; naming `email` is administrator only and other callers receive 403. `platform_role` is repeatable and administrator only; other callers receive 403. `include_total`, `limit`, `cursor`, `offset`, `sort`, and `direction` follow the shared collection behavior above.
-
-Any other query parameter is ignored without filtering. The response carries a `Deprecation: @1799280000` (2027-01-07) header and the ignored parameters are logged. The parameters will be rejected with 422 at that announced date. No `Sunset` header is sent.
-
-`user_capabilities` is populated on `GET /users/{user_ref}` and on every `GET /users` item, and remains null on `/users/search` and `/users/resolve`. Platform administrators also receive `api_key_status` on every `GET /users` item that has a key.
-
-## Singleton GETs
-
-Singleton routes keep explicit representation controls such as `include_metadata`, `include_links`, `include_owner`, `include_members`, and the deprecated sample `include_datasets`. Collection filters, sorting, and pagination do not apply to singleton routes. Unknown parameters return 422.
-
-## Compatibility
-
-- Requests without new parameters preserve previous results and ordering.
-- Offset pagination remains supported.
-- Existing raw dataset and sample MFID cursors remain supported for the legacy default order.
-- Legacy owner and name filters used by known clients remain explicit and deprecated in OpenAPI.
-- Preferred and deprecated owner aliases may be combined only when they resolve to the same identity.
-- Exact owner filters cannot be combined with current-caller affiliation.
-- Path parameter names were not changed in this compatibility release.
-
-## Lifecycle timestamps
-
-Sorting and lifecycle time filters use API-owned `creation_time` and `modification_time`, stored as nullable PostgreSQL `TIMESTAMPTZ`. See [resource timestamp policy](resource_timestamp_policy.md).
-
-## Deferred features
-
-- A unified dataset and sample collection with one global cursor
-- Cursor conversion for every remaining collection
-- Removal of offset pagination, legacy exact filters, or raw cursors
-- Generic query languages, arbitrary field selection, or broad expansion syntax
-- Previous-page cursors, absolute range metadata, and snapshot pagination
-- Project and instrument related-resource counts
-- Parent `modification_time` propagation
-
-Project and instrument `modification_time` records direct changes to that resource. A future related-activity feature should use a separately defined `last_activity_time` or activity resource. If related-resource counts are added, they should be explicit opt-in bulk aggregates with documented authorization and relationship semantics.
+Sorting and time filters use `creation_time` and `modification_time`; see [Timestamps](resource_timestamp_policy.md).

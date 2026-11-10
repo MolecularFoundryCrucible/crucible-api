@@ -1,6 +1,6 @@
 """
 Read-only audit run before the permission-system migration (step 0.5 of
-docs/permission_system_plan.md). Writes nothing; every query is a SELECT.
+docs/permissions.md). Writes nothing; every query is a SELECT.
 
 Three counts, each gating a decision in the phase-1 backfill:
 

@@ -1,4 +1,3 @@
-import os
 from typing import Annotated, List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, join, or_
@@ -33,14 +32,12 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import add_or_update, create_standard_acls, touch_resource_modification_time, deletion_filter_for
+from app.utils.sql_utils import record_resource, add_or_update, create_standard_acls, touch_resource_modification_time, deletion_filter_for
 from app.utils.user_utils import owned_by, resolve_create_owner, resolve_service_account_reference
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
 
-API_VERSION = os.getenv('API_VERSION', None)
-API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 INSTRUMENT_PAGINATION = ResourcePaginationSpec(
     kind="instrument",
@@ -353,17 +350,7 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
         db_instrument = Instrument(**instrument_details)
         session.add(db_instrument)
         session.flush()
-        now = get_utc_datetime()
-        existing_ri = session.exec(select(Resource).where(Resource.mfid == db_instrument.unique_id)).one_or_none()
-        ri = add_or_update(session, Resource,
-                           where=(Resource.mfid == db_instrument.unique_id),
-                           mfid=db_instrument.unique_id,
-                           resource_type="instrument",
-                           created_with_api_version = API_VERSION,
-                           api_version_githash = API_VERSION_GITHASH)
-        if existing_ri is None:
-            ri.creation_time = now
-        ri.modification_time = now
+        ri = record_resource(session, db_instrument.unique_id, "instrument")
 
         add_or_update(session, AccessGroup,
                       AccessGroup.group_name == db_instrument.unique_id,

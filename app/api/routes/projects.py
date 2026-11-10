@@ -1,4 +1,3 @@
-import os
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -26,7 +25,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
+from app.utils.sql_utils import record_resource, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.sql_utils import assert_not_pending_deletion
 from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
@@ -49,8 +48,6 @@ from app.services.resource_details import (
 
 router = APIRouter(tags=["projects"])
 
-API_VERSION = os.getenv('API_VERSION', None)
-API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 
 def _validate_service_account_project_role(user: User, role: Role) -> None:
@@ -122,12 +119,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
                                           session, role=Role.OWNER,
                                           group_type=AccessGroupType.PROJECT)
 
-        add_or_update(session, Resource,
-                      where=(Resource.mfid == prop.unique_id),
-                      mfid=prop.unique_id,
-                      resource_type="project",
-                      created_with_api_version=API_VERSION,
-                      api_version_githash=API_VERSION_GITHASH)
+        record_resource(session, prop.unique_id, "project")
         sql_create_resource_acl(ag, prop.unique_id, read=True, write=True,
                                 session=session, permission=Role.OWNER)
 

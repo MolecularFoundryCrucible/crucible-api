@@ -3,7 +3,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-import os
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import exists, func, join
 from sqlmodel import and_, Session, select
@@ -43,7 +42,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
+from app.utils.sql_utils import is_public, public_grant_exists, record_resource, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
 
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import owned_by, owner_fields, owner_unique_id, owners_of, resolve_create_owner
@@ -68,8 +67,6 @@ SAMPLE_PAGINATION = ResourcePaginationSpec(
     },
 )
 
-API_VERSION = os.getenv('API_VERSION', None)
-API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 @router.post("/samples/{parent_sample_mfid}/children/{child_sample_mfid}", response_model=SampleLinkRead)
 def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id: ChildSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
@@ -260,18 +257,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         session.add(sample)
         session.flush()
 
-        now = get_utc_datetime()
-        existing_ri = session.exec(select(Resource).where(Resource.mfid == sample.unique_id)).one_or_none()
-        ri = add_or_update(session,
-                           Resource,
-                           where=(Resource.mfid == sample.unique_id),
-                           mfid=sample.unique_id,
-                           resource_type="sample",
-                           created_with_api_version = API_VERSION,
-                           api_version_githash = API_VERSION_GITHASH)
-        if existing_ri is None:
-            ri.creation_time = now
-        ri.modification_time = now
+        ri = record_resource(session, sample.unique_id, "sample")
         set_public(session, sample.unique_id, bool(S.public))
 
         create_standard_acls(session, sample.unique_id,

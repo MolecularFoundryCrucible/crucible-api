@@ -192,7 +192,6 @@ def provision_user(session, *, unique_id: str, first_name: str, last_name: str, 
 def identity_group_of(session, user_id: int) -> Optional[AccessGroup]:
     """A person's own access group, found through their owner membership rather than its name,
     so renaming the group never loses it."""
-    from app.tables import UserAccessGroupLink
 
     return session.exec(
         select(AccessGroup)
@@ -202,7 +201,6 @@ def identity_group_of(session, user_id: int) -> Optional[AccessGroup]:
 
 
 def identity_group_owner(session, group_id: int) -> Optional[User]:
-    from app.tables import UserAccessGroupLink
 
     return session.exec(
         select(User)
@@ -359,8 +357,6 @@ def sql_add_user_to_access_group(orcid, group_name, session, role=None, group_ty
     via the relationship would leave it null, which fails closed to viewer,
     so a newly added project member would land read-only.
     """
-    from app.tables import UserAccessGroupLink
-    from app.utils.permissions import AccessGroupType, Role
 
     user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
     ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()

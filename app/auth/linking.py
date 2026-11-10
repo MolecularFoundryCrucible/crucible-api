@@ -307,7 +307,6 @@ class MoveRefused(Exception):
 
 def holdings(session: Session, user: User) -> list[str]:
     """What an account holds besides its own identity group, as reasons it must not be emptied."""
-    from sqlalchemy import func
 
     from app.tables import (
         AccessGroupJoinRequest, ApiKey, ApiToken, Dataset, DeletionRequest, Instrument, PostprocessingRun, Project, ResourceACL, Sample, UploadSession,

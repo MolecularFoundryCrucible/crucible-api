@@ -1,3 +1,0 @@
-hostname: "crucible.lbl.gov"
-api_path: "testapi-staging"
-trgm_search_threshold: 0.3

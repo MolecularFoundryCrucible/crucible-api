@@ -90,6 +90,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Removed
 
+- **Breaking for operators:** the YAML settings files in the image (`app/conf/*.yaml`) and `API_CONF_FILE` are gone; set `API_PUBLIC_URL` and `API_PATH` (and `TRGM_SEARCH_THRESHOLD` if not 0.3). `settings check` reports `API_CONF_FILE` as retired. The Compose bundle never used them.
 - **Breaking:** the browser pages that signed in with ORCID and handed out a single API key are gone: `GET /auth/login`, `/auth/callback`, `/auth/apikey`, `POST /auth/apikey/regenerate` and the aliases `/login`, `/auth`, `/user_apikey` answer 410 `route_removed`. Create named keys with `POST /account/apikeys` (the Hub's Security page), or sign in from nano-crucible 4.0.
 - **Breaking for operators:** `ORCID_CLIENT_ID` and `ORCID_CLIENT_SECRET` are no longer read (`settings check` reports them); ORCID sign-in uses the provider entry in `CRUCIBLE_AUTH_PROVIDERS` with `OIDC_ORCID_CLIENT_SECRET`. The ORCID application no longer needs the `<API>/auth` redirect, and the `crucible_login_session` cookie is gone.
 - **Breaking:** five deprecated routes that no released client calls answer 410 `route_removed` and name their replacement: `POST /datasets/{dataset_mfid}/files/{file_id}/ingest`, `GET /datasets/{dataset_mfid}/samples`, `GET /users/by-username/{username}`, `GET /users/{user_ref}/datasets` and `GET /users/{user_ref}/samples`.

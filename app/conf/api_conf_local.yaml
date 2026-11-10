@@ -1,3 +1,0 @@
-hostname: "127.0.0.1:7777"
-api_path: "testapi"
-trgm_search_threshold: 0.3

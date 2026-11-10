@@ -70,6 +70,7 @@ def client(db_engine, configure, remote):
     SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginCode, LoginTransaction, TokenFamily, RefreshToken, AccessToken)])
     app = FastAPI()
     app.include_router(routes.router)
+    app.include_router(routes.callback_router)
     app.include_router(auth_routes.router)
     app.dependency_overrides[get_engine] = lambda: db_engine
     with TestClient(app, base_url=API_URL) as test_client:
@@ -95,7 +96,7 @@ def sign_in(client, remote, host, key, path, subject, **extra):
 
 
 def lab_sign_in(client, remote, subject="lab-user", **extra):
-    return sign_in(client, remote, "login.example.org", "lab", "/auth/hub/oidc/lab/callback", subject, **extra)
+    return sign_in(client, remote, "login.example.org", "lab", "/oauth/callback/lab", subject, **extra)
 
 
 def orcid_sign_in(client, remote, subject=ORCID, **extra):
@@ -260,14 +261,14 @@ def test_unknown_provider_is_refused(client):
 
 def test_each_provider_gets_its_own_callback_address(client, remote):
     assert start(client, remote, "orcid")["redirect_uri"] == [f"{API_URL}/auth/hub/callback"]
-    assert start(client, remote, "lab")["redirect_uri"] == [f"{API_URL}/auth/hub/oidc/lab/callback"]
+    assert start(client, remote, "lab")["redirect_uri"] == [f"{API_URL}/oauth/callback/lab"]
 
 
 def test_callback_for_other_provider_refused(client, remote, db_engine):
     query = start(client, remote, "orcid")
     remote["login.example.org"].claims = {"nonce": query["nonce"][0]}
-    answer = hub_answer(finish(client, "/auth/hub/oidc/lab/callback", query))
-    assert answer == {"error": "access_denied", "state": LOGIN["state"]}
+    refused = finish(client, "/oauth/callback/lab", query)
+    assert refused.status_code == 400 and "location" not in refused.headers
     assert remote["login.example.org"].token_requests == []
     assert remote["orcid.org"].token_requests == []
     assert issued_codes(db_engine) == []
@@ -276,26 +277,27 @@ def test_callback_for_other_provider_refused(client, remote, db_engine):
 def test_legacy_callback_only_serves_the_provider_marked_for_it(client, remote, db_engine):
     link(db_engine, LAB_ISSUER, "lab-user")
     query = start(client, remote, "lab")
-    answer = hub_answer(finish(client, "/auth/hub/callback", query))
-    assert answer["error"] == "access_denied"
+    refused = finish(client, "/auth/hub/callback", query)
+    assert refused.status_code == 400 and "location" not in refused.headers
     assert issued_codes(db_engine) == []
 
 
 def test_legacy_provider_is_not_served_on_a_new_address(client, remote):
     query = start(client, remote, "orcid")
-    assert hub_answer(finish(client, "/auth/hub/oidc/orcid/callback", query))["error"] == "access_denied"
+    refused = finish(client, "/oauth/callback/orcid", query)
+    assert refused.status_code == 400 and "location" not in refused.headers
     assert remote["orcid.org"].token_requests == []
 
 
 def test_callback_for_unknown_provider_refused(client, remote):
     query = start(client, remote, "lab")
-    assert hub_answer(finish(client, "/auth/hub/oidc/nope/callback", query))["error"] == "access_denied"
+    assert hub_answer(finish(client, "/oauth/callback/nope", query))["error"] == "access_denied"
 
 
 def test_state_from_other_browser_refused(client, remote):
     query = start(client, remote, "lab")
     client.cookies.clear()
-    refused = finish(client, "/auth/hub/oidc/lab/callback", query)
+    refused = finish(client, "/oauth/callback/lab", query)
     assert refused.status_code == 400
     assert "location" not in refused.headers
     assert remote["login.example.org"].token_requests == []
@@ -307,7 +309,7 @@ def test_pkce_sent_when_advertised(client, remote, db_engine):
     query = start(client, remote, "lab")
     assert query["code_challenge_method"] == ["S256"]
     remote["login.example.org"].claims = {"nonce": query["nonce"][0], "sub": "lab-user"}
-    assert "code" in hub_answer(finish(client, "/auth/hub/oidc/lab/callback", query))
+    assert "code" in hub_answer(finish(client, "/oauth/callback/lab", query))
     form = parse_qs(remote["login.example.org"].token_requests[0].content.decode())
     assert create_s256_code_challenge(form["code_verifier"][0]) == query["code_challenge"][0]
 
@@ -320,7 +322,7 @@ def test_pkce_omitted_unless_s256_is_advertised(client, remote, db_engine, adver
     query = start(client, remote, "lab")
     assert "code_challenge" not in query
     remote["login.example.org"].claims = {"nonce": query["nonce"][0], "sub": "lab-user"}
-    finish(client, "/auth/hub/oidc/lab/callback", query)
+    finish(client, "/oauth/callback/lab", query)
     assert "code_verifier" not in parse_qs(remote["login.example.org"].token_requests[0].content.decode())
 
 
@@ -415,27 +417,27 @@ def test_required_user_with_orcid_account(client, remote, db_engine):
 ])
 def test_provider_errors_reach_the_hub_as_standard_errors(client, remote, sent, expected):
     query = start(client, remote, "lab")
-    response = client.get("/auth/hub/oidc/lab/callback", params={"error": sent, "error_description": "<b>x</b>", "state": query["state"][0]}, follow_redirects=False)
+    response = client.get("/oauth/callback/lab", params={"error": sent, "error_description": "<b>x</b>", "state": query["state"][0]}, follow_redirects=False)
     assert hub_answer(response) == {"error": expected, "state": LOGIN["state"]}
     assert remote["login.example.org"].token_requests == []
 
 
 def test_callback_without_a_code_is_a_server_error(client, remote):
     query = start(client, remote, "lab")
-    response = client.get("/auth/hub/oidc/lab/callback", params={"state": query["state"][0]}, follow_redirects=False)
+    response = client.get("/oauth/callback/lab", params={"state": query["state"][0]}, follow_redirects=False)
     assert hub_answer(response)["error"] == "server_error"
 
 
 def test_provider_down_at_exchange_is_temporarily_unavailable(client, remote):
     query = start(client, remote, "lab")
     remote["login.example.org"].down = True
-    assert hub_answer(finish(client, "/auth/hub/oidc/lab/callback", query))["error"] == "temporarily_unavailable"
+    assert hub_answer(finish(client, "/oauth/callback/lab", query))["error"] == "temporarily_unavailable"
 
 
 def test_bad_token_is_a_server_error(client, remote):
     query = start(client, remote, "lab")
     remote["login.example.org"].claims = {"nonce": "another", "sub": "lab-user"}
-    assert hub_answer(finish(client, "/auth/hub/oidc/lab/callback", query))["error"] == "server_error"
+    assert hub_answer(finish(client, "/oauth/callback/lab", query))["error"] == "server_error"
 
 
 def test_discovery_down_at_start_tells_the_hub(client, remote):
@@ -453,7 +455,7 @@ def test_one_provider_down_leaves_the_other_working(client, remote):
 
 def test_invalid_login_record_never_redirects(client, remote):
     for params in ({"code": "c", "state": "unknown"}, {"error": "access_denied", "state": "unknown"}, {"code": "c"}):
-        response = client.get("/auth/hub/oidc/lab/callback", params=params, follow_redirects=False)
+        response = client.get("/oauth/callback/lab", params=params, follow_redirects=False)
         assert response.status_code == 400
         assert "location" not in response.headers
 
@@ -462,15 +464,15 @@ def test_login_record_is_single_use(client, remote, db_engine):
     link(db_engine, LAB_ISSUER, "lab-user")
     query = start(client, remote, "lab")
     remote["login.example.org"].claims = {"nonce": query["nonce"][0], "sub": "lab-user"}
-    assert "code" in hub_answer(finish(client, "/auth/hub/oidc/lab/callback", query))
-    assert finish(client, "/auth/hub/oidc/lab/callback", query).status_code == 400
+    assert "code" in hub_answer(finish(client, "/oauth/callback/lab", query))
+    assert finish(client, "/oauth/callback/lab", query).status_code == 400
 
 
 def test_expired_login_record_never_redirects(client, remote, db_engine):
     query = start(client, remote, "lab")
     with Session(db_engine) as session, session.begin():
         session.exec(select(LoginTransaction)).one().expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
-    assert finish(client, "/auth/hub/oidc/lab/callback", query).status_code == 400
+    assert finish(client, "/oauth/callback/lab", query).status_code == 400
 
 
 def test_unknown_kid_refetches_keys_once(client, remote, db_engine):
@@ -525,14 +527,14 @@ def test_hub_without_a_legacy_provider_is_allowed(client, remote, configure, db_
     link(db_engine, LAB_ISSUER, "lab-user")
     query = start(client, remote)
     remote["login.example.org"].claims = {"nonce": query["nonce"][0], "sub": "lab-user"}
-    assert "code" in hub_answer(finish(client, "/auth/hub/oidc/lab/callback", query))
+    assert "code" in hub_answer(finish(client, "/oauth/callback/lab", query))
     assert client.get("/auth/hub/callback", params={"code": "c", "state": "unknown"}, follow_redirects=False).status_code == 400
 
 
 def test_failure_detail_is_not_sent_to_the_hub(client, remote):
     query = start(client, remote, "lab")
     remote["login.example.org"].claims = {"nonce": "secret-looking-value", "sub": "lab-user"}
-    location = finish(client, "/auth/hub/oidc/lab/callback", query).headers["location"]
+    location = finish(client, "/oauth/callback/lab", query).headers["location"]
     assert "secret-looking-value" not in location
     assert set(parse_qs(urlparse(location).query)) == {"error", "state", "iss"}
 
@@ -543,7 +545,7 @@ def oauth_client(db_engine, configure, remote):
 
     SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginCode, LoginTransaction, TokenFamily, RefreshToken, AccessToken)])
     app = FastAPI()
-    for router in (routes.router, auth_routes.router, oauth_routes.router, oauth_routes.discovery):
+    for router in (routes.router, routes.callback_router, auth_routes.router, oauth_routes.router, oauth_routes.discovery):
         app.include_router(router)
     app.dependency_overrides[get_engine] = lambda: db_engine
     with TestClient(app, base_url=API_URL) as test_client:
@@ -574,7 +576,7 @@ def test_standard_authorization_runs_through_to_tokens(oauth_client, remote, db_
     assert started.status_code == 302, started.text
     query = parse_qs(urlparse(started.headers["location"]).query)
     remote["login.example.org"].claims = {"nonce": query["nonce"][0], "sub": "lab-user"}
-    answer = client_answer(finish(oauth_client, "/auth/hub/oidc/lab/callback", query))
+    answer = client_answer(finish(oauth_client, "/oauth/callback/lab", query))
     assert (answer["state"], answer["iss"]) == (OAUTH_LOGIN["state"], API_URL)
     tokens = oauth_client.post("/oauth/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), data={
         "grant_type": "authorization_code", "code": answer["code"], "code_verifier": OAUTH_VERIFIER, "redirect_uri": HUB_CALLBACK,
@@ -644,6 +646,13 @@ def test_a_provider_sign_in_for_a_public_client_waits_for_the_persons_allow(oaut
     started = authorize(oauth_client, client_id="nano-crucible", redirect_uri="http://127.0.0.1:40123/callback", provider="lab")
     query = parse_qs(urlparse(started.headers["location"]).query)
     remote["login.example.org"].claims = {"nonce": query["nonce"][0], "sub": "lab-user"}
-    page = finish(oauth_client, "/auth/hub/oidc/lab/callback", query)
+    page = finish(oauth_client, "/oauth/callback/lab", query)
     assert page.status_code == 200 and "location" not in page.headers and "Allow" in page.text
     assert "http://127.0.0.1:40123/callback?code=" in page.text
+
+
+def test_the_sign_in_cookie_goes_only_to_the_callback_address_of_its_provider(client, remote):
+    for key, path in (("lab", "/oauth/callback"), ("orcid", "/auth/hub")):
+        client.cookies.clear()
+        start(client, remote, key)
+        assert [cookie.path for cookie in client.cookies.jar if cookie.name.startswith("crucible_hub_login")] == [path]

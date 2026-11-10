@@ -44,7 +44,7 @@ def answer(status: int, body: dict, headers: dict) -> JSONResponse:
     return JSONResponse(body, status_code=status, headers=headers)
 
 
-@router.post("/token", openapi_extra=_FORM, responses={200: {"description": "Tokens: access_token, token_type Bearer, expires_in, refresh_token, and auth_time when known", "content": {"application/json": {"schema": {"type": "object", "properties": {"access_token": {"type": "string"}, "token_type": {"type": "string"}, "expires_in": {"type": "integer"}, "refresh_token": {"type": "string"}, "auth_time": {"type": "integer"}}}}}}, 400: {"description": "RFC 6749 error, such as `invalid_grant` or `invalid_request`"}, 401: {"description": "`invalid_client`"}, 503: {"description": "Sign-in unavailable"}})
+@router.post("/token", openapi_extra=_FORM, responses={200: {"description": "Tokens: access_token, token_type Bearer, expires_in, refresh_token, refresh_expires_in (seconds until the session ends), user_unique_id (who signed in), and auth_time when known", "content": {"application/json": {"schema": {"type": "object", "properties": {"access_token": {"type": "string"}, "token_type": {"type": "string"}, "expires_in": {"type": "integer"}, "refresh_token": {"type": "string"}, "auth_time": {"type": "integer"}}}}}}, 400: {"description": "RFC 6749 error, such as `invalid_grant` or `invalid_request`"}, 401: {"description": "`invalid_client`"}, 503: {"description": "Sign-in unavailable"}})
 async def token(request: Request, engine=Depends(get_engine)) -> JSONResponse:
     """The OAuth 2.0 token endpoint (RFC 6749): `grant_type=authorization_code` with `code`,
     `redirect_uri` and the PKCE `code_verifier`, or `grant_type=refresh_token`. Clients authenticate

@@ -12,8 +12,8 @@ staticClients:
     secret: ci-only-client-secret
     name: Crucible
     redirectURIs:
-      - http://localhost:7777/auth/hub/oidc/dex/callback
-      - http://localhost:7777/auth/hub/oidc/second/callback
+      - http://localhost:7777/oauth/callback/dex
+      - http://localhost:7777/oauth/callback/second
 staticPasswords:
   - email: ada@example.org
     hash: "$2b$10$dnIVgsbiMOorV7gARHi0vOCr3dva8swqESHQW2Ijs.6PGpBNjBFtW"

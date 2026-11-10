@@ -39,7 +39,7 @@ def entry(key, issuer):
 
 
 def _at_callback(url):
-    return url.startswith(f"{API_URL}/auth/hub/oidc/")
+    return url.startswith(f"{API_URL}/oauth/callback/")
 
 
 def dex_sign_in(browser, url, username):
@@ -127,6 +127,7 @@ def api(db_engine, monkeypatch, seen):
     monkeypatch.setattr(routes, "get_api_root_path", lambda: "")
     app = FastAPI()
     app.include_router(routes.router)
+    app.include_router(routes.callback_router)
     app.dependency_overrides[get_engine] = lambda: db_engine
     with TestClient(app, base_url=API_URL) as client:
         yield client
@@ -146,7 +147,7 @@ def start(api, key, **extra):
 def sign_in(api, key, sign_in_at_provider, username="ada", **extra):
     with httpx.Client(timeout=30) as browser:
         callback = sign_in_at_provider(browser, start(api, key, **extra), username)
-    assert callback.startswith(f"{API_URL}/auth/hub/oidc/{key}/callback?"), callback
+    assert callback.startswith(f"{API_URL}/oauth/callback/{key}?"), callback
     return api.get(callback.removeprefix(API_URL), follow_redirects=False)
 
 
@@ -195,7 +196,7 @@ def test_real_provider_uses_pkce(api, provider, monkeypatch):
     configure(monkeypatch, entry(key, issuer))
     query = parse_qs(urlparse(start(api, key)).query)
     assert query["code_challenge_method"] == ["S256"]
-    assert query["redirect_uri"] == [f"{API_URL}/auth/hub/oidc/{key}/callback"]
+    assert query["redirect_uri"] == [f"{API_URL}/oauth/callback/{key}"]
 
 
 def test_another_person_gets_login_required(api, provider, monkeypatch, db_engine, seen):

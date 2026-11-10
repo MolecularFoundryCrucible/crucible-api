@@ -55,6 +55,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Providers send the browser back to `<API>/oauth/callback/{key}`; register that address with each provider. `legacy_callback: true` keeps `<API>/auth/hub/callback` for an ORCID application registered before 4.0.0, and the bundle's `ORCID_LEGACY_CALLBACK=true` selects it.
+- The Hub's `/auth/hub/login`, `/token`, `/refresh`, `/revoke` and `/callback` are deprecated wrappers around `/oauth/authorize`, `/oauth/token`, `/oauth/revoke` and the provider callback; they go once Hub 1.8.0 is deployed.
+- `POST /oauth/token` also returns `refresh_expires_in` (seconds until the session ends) and `user_unique_id`.
 - Samples, projects and instruments record the API version that wrote them as datasets do (`v4.0.0` and the commit); before, they recorded the bare `API_VERSION` variable, or nothing when it was unset.
 - **Breaking:** `POST /datasets/{parent}/children/{child}` and `POST /samples/{parent}/children/{child}` return `parent_*_mfid`, `child_*_mfid` and `relationship_type` instead of internal integer ids; the keyword routes no longer return the integer `id`.
 - Routes no longer return database tables: the OpenAPI schemas `DatasetLink`, `SampleLink`, `Keyword`, `ResourceACL` and `IngestionRequest` become `DatasetLinkRead`, `SampleLinkRead`, `KeywordRead`, `ResourceAccessGroupRead` and `IngestionRequestRead` (ingestion fields unchanged).

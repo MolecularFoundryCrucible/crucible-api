@@ -163,6 +163,8 @@ def token_body(pair: TokenPair, now: datetime | None = None) -> dict:
         "token_type": "Bearer",
         "expires_in": max(0, int((_aware(pair.access_expires_at) - current).total_seconds())),
         "refresh_token": pair.refresh_token,
+        "refresh_expires_in": max(0, int((_aware(pair.refresh_expires_at) - current).total_seconds())),
+        "user_unique_id": pair.user_unique_id,
     }
     if pair.auth_time is not None:
         body["auth_time"] = int(_aware(pair.auth_time).timestamp())

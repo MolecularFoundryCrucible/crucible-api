@@ -204,16 +204,17 @@ def test_published_example_is_accepted(monkeypatch):
     monkeypatch.setenv("CRUCIBLE_AUTH_PROVIDERS", (REPO / "deploy/compose/auth-providers.example.json").read_text())
     listed = get_settings().auth.providers
     assert [provider.key for provider in listed] == ["orcid", "lab"]
-    assert listed[0].legacy_callback and listed[0].is_orcid
+    assert listed[0].is_orcid and not any(provider.legacy_callback for provider in listed)
 
 
 def test_compose_bundle_lists_orcid_explicitly(monkeypatch):
     environment = yaml.safe_load((REPO / "deploy/compose/compose.orcid.yaml").read_text())["services"]["api"]["environment"]
     value = re.sub(r"\$\{ORCID_CLIENT_ID:\?[^}]*\}", "APP-TEST", environment["CRUCIBLE_AUTH_PROVIDERS"])
-    value = re.sub(r"\$\{ORCID_(?:ISSUER|REGISTRATION):-([^}]*)\}", r"\1", value)
+    value = re.sub(r"\$\{ORCID_(?:ISSUER|REGISTRATION|LEGACY_CALLBACK):-([^}]*)\}", r"\1", value)
     monkeypatch.setenv("CRUCIBLE_AUTH_PROVIDERS", value)
     provider = get_settings().auth.providers[0]
     assert (provider.key, provider.client_id, provider.issuer, provider.token_endpoint_auth_method) == ("orcid", "APP-TEST", "https://orcid.org", "client_secret_post")
+    assert provider.legacy_callback is False
 
 
 class FakeProvider:

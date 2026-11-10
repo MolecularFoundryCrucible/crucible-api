@@ -7,9 +7,6 @@ import secrets
 import datetime
 from dataclasses import replace
 from cachetools import TTLCache
-from joserfc import jwt
-from joserfc.errors import JoseError
-from joserfc.jwk import OctKey
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +30,6 @@ from sqlalchemy.sql import and_, or_
 from datetime import date, timedelta
 
 # ====== Constants
-ALGORITHM = "HS256"
 security = HTTPBearer()
 PRIVILEGE_MODE_HEADER = "Crucible-Privilege-Mode"
 
@@ -132,19 +128,6 @@ def generate_apikey(user, session):
     
 def get_secret_key() -> str:
     return get_secret("CRUCIBLE_SECRET_KEY")
-
-
-def encode_token(claims: dict, secret_key: str | None = None, alg = ALGORITHM) -> str:
-    return jwt.encode({"alg": alg}, claims, OctKey.import_key(secret_key or get_secret_key()))
-
-
-def decode_token(token: str, secret_key: str | None = None, alg = ALGORITHM):
-    try:
-        decoded = jwt.decode(token, OctKey.import_key(secret_key or get_secret_key()), algorithms=[alg])
-        jwt.JWTClaimsRegistry(exp={"essential": True}).validate(decoded.claims)
-    except (JoseError, ValueError):
-        return None
-    return decoded.claims
 
 
 def find_key(credentials, engine):

@@ -236,17 +236,6 @@ def test_cleanup_job_reports_and_removes_stale_waiting_accounts(db_engine):
     assert people(db_engine) == {}
 
 
-def test_legacy_browser_sign_in_shows_the_waiting_page(db_engine, use_engine, monkeypatch):
-    from app.api.routes import auth as auth_routes
-    from app.auth.sign_in import AccountPending
-
-    use_engine(db_engine)
-    set_providers(monkeypatch, {**ORCID_ENTRY, "registration": "approval"})
-    with pytest.raises(AccountPending):
-        auth_routes._record_signed_in_user("0000-0002-1825-0097", {"orcid": "0000-0002-1825-0097", "given_name": "Ada"})
-    assert people(db_engine)["0000-0002-1825-0097"].pending_at is not None
-
-
 def test_approving_or_rejecting_from_a_session_needs_a_recent_sign_in(client, db_engine, auth_as):
     from datetime import datetime, timedelta, timezone
 

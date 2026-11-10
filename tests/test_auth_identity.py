@@ -5,17 +5,14 @@ import uuid
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.engine import make_url
 from sqlmodel import Session, SQLModel, select
 
-from app.api.main import app
 from app.api.routes import users as users_routes
 from app.auth.identity import IdentityTaken, ensure_identity
 from app.tables import User, UserIdentity
-from app.utils.auth_utils import encode_token
 from app.utils.permissions import PlatformRole
 from tests.people import internal_id
 
@@ -153,18 +150,6 @@ def test_hub_sign_in_uses_the_hub_issuer(db_engine, hub_tables, monkeypatch, orc
     assert identities(db_engine) == [(SANDBOX, ORCID)]
 
 
-def test_apikey_page_writes_the_identity_row_with_the_older_flows_issuer(db_engine, monkeypatch, orcid_provider_settings):
-    import time
-
-    monkeypatch.setenv("ORCID_ISSUER", SANDBOX)
-    orcid_provider_settings(issuer=SANDBOX)
-    browser = TestClient(app, base_url="https://testserver", follow_redirects=False)
-    browser.cookies.set("crucible_user_token", encode_token({"sub": ORCID, "orcid": ORCID, "given_name": "Ada", "exp": int(time.time()) + 60}))
-    assert browser.get("/auth/apikey").status_code == 200
-    assert browser.get("/auth/apikey").status_code == 200
-    assert identities(db_engine) == [(SANDBOX, ORCID)]
-
-
 def test_post_users_with_orcid_writes_the_identity_row(client, db_engine, auth_as, monkeypatch):
     auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
     response = client.post("/users", json={"user_info": {"first_name": "Ada", "last_name": "Lovelace", "username": "ada", "unique_id": ORCID}, "project_ids": []})
@@ -172,31 +157,13 @@ def test_post_users_with_orcid_writes_the_identity_row(client, db_engine, auth_a
     assert identities(db_engine) == [(ISSUER, ORCID)]
 
 
-@pytest.mark.parametrize("path", ["/auth/apikey", "/user_apikey"])
-@pytest.mark.parametrize("email", [None, "ada@example.org"], ids=["html-page", "json"])
-def test_apikey_page_is_never_stored(db_engine, path, email):
-    with Session(db_engine) as session, session.begin():
-        add_user(session).email = email
-    response = signed_in_browser().get(path)
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html" if email is None else "application/json")
-    assert response.headers["cache-control"] == "no-store"
+def first_sign_in(engine, orcid=ORCID, family_name=None):
+    from app.auth.sign_in import resolve_sign_in
 
-
-def test_regenerated_apikey_is_never_stored(db_engine):
-    with Session(db_engine) as session, session.begin():
-        add_user(session)
-    response = signed_in_browser().post("/auth/apikey/regenerate")
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
-
-
-def signed_in_browser(orcid=ORCID):
-    import time
-
-    browser = TestClient(app, base_url="https://testserver", follow_redirects=False)
-    browser.cookies.set("crucible_user_token", encode_token({"sub": orcid, "orcid": orcid, "given_name": "Ada", "exp": int(time.time()) + 60}))
-    return browser
+    with Session(engine) as session:
+        user = resolve_sign_in(session, ISSUER, orcid, "Ada", family_name, registration="open")
+        session.commit()
+        return user.unique_id
 
 
 def link(engine, unique_id, subject, issuer=ISSUER):
@@ -209,33 +176,9 @@ def users(engine):
         return sorted(session.exec(select(User.unique_id)).all())
 
 
-def test_apikey_page_refuses_an_orcid_linked_to_another_user(db_engine):
-    link(db_engine, MFID, ORCID)
-    response = signed_in_browser().get("/auth/apikey")
-    assert response.status_code == 409
-    assert response.json()["detail"] == "This ORCID can't be used with this account; contact an administrator."
-    assert users(db_engine) == [MFID]
-
-
-def test_apikey_page_refuses_a_second_orcid_issuer_for_the_same_person(db_engine, monkeypatch):
-    link(db_engine, ORCID, ORCID, issuer=SANDBOX)
-    assert signed_in_browser().get("/auth/apikey").status_code == 409
-    assert identities(db_engine) == [(SANDBOX, ORCID)]
-
-
-def test_regenerate_refuses_an_orcid_linked_to_another_user(db_engine):
-    link(db_engine, MFID, ORCID)
-    assert signed_in_browser().post("/auth/apikey/regenerate").status_code == 409
-    assert users(db_engine) == [MFID]
-
-
-def test_regenerate_refuses_a_second_orcid_issuer_for_the_same_person(db_engine):
-    link(db_engine, ORCID, ORCID, issuer=SANDBOX)
-    assert signed_in_browser().post("/auth/apikey/regenerate").status_code == 409
-
-
-def test_apikey_page_retries_when_a_simultaneous_sign_in_got_there_first(db_engine, monkeypatch, orcid_provider_settings):
+def test_a_first_sign_in_retries_when_a_simultaneous_one_got_there_first(db_engine, monkeypatch, orcid_provider_settings):
     from app.auth import sign_in as sign_in_module
+    from app.auth.identity import retry_after_concurrent_first_write
 
     orcid_provider_settings()
 
@@ -249,7 +192,7 @@ def test_apikey_page_retries_when_a_simultaneous_sign_in_got_there_first(db_engi
         return real(*args, **kwargs)
 
     monkeypatch.setattr(sign_in_module, "ensure_identity", lose_once)
-    assert signed_in_browser().get("/auth/apikey").status_code == 200
+    assert retry_after_concurrent_first_write(lambda: first_sign_in(db_engine)) == ORCID
     assert len(calls) == 2
     assert identities(db_engine) == [(ISSUER, ORCID)]
 
@@ -621,11 +564,10 @@ def assert_one_person(engine):
     assert identities(engine) == [(ISSUER, ORCID)]
 
 
-def test_simultaneous_first_apikey_sign_ins_create_one_person_on_postgres(pg_sign_in, monkeypatch, orcid_provider_settings):
+def test_simultaneous_first_sign_ins_create_one_person_on_postgres(pg_sign_in, monkeypatch, orcid_provider_settings):
     orcid_provider_settings()
     from threading import Barrier, BrokenBarrierError
 
-    from app.api.routes import auth as auth_routes
     from app.auth import sign_in as sign_in_module
     from app.auth.identity import retry_after_concurrent_first_write
 
@@ -640,9 +582,7 @@ def test_simultaneous_first_apikey_sign_ins_create_one_person_on_postgres(pg_sig
         return real_provision_user(*args, **kwargs)
 
     monkeypatch.setattr(sign_in_module, "provision_user", add_after_every_thread_has_looked)
-    monkeypatch.setattr(auth_routes, "get_engine", lambda: pg_sign_in)
-    claims = {"orcid": ORCID, "given_name": "Ada"}
-    race(8, lambda: retry_after_concurrent_first_write(lambda: auth_routes._record_signed_in_user(ORCID, claims)))
+    race(8, lambda: retry_after_concurrent_first_write(lambda: first_sign_in(pg_sign_in)))
     assert_one_person(pg_sign_in)
 
 
@@ -650,7 +590,6 @@ def test_two_new_people_with_the_same_name_get_different_usernames_on_postgres(p
     orcid_provider_settings()
     from threading import Barrier, BrokenBarrierError
 
-    from app.api.routes import auth as auth_routes
     from app.auth import sign_in as sign_in_module
     from app.auth.identity import retry_after_concurrent_first_write
     from app.tables import User
@@ -666,11 +605,10 @@ def test_two_new_people_with_the_same_name_get_different_usernames_on_postgres(p
         return real_provision_user(*args, **kwargs)
 
     monkeypatch.setattr(sign_in_module, "provision_user", add_after_both_have_looked)
-    monkeypatch.setattr(auth_routes, "get_engine", lambda: pg_sign_in)
     people = iter((ORCID, OTHER_ORCID))
     def sign_in():
         orcid = next(people)
-        return retry_after_concurrent_first_write(lambda: auth_routes._record_signed_in_user(orcid, {"orcid": orcid, "given_name": "Ada", "family_name": "Lovelace"}))
+        return retry_after_concurrent_first_write(lambda: first_sign_in(pg_sign_in, orcid, "Lovelace"))
     race(2, sign_in)
     with Session(pg_sign_in) as session:
         usernames = session.exec(select(User.username)).all()

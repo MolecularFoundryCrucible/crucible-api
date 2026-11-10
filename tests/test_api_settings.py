@@ -13,7 +13,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 @pytest.fixture
 def api_env(monkeypatch):
-    for name in ("API_CONF_FILE", "API_PUBLIC_URL", "API_PATH", "TRGM_SEARCH_THRESHOLD", "ORCID_CLIENT_ID"):
+    for name in ("API_CONF_FILE", "API_PUBLIC_URL", "API_PATH", "TRGM_SEARCH_THRESHOLD"):
         monkeypatch.delenv(name, raising=False)
     dependencies.get_api_config.cache_clear()
     yield monkeypatch
@@ -30,23 +30,20 @@ def test_public_url_env_wins_and_is_normalized(api_env):
 
 def test_yaml_still_works(api_env, tmp_path):
     conf = tmp_path / "api.yaml"
-    conf.write_text('hostname: "example.org"\napi_path: "testapi-staging"\norcid_client_id: "APP-1"\ntrgm_search_threshold: 0.4\n')
+    conf.write_text('hostname: "example.org"\napi_path: "testapi-staging"\ntrgm_search_threshold: 0.4\n')
     api_env.setenv("API_CONF_FILE", str(conf))
     assert dependencies.get_api_url() == "https://example.org/testapi-staging"
     assert dependencies.get_api_path() == "testapi-staging"
-    assert dependencies.get_orcid_client_id() == "APP-1"
     assert dependencies.get_trgm_search_threshold() == 0.4
 
 
 def test_env_values_win_over_yaml(api_env, tmp_path):
     conf = tmp_path / "api.yaml"
-    conf.write_text('hostname: "example.org"\napi_path: "testapi"\norcid_client_id: "APP-1"\ntrgm_search_threshold: 0.4\n')
+    conf.write_text('hostname: "example.org"\napi_path: "testapi"\ntrgm_search_threshold: 0.4\n')
     api_env.setenv("API_CONF_FILE", str(conf))
-    api_env.setenv("ORCID_CLIENT_ID", "APP-2")
     api_env.setenv("TRGM_SEARCH_THRESHOLD", "0.5")
     api_env.setenv("API_PUBLIC_URL", "http://lab.local")
     api_env.setenv("API_PATH", "crucible")
-    assert dependencies.get_orcid_client_id() == "APP-2"
     assert dependencies.get_trgm_search_threshold() == 0.5
     assert dependencies.get_api_url() == "http://lab.local/crucible"
 
@@ -58,18 +55,6 @@ def test_no_config_is_fine_until_needed(api_env):
     assert dependencies.get_trgm_search_threshold() == 0.3
     with pytest.raises(ConfigurationError, match="API_PUBLIC_URL"):
         dependencies.get_api_url()
-    with pytest.raises(ConfigurationError, match="ORCID_CLIENT_ID"):
-        dependencies.get_orcid_client_id()
-
-
-def test_root_mounted_login_redirect(api_env, client):
-    response = client.get("/auth/apikey", follow_redirects=False)
-    assert response.status_code == 307
-    assert response.headers["location"] == "/login"
-    assert response.cookies["after_login_return_to_page"].strip('"') == "/user_apikey"
-    response = client.post("/auth/apikey/regenerate", follow_redirects=False)
-    assert response.headers["location"] == "/auth/login"
-    assert response.cookies["after_login_return_to_page"].strip('"') == "/auth/apikey"
 
 
 def test_cursor_signing_key_setting_is_used(monkeypatch):

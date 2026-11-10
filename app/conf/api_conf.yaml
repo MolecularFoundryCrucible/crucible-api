@@ -1,4 +1,3 @@
 hostname: "crucible.lbl.gov"
 api_path: "api/v3"
-orcid_client_id: "APP-E5VUS6XSJS5VFNEN"
 trgm_search_threshold: 0.3

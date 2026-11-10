@@ -20,7 +20,7 @@ A recent sign-in means the Hub session's ORCID `auth_time` is at most 600 second
 
 Hub sessions also default to normal privilege mode when `Crucible-Privilege-Mode` is omitted; API keys keep the compatibility default.
 
-The legacy browser `GET /auth/apikey` flow is unchanged.
+The browser `GET /auth/apikey` flow was removed in 4.0.0 (410).
 
 ## Remaining
 

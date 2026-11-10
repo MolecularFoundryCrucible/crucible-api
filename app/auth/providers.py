@@ -9,10 +9,8 @@ from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from cachetools import TTLCache
 from joserfc.errors import JoseError
 
-from app.api.dependencies import get_orcid_client_id, get_orcid_client_secret
-from app.config import ConfigurationError, OidcProvider, get_secret, get_settings
+from app.config import ConfigurationError, OidcProvider, get_secret
 
-ORCID_BROWSER = "orcid_browser"
 HTTP_TIMEOUT = 10
 ID_TOKEN_LEEWAY = 30
 DISCOVERY_REFRESH_SECONDS = 12 * 60 * 60
@@ -46,19 +44,11 @@ def forget_clients() -> None:
     _recent_failures.clear()
 
 
-def _orcid_issuer() -> str:
-    return get_settings().api.orcid_issuer
-
-
 def id_token_claims(issuer: str, client_id: str) -> dict:
     return {
         "iss": {"essential": True, "values": [issuer]},
         "aud": {"essential": True, "values": [client_id]},
     }
-
-
-def orcid_id_token_claims() -> dict:
-    return id_token_claims(_orcid_issuer(), get_orcid_client_id())
 
 
 def audience_is_only(audience: object, client_id: str) -> bool:
@@ -94,14 +84,6 @@ def _registered(name: str, issuer: str, client_id: str, client_secret: str, scop
     return oauth.create_client(name)
 
 
-def orcid_browser_app() -> StarletteOAuth2App:
-    client = _clients.get(ORCID_BROWSER)
-    if client is None:
-        client = _registered(ORCID_BROWSER, _orcid_issuer(), get_orcid_client_id(), get_orcid_client_secret(), "openid", "client_secret_post")
-        _clients[ORCID_BROWSER] = client
-    return client
-
-
 def _provider_app(provider: OidcProvider) -> StarletteOAuth2App:
     client = _clients.get(provider.key)
     if client is None:
@@ -120,10 +102,6 @@ async def _with_discovery(name: str, client: StarletteOAuth2App, issuer: str) ->
         _recent_failures[name] = True
         raise ProviderUnavailable(type(error).__name__) from None
     return client
-
-
-async def orcid_browser_client() -> StarletteOAuth2App:
-    return await _with_discovery(ORCID_BROWSER, orcid_browser_app(), _orcid_issuer())
 
 
 async def new_code_verifier(provider: OidcProvider) -> str | None:

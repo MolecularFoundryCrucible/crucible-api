@@ -97,10 +97,10 @@ def test_hub_secrets_from_files_follow_the_same_rule(monkeypatch, manager, tmp_p
 
 
 def test_other_secrets_keep_their_value_as_given(monkeypatch, manager):
-    monkeypatch.delenv("ORCID_CLIENT_SECRET", raising=False)
-    monkeypatch.setenv("ORCID_CLIENT_SECRET_VERSION", VERSION)
+    monkeypatch.delenv("PROPDB_APIKEY", raising=False)
+    monkeypatch.setenv("PROPDB_APIKEY_VERSION", VERSION)
     manager.return_value.__enter__.return_value.access_secret_version.return_value.payload.data = b"value\n"
-    assert optional_secret("ORCID_CLIENT_SECRET") == "value\n"
+    assert optional_secret("PROPDB_APIKEY") == "value\n"
 
 
 def test_hub_auth_is_disabled_when_unset():
@@ -199,43 +199,6 @@ def test_importing_the_application_does_not_load_secret_manager():
     code = "import sys, app.api.main; print('google.cloud.secretmanager' in sys.modules)"
     result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, check=True)
     assert result.stdout.strip() == "False"
-
-
-def test_direct_api_orcid_config_and_secret_version(monkeypatch, tmp_path):
-    from app.api import dependencies
-    import app.config as config
-
-    monkeypatch.setattr(dependencies, "get_api_config", lambda: {"orcid_client_id": "fallback-client-id"})
-    monkeypatch.delenv("ORCID_CLIENT_ID", raising=False)
-    assert dependencies.get_orcid_client_id() == "fallback-client-id"
-
-    monkeypatch.setenv("ORCID_CLIENT_ID", "env-client-id")
-    config.get_settings.cache_clear()
-    assert dependencies.get_orcid_client_id() == "env-client-id"
-
-    monkeypatch.delenv("DB_CONF_FILE", raising=False)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("ORCID_CLIENT_SECRET", raising=False)
-    monkeypatch.delenv("ORCID_CLIENT_SECRET_VERSION", raising=False)
-    with pytest.raises(RuntimeError):
-        dependencies.get_orcid_client_secret()
-
-    captured = {}
-
-    def fake_get_gcs_secret(secret_name):
-        captured["secret_name"] = secret_name
-        return "fetched-orcid-secret"
-
-    monkeypatch.setattr(config, "get_gcs_secret", fake_get_gcs_secret)
-    version_path = "projects/776258882599/secrets/orcid_client_secret/versions/2"
-    monkeypatch.setenv("ORCID_CLIENT_SECRET_VERSION", version_path)
-    assert dependencies.get_orcid_client_secret() == "fetched-orcid-secret"
-    assert captured["secret_name"] == version_path
-
-    monkeypatch.delenv("ORCID_CLIENT_SECRET", raising=False)
-    monkeypatch.setenv("ORCID_CLIENT_SECRET_VERSION", "orcid_client_secret_esb/versions/latest")
-    with pytest.raises(ConfigurationError, match="ORCID_CLIENT_SECRET_VERSION"):
-        dependencies.get_orcid_client_secret()
 
 
 def test_provider_secret_missing_is_unavailable(monkeypatch, tmp_path, orcid_provider_settings):

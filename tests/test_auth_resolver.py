@@ -1,14 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, select
 
-from app.api.main import app
 from app.auth.sign_in import IDENTITY_TAKEN, NOT_LINKED, SERVICE_ACCOUNT, UNLINKED_ORCID, WRONG_USER, SignInRefused, resolve_sign_in
 from app.config import get_settings
-from app.tables import AccessGroup, ApiToken, AuthEvent, HubLoginCode, HubLoginTransaction, User, UserAccessGroupLink, UserIdentity
-from app.utils.auth_utils import encode_token
+from app.tables import AccessGroup, AuthEvent, HubLoginCode, HubLoginTransaction, User, UserAccessGroupLink, UserIdentity
 from app.utils.hub_login import HubLoginRefused, create_handoff_code
 from tests.test_auth_providers import LAB_ENTRY
 from tests.test_hub_tokens import ORCID_PROVIDER
@@ -235,40 +232,3 @@ def test_unlinked_orcid_at_the_hub_is_access_denied(db_engine, hub_tables, looku
         create_handoff_code(db_engine, transaction(), ORCID_PROVIDER, ORCID, None, None)
     assert caught.value.error == "access_denied"
 
-
-def apikey(path="/auth/apikey", method="get"):
-    client = TestClient(app, base_url="https://testserver/testapi", follow_redirects=False)
-    token = encode_token({"sub": ORCID, "orcid": ORCID, "given_name": "Ada", "exp": int(datetime.now(timezone.utc).timestamp()) + 60})
-    client.cookies.set("crucible_user_token", token)
-    return getattr(client, method)(path)
-
-
-def test_apikey_page_gives_an_mfid_person_their_own_key(db_engine, lookup_on):
-    person(db_engine, MFID, ORCID_ISSUER, ORCID, email="ada@example.org")
-    response = apikey()
-    assert response.status_code == 200, response.text
-    assert people(db_engine) == [MFID]
-    with Session(db_engine) as session:
-        assert session.exec(select(ApiToken.user_unique_id)).all() == [MFID]
-
-
-def test_regenerate_gives_an_mfid_person_their_own_key(db_engine, lookup_on):
-    person(db_engine, MFID, ORCID_ISSUER, ORCID, email="ada@example.org")
-    assert apikey("/auth/apikey/regenerate", "post").status_code == 200
-    with Session(db_engine) as session:
-        assert session.exec(select(ApiToken.user_unique_id)).all() == [MFID]
-
-
-def test_email_prompt_updates_the_person_by_unique_id_and_shows_the_orcid(db_engine, lookup_on):
-    person(db_engine, MFID, ORCID_ISSUER, ORCID)
-    response = apikey()
-    assert f"/users/{MFID}" in response.text
-    assert f'value="{ORCID}"' in response.text
-
-
-def test_apikey_page_refuses_an_unlinked_orcid(db_engine, lookup_on):
-    person(db_engine, ORCID)
-    assert apikey().status_code == 409
-    with Session(db_engine) as session:
-        assert session.exec(select(ApiToken)).all() == []
-        assert session.exec(select(AuthEvent.event)).all() == ["provider_refused"]

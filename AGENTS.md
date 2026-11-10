@@ -7,7 +7,7 @@ FastAPI and SQLModel service for the Molecular Foundry's scientific records. The
 - Install: `uv sync --locked`
 - Tests: `uv run pytest -q`. PostgreSQL tests skip unless `CRUCIBLE_TEST_PG_URL` is set, and S3 tests unless `S3_TEST_ENDPOINTS` is set (see `.github/workflows/tests.yml`).
 - One migration head: `uv run alembic heads` prints a single revision.
-- Server commands: `python -m app.cli` (`db upgrade`, `db sequences`, `settings check`, `storage check`, `storage cleanup`, `files restore`, `admin create`); `--help` lists the rest.
+- Server commands: `python -m app.cli` (`db upgrade`, `db sequences`, `identity backfill`, `settings check`, `storage check`, `storage cleanup`, `files restore`, `admin create`); `--help` lists the rest.
 
 ## Layout
 

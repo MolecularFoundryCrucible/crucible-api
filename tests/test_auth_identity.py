@@ -1,8 +1,6 @@
 from tests.test_hub_tokens import ORCID_PROVIDER
-import importlib.util
 import os
 import uuid
-from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -343,15 +341,15 @@ def seed_for_backfill(engine):
 
 
 def load_backfill():
-    path = Path(__file__).resolve().parents[1] / "migrations/data/20261103_backfill_user_identity.py"
-    spec = importlib.util.spec_from_file_location("backfill_user_identity", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from app.auth import identity_backfill
+
+    return identity_backfill
 
 
 def run_backfill(*args):
-    return load_backfill().main(list(args))
+    from app.cli.__main__ import main
+
+    return main(["identity", "backfill", *args])
 
 
 def test_backfill_requires_the_issuer():
@@ -433,7 +431,7 @@ def test_backfill_covers_every_batch(db_engine, capsys, monkeypatch):
     add_orcid_users(db_engine, 0, 7)
     module = load_backfill()
     monkeypatch.setattr(module, "BATCH_SIZE", 3)
-    assert module.main(["--issuer", ISSUER, "--commit"]) == 0
+    assert run_backfill("--issuer", ISSUER, "--commit") == 0
     assert "added: 7" in capsys.readouterr().out
     assert len(identities(db_engine)) == 7
 

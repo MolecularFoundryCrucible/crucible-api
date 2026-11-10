@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `python -m app.cli identity backfill --issuer URL [--commit]` records a login for each person whose identifier is an ORCID; it replaces the script `migrations/data/20261103_backfill_user_identity.py`, which is not in the image and now forwards to it.
 - `python -m app.cli db sequences [--commit]` reports id sequences that are behind their tables, which makes inserts fail with a 500 after rows are loaded with their own ids, and moves them up.
 - `GET /account/auth-events` shows people their own sign-in history, in the same shape as the administrators' route.
 - `sign_in_methods` is now also filled for the person themselves, on `GET /account/profile` and `GET /users/{user_ref}`, so a client can tell whether they have a password before offering to set, change or remove one. No migration.
@@ -58,6 +59,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Compose bundle: `CRUCIBLE_AUTH_IDENTITY_LOOKUP` is on by default, so people on a new installation can link another way to sign in; an installation upgraded from 3.x with ORCID users runs `python -m app.cli identity backfill` right after upgrading.
 - Providers send the browser back to `<API>/oauth/callback/{key}`; register that address with each provider. `legacy_callback: true` keeps `<API>/auth/hub/callback` for an ORCID application registered before 4.0.0, and the bundle's `ORCID_LEGACY_CALLBACK=true` selects it.
 - The Hub's `/auth/hub/login`, `/token`, `/refresh`, `/revoke` and `/callback` are deprecated wrappers around `/oauth/authorize`, `/oauth/token`, `/oauth/revoke` and the provider callback; they go once Hub 1.8.0 is deployed.
 - `POST /oauth/token` also returns `refresh_expires_in` (seconds until the session ends) and `user_unique_id`.

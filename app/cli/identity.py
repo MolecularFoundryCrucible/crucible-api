@@ -19,6 +19,14 @@ def register(groups: argparse._SubParsersAction) -> None:
     move.add_argument("--to", required=True, dest="target", help="The right account: unique_id, linked ORCID, username or email")
     move.add_argument("--yes", action="store_true", help="Move without asking; required when there is no terminal")
     move.set_defaults(handler=_run_move)
+    backfill = commands.add_parser(
+        "backfill",
+        help="Record a login for each person whose identifier is an ORCID; run once after upgrading from 3.x",
+        description="Adds a user_identity row for each person whose identifier is an ORCID. A dry run unless --commit is given; safe to run again.",
+    )
+    backfill.add_argument("--issuer", required=True, help="The ORCID issuer these identifiers belong to, such as https://orcid.org")
+    backfill.add_argument("--commit", action="store_true", help="Write the rows; without it nothing is changed")
+    backfill.set_defaults(handler=_run_backfill)
 
 
 def _run_move(args: argparse.Namespace) -> int:
@@ -49,3 +57,16 @@ def _run_move(args: argparse.Namespace) -> int:
         session.commit()
         print(f"Moved the login to {target.username or target.unique_id}; switched off {source.username or source.unique_id}", file=sys.stderr)
     return 0
+
+
+def _run_backfill(args: argparse.Namespace) -> int:
+    from app.auth.identity_backfill import backfill
+    from app.tables import ORCID_ISSUERS
+
+    if args.issuer not in ORCID_ISSUERS:
+        print(f"--issuer must be one of: {', '.join(ORCID_ISSUERS)}")
+        return 1
+    counts = backfill(args.issuer, args.commit)
+    new = f"added: {counts['new']}" if args.commit else f"dry run, would add: {counts['new']}"
+    print(f"{new}, already linked: {counts['linked']}, not an ORCID: {counts['not_orcid']}, service accounts: {counts['service']}, conflicts: {counts['conflicts']}")
+    return 1 if counts["conflicts"] else 0

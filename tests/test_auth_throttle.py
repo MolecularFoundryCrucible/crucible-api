@@ -302,17 +302,17 @@ def test_address_is_stored_only_as_a_keyed_hash(engine):
 
 
 def test_address_row_removed_after_30_days(engine, use_engine):
-    from app.utils.hub_auth_maintenance import cleanup_hub_auth
+    from app.auth.cleanup import cleanup_sign_in_records
 
     from tests.conftest import TEST_TABLES
 
     attempt(engine, None, address="203.0.113.7")
-    from app.tables import AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily
+    from app.tables import AuthEvent, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily
 
-    SQLModel.metadata.create_all(engine, tables=list(dict.fromkeys(TEST_TABLES + [model.__table__ for model in (AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, DeviceAuthorization)])))
-    counts = cleanup_hub_auth(engine, commit=True, now=NOW + timedelta(days=29))
+    SQLModel.metadata.create_all(engine, tables=list(dict.fromkeys(TEST_TABLES + [model.__table__ for model in (AuthEvent, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, DeviceAuthorization)])))
+    counts = cleanup_sign_in_records(engine, commit=True, now=NOW + timedelta(days=29))
     assert counts["login_throttle"] == 0
-    counts = cleanup_hub_auth(engine, commit=True, now=NOW + timedelta(days=31))
+    counts = cleanup_sign_in_records(engine, commit=True, now=NOW + timedelta(days=31))
     assert counts["login_throttle"] == 1
 
 

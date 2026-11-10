@@ -15,9 +15,9 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, select
 
 from app.api.dependencies import get_engine
-from app.api.routes import hub_auth as routes
+from app.api.routes import browser_sign_in as routes
 from app.config import get_settings
-from app.tables import HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserIdentity
+from app.tables import AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User, UserIdentity
 
 API_URL = "http://localhost:7777"
 HUB_CALLBACK = "http://localhost:3000/hub/auth/callback"
@@ -116,7 +116,7 @@ def seen(monkeypatch):
 
 @pytest.fixture
 def api(db_engine, monkeypatch, seen):
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginCode, HubLoginTransaction, HubTokenFamily, HubRefreshToken, HubAccessToken)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginCode, LoginTransaction, TokenFamily, RefreshToken, AccessToken)])
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_ID", "crucible-hub")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret-padded-to-at-least-32-chars00")

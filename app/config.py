@@ -382,7 +382,7 @@ class AuthSettings(SettingsGroup):
         return next((provider for provider in self.providers if provider.is_orcid), None)
 
     @property
-    def hub_callback_provider(self) -> OidcProvider | None:
+    def legacy_callback_provider(self) -> OidcProvider | None:
         return next((provider for provider in self.providers if provider.legacy_callback), None)
 
     def provider(self, key: str) -> OidcProvider | None:
@@ -669,11 +669,11 @@ def check_settings() -> None:
         raise ConfigurationError(f"Missing required settings: {', '.join(found)}")
     settings = get_settings()
     if settings.auth.password_enabled:
-        from app.utils.hub_login import HubLoginUnavailable, public_api_url
+        from app.auth.login_transactions import SignInUnavailable, public_api_url
 
         try:
             public_api_url()
-        except (HubLoginUnavailable, ConfigurationError):
+        except (SignInUnavailable, ConfigurationError):
             raise ConfigurationError("CRUCIBLE_AUTH_PASSWORD_ENABLED needs an https:// public API address (http:// only on localhost), so passwords never cross the network in the clear") from None
     _warn_about_plain_http(settings)
     if settings.auth.password_registration == "open":

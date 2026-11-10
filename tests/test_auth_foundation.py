@@ -7,8 +7,8 @@ from sqlmodel import Session, select
 
 from app.auth.events import AuthEventType, record_event
 from app.auth.identity import orcid_of
-from app.tables import AccessGroup, AuthEvent, HubLoginTransaction, User, UserIdentity
-from app.tables import HubLoginCode
+from app.tables import AccessGroup, AuthEvent, LoginTransaction, User, UserIdentity
+from app.tables import LoginCode
 from app.utils.user_utils import generate_unique_username, provision_user
 from tests.test_hub_tokens import ORCID_PROVIDER
 from sqlmodel import SQLModel
@@ -147,16 +147,16 @@ def test_provision_reuses_an_existing_identity_group(db_engine):
 
 @pytest.fixture
 def hub_tables(db_engine):
-    SQLModel.metadata.create_all(db_engine, tables=[HubLoginCode.__table__, HubLoginTransaction.__table__])
+    SQLModel.metadata.create_all(db_engine, tables=[LoginCode.__table__, LoginTransaction.__table__])
 
 
 def login_record(state="s"):
     now = datetime.now(timezone.utc)
-    return HubLoginTransaction(state_hash=state, browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=now, expires_at=now + timedelta(minutes=10))
+    return LoginTransaction(state_hash=state, browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=now, expires_at=now + timedelta(minutes=10))
 
 
 def test_new_person_from_hub_sign_in_gets_a_username_and_identity_group(db_engine, hub_tables):
-    from app.utils.hub_login import create_handoff_code
+    from app.auth.login_transactions import create_handoff_code
 
     create_handoff_code(db_engine, login_record(), ORCID_PROVIDER, ORCID, "Ada", "Lovelace")
     with Session(db_engine) as session:
@@ -166,7 +166,7 @@ def test_new_person_from_hub_sign_in_gets_a_username_and_identity_group(db_engin
 
 
 def test_existing_person_from_hub_sign_in_keeps_having_no_username(db_engine, hub_tables):
-    from app.utils.hub_login import create_handoff_code
+    from app.auth.login_transactions import create_handoff_code
 
     with Session(db_engine) as session:
         session.add(User(unique_id=ORCID, first_name="Ada", last_name="Lovelace"))
@@ -177,7 +177,7 @@ def test_existing_person_from_hub_sign_in_keeps_having_no_username(db_engine, hu
 
 
 def test_existing_person_from_hub_sign_in_only_fills_empty_names(db_engine, hub_tables):
-    from app.utils.hub_login import create_handoff_code
+    from app.auth.login_transactions import create_handoff_code
 
     with Session(db_engine) as session:
         session.add(User(unique_id=ORCID, first_name="Kept", last_name=""))

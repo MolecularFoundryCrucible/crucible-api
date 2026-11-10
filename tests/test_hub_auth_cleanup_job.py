@@ -28,7 +28,7 @@ def test_cleanup_cli_batch_limit(script, monkeypatch, capsys, commit):
     engine = Mock()
     cleanup = Mock(return_value={"hubaccesstoken": 1})
     monkeypatch.setattr(script, "setup_engine", Mock(return_value=engine))
-    monkeypatch.setattr(script, "cleanup_hub_auth", cleanup)
+    monkeypatch.setattr(script, "cleanup_sign_in_records", cleanup)
     monkeypatch.setattr("sys.argv", ["cleanup", "--batches", "2"] + (["--commit"] if commit else []))
     script.main()
     assert cleanup.call_count == (2 if commit else 1)
@@ -41,7 +41,7 @@ def test_cleanup_cli_stops_on_empty_batch(script, monkeypatch):
     engine = Mock()
     cleanup = Mock(return_value={"hubaccesstoken": 0})
     monkeypatch.setattr(script, "setup_engine", Mock(return_value=engine))
-    monkeypatch.setattr(script, "cleanup_hub_auth", cleanup)
+    monkeypatch.setattr(script, "cleanup_sign_in_records", cleanup)
     monkeypatch.setattr("sys.argv", ["cleanup", "--commit", "--batches", "10"])
     script.main()
     assert cleanup.call_count == 1
@@ -52,7 +52,7 @@ def test_cleanup_cli_failure_does_not_log_sensitive_exception(script, monkeypatc
     engine = Mock()
     error = RuntimeError("sensitive-connection-details")
     monkeypatch.setattr(script, "setup_engine", Mock(side_effect=error) if during_setup else Mock(return_value=engine))
-    monkeypatch.setattr(script, "cleanup_hub_auth", Mock(side_effect=error))
+    monkeypatch.setattr(script, "cleanup_sign_in_records", Mock(side_effect=error))
     monkeypatch.setattr("sys.argv", ["cleanup", "--commit"])
     with pytest.raises(SystemExit) as result:
         script.main()

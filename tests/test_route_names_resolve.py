@@ -21,7 +21,7 @@ pyflakes_api = pytest.importorskip(
     "pyflakes.api", reason="pyflakes is a dev dependency; see pyproject.toml")
 from pyflakes.reporter import Reporter  # noqa: E402
 
-CHECKED_DIRS = ["app/api/routes", "app/utils", "app/models"]
+CHECKED_DIRS = ["app/api/routes", "app/utils", "app/models", "app/auth", "app/services"]
 FILES = sorted([*(p for d in CHECKED_DIRS for p in pathlib.Path(d).glob("*.py")), pathlib.Path("app/tables.py")])
 
 # Unused imports and star-import noise are style, not breakage. Only names

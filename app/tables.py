@@ -425,7 +425,8 @@ class UserRecentResource(SQLModel, table=True):
     viewed_at: datetime = Field(sa_type=DateTime(timezone=True))
 
 
-class HubTokenFamily(SQLModel, table=True):
+class TokenFamily(SQLModel, table=True):
+    __tablename__ = "hubtokenfamily"
     __table_args__ = (Index("ix_hubtokenfamily_expiry", "expires_at", "id"),)
 
     id: str = Field(primary_key=True, max_length=36)
@@ -460,7 +461,8 @@ class DeviceAuthorization(SQLModel, table=True):
     requested_from: Optional[str] = Field(default=None, max_length=45)
 
 
-class HubRefreshToken(SQLModel, table=True):
+class RefreshToken(SQLModel, table=True):
+    __tablename__ = "hubrefreshtoken"
     token_hash: str = Field(primary_key=True, max_length=64)
     family_id: str = Field(foreign_key="hubtokenfamily.id", index=True)
     generation: int
@@ -469,7 +471,8 @@ class HubRefreshToken(SQLModel, table=True):
     retired_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
 
 
-class HubAccessToken(SQLModel, table=True):
+class AccessToken(SQLModel, table=True):
+    __tablename__ = "hubaccesstoken"
     __table_args__ = (Index("ix_hubaccesstoken_expiry", "expires_at", "token_hash"),)
 
     token_hash: str = Field(primary_key=True, max_length=64)
@@ -478,7 +481,8 @@ class HubAccessToken(SQLModel, table=True):
     expires_at: datetime = Field(sa_type=DateTime(timezone=True))
 
 
-class HubLoginTransaction(SQLModel, table=True):
+class LoginTransaction(SQLModel, table=True):
+    __tablename__ = "hublogintransaction"
     __table_args__ = (Index("ix_hublogintransaction_expiry", "expires_at", "state_hash"),)
 
     state_hash: str = Field(primary_key=True, max_length=64)
@@ -500,7 +504,8 @@ class HubLoginTransaction(SQLModel, table=True):
     consumed_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
 
 
-class HubLoginCode(SQLModel, table=True):
+class LoginCode(SQLModel, table=True):
+    __tablename__ = "hublogincode"
     __table_args__ = (Index("ix_hublogincode_expiry", "expires_at", "code_hash"),)
 
     code_hash: str = Field(primary_key=True, max_length=64)

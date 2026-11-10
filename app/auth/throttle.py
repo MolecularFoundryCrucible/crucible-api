@@ -258,11 +258,11 @@ def _record_failure(engine, decision: AttemptDecision) -> None:
     Attempts refused before checking are not recorded, so the limits also bound the history."""
     from app.auth.events import AuthEventType, record_event
     from app.tables import User
-    from app.utils.hub_login import HubLoginUnavailable, public_api_url
+    from app.auth.login_transactions import SignInUnavailable, public_api_url
 
     try:
         issuer = public_api_url()
-    except HubLoginUnavailable:
+    except SignInUnavailable:
         issuer = None
     with Session(engine) as session, session.begin():
         user = session.get(User, decision.user_id)

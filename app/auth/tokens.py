@@ -8,7 +8,7 @@ from sqlalchemy import func, update
 from sqlmodel import Session, select
 
 from app.auth.clients import client_by_id
-from app.tables import HubAccessToken, HubRefreshToken, HubTokenFamily, User
+from app.tables import AccessToken, RefreshToken, TokenFamily, User
 
 
 ACCESS_LIFETIME = timedelta(minutes=15)
@@ -32,12 +32,12 @@ ACCESS_PREFIX = "chba_"
 REFRESH_PREFIX = "chbr_"
 
 
-class InvalidHubGrant(Exception):
+class InvalidGrant(Exception):
     pass
 
 
 @dataclass(frozen=True)
-class HubTokenPair:
+class TokenPair:
     access_token: str
     refresh_token: str
     access_expires_at: datetime
@@ -46,18 +46,18 @@ class HubTokenPair:
     auth_time: datetime | None = None
 
 
-def _may_hold_hub_tokens(user: User | None) -> bool:
+def _may_hold_tokens(user: User | None) -> bool:
     return user is not None and not user.is_service_account and user.disabled_at is None and user.pending_at is None
 
 
-def _holder(session: Session, family: HubTokenFamily) -> User | None:
+def _holder(session: Session, family: TokenFamily) -> User | None:
     return session.get(User, family.user_id) if family.user_id is not None else None
 
 
-def revoke_all_hub_tokens(session: Session, user_id: int, *, now: datetime | None = None, except_family_id: str | None = None) -> None:
+def revoke_all_tokens(session: Session, user_id: int, *, now: datetime | None = None, except_family_id: str | None = None) -> None:
     """End every Hub session of this person, or every one but `except_family_id`, in the caller's transaction."""
     current = _now(now)
-    for family in session.exec(select(HubTokenFamily).where(HubTokenFamily.user_id == user_id, HubTokenFamily.revoked_at == None, HubTokenFamily.id != except_family_id).with_for_update()).all():  # noqa: E711
+    for family in session.exec(select(TokenFamily).where(TokenFamily.user_id == user_id, TokenFamily.revoked_at == None, TokenFamily.id != except_family_id).with_for_update()).all():  # noqa: E711
         family.revoked_at = current
         session.add(family)
 
@@ -78,11 +78,11 @@ def _token(prefix: str) -> str:
     return prefix + secrets.token_urlsafe(48)
 
 
-def _issue_access(session: Session, family: HubTokenFamily, now: datetime) -> tuple[str, datetime]:
+def _issue_access(session: Session, family: TokenFamily, now: datetime) -> tuple[str, datetime]:
     token = _token(ACCESS_PREFIX)
     expires_at = min(now + ACCESS_LIFETIME, _aware(family.expires_at))
     session.add(
-        HubAccessToken(
+        AccessToken(
             token_hash=_digest(token),
             family_id=family.id,
             issued_at=now,
@@ -92,19 +92,19 @@ def _issue_access(session: Session, family: HubTokenFamily, now: datetime) -> tu
     return token, expires_at
 
 
-def issue_hub_tokens(engine, user_id: int, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None, grant_type: str = AUTHORIZATION_CODE) -> HubTokenPair:
+def issue_tokens(engine, user_id: int, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None, grant_type: str = AUTHORIZATION_CODE) -> TokenPair:
     with Session(engine) as session, session.begin():
-        return issue_hub_tokens_in_session(session, user_id, client_id, now=now, auth_time=auth_time, grant_type=grant_type)
+        return issue_tokens_in_session(session, user_id, client_id, now=now, auth_time=auth_time, grant_type=grant_type)
 
 
-def issue_hub_tokens_in_session(
+def issue_tokens_in_session(
     session: Session, user_id: int, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None, grant_type: str = AUTHORIZATION_CODE,
-) -> HubTokenPair:
+) -> TokenPair:
     current = _now(now)
     user = session.get(User, user_id)
-    if not _may_hold_hub_tokens(user):
-        raise InvalidHubGrant
-    family = HubTokenFamily(
+    if not _may_hold_tokens(user):
+        raise InvalidGrant
+    family = TokenFamily(
         id=str(uuid.uuid4()),
         user_id=user.id,
         user_unique_id=user.unique_id,
@@ -119,7 +119,7 @@ def issue_hub_tokens_in_session(
     session.flush()
     refresh_token = _token(REFRESH_PREFIX)
     session.add(
-        HubRefreshToken(
+        RefreshToken(
             token_hash=_digest(refresh_token),
             family_id=family.id,
             generation=0,
@@ -127,7 +127,7 @@ def issue_hub_tokens_in_session(
         )
     )
     access_token, access_expires_at = _issue_access(session, family, current)
-    return HubTokenPair(
+    return TokenPair(
         access_token=access_token,
         refresh_token=refresh_token,
         access_expires_at=access_expires_at,
@@ -137,38 +137,38 @@ def issue_hub_tokens_in_session(
     )
 
 
-def _reusable(session: Session, token: HubRefreshToken, now: datetime) -> bool:
+def _reusable(session: Session, token: RefreshToken, now: datetime) -> bool:
     """A spent token may be used again for REUSE_GRACE if its holder used it and it is the one just
     before the newest, so two processes refreshing at once, or a retry after a lost response, do not
     end the session. A token retired because a sibling was used gets no grace, so a copied token
     cannot keep renewing itself beside the owner's. Any older token still ends the session."""
     if token.retired_at is not None or now - _aware(token.spent_at) > REUSE_GRACE:
         return False
-    newest = session.exec(select(func.max(HubRefreshToken.generation)).where(HubRefreshToken.family_id == token.family_id)).one()
+    newest = session.exec(select(func.max(RefreshToken.generation)).where(RefreshToken.family_id == token.family_id)).one()
     return token.generation == newest - 1
 
 
-def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datetime | None = None) -> HubTokenPair:
+def refresh_tokens(engine, refresh_token: str, client_id: str, *, now: datetime | None = None) -> TokenPair:
     if not refresh_token.startswith(REFRESH_PREFIX):
-        raise InvalidHubGrant
+        raise InvalidGrant
     current = _now(now)
     token_hash = _digest(refresh_token)
     replayed = False
     result = None
     with Session(engine) as session, session.begin():
-        initial_token = session.get(HubRefreshToken, token_hash)
+        initial_token = session.get(RefreshToken, token_hash)
         if initial_token is None:
-            raise InvalidHubGrant
+            raise InvalidGrant
         family = session.exec(
-            select(HubTokenFamily)
-            .where(HubTokenFamily.id == initial_token.family_id)
+            select(TokenFamily)
+            .where(TokenFamily.id == initial_token.family_id)
             .with_for_update()
         ).one_or_none()
         if family is None or family.client_id != client_id or family.revoked_at is not None:
-            raise InvalidHubGrant
+            raise InvalidGrant
         token = session.exec(
-            select(HubRefreshToken)
-            .where(HubRefreshToken.token_hash == token_hash)
+            select(RefreshToken)
+            .where(RefreshToken.token_hash == token_hash)
             .with_for_update()
             .execution_options(populate_existing=True)
         ).one()
@@ -179,20 +179,20 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
             family.revoked_at = current
         else:
             user = _holder(session, family)
-            if not _may_hold_hub_tokens(user):
+            if not _may_hold_tokens(user):
                 family.revoked_at = current
             else:
                 if token.spent_at is None:
                     token.spent_at = current
                     # Tokens issued in the grace window share a generation: using one retires the rest.
-                    session.execute(update(HubRefreshToken).where(
-                        HubRefreshToken.family_id == family.id, HubRefreshToken.generation == token.generation, HubRefreshToken.spent_at == None,  # noqa: E711
-                        HubRefreshToken.token_hash != token.token_hash,
+                    session.execute(update(RefreshToken).where(
+                        RefreshToken.family_id == family.id, RefreshToken.generation == token.generation, RefreshToken.spent_at == None,  # noqa: E711
+                        RefreshToken.token_hash != token.token_hash,
                     ).values(spent_at=current, retired_at=current).execution_options(synchronize_session=False))
                 family.last_refreshed_at = current
                 next_refresh = _token(REFRESH_PREFIX)
                 session.add(
-                    HubRefreshToken(
+                    RefreshToken(
                         token_hash=_digest(next_refresh),
                         family_id=family.id,
                         generation=token.generation + 1,
@@ -200,7 +200,7 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
                     )
                 )
                 access_token, access_expires_at = _issue_access(session, family, current)
-                result = HubTokenPair(
+                result = TokenPair(
                     access_token=access_token,
                     refresh_token=next_refresh,
                     access_expires_at=access_expires_at,
@@ -209,37 +209,37 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
                     auth_time=_aware(family.auth_time) if family.auth_time else None,
                 )
     if replayed or result is None:
-        raise InvalidHubGrant
+        raise InvalidGrant
     return result
 
 
-def hub_access_user(session: Session, access_token: str, *, now: datetime | None = None) -> int:
-    return hub_access_family(session, access_token, now=now).user_id
+def access_token_user(session: Session, access_token: str, *, now: datetime | None = None) -> int:
+    return access_token_family(session, access_token, now=now).user_id
 
 
-def hub_access_family(session: Session, access_token: str, *, now: datetime | None = None) -> HubTokenFamily:
+def access_token_family(session: Session, access_token: str, *, now: datetime | None = None) -> TokenFamily:
     if not access_token.startswith(ACCESS_PREFIX):
-        raise InvalidHubGrant
+        raise InvalidGrant
     current = _now(now)
-    token = session.get(HubAccessToken, _digest(access_token))
+    token = session.get(AccessToken, _digest(access_token))
     if token is None or current >= _aware(token.expires_at):
-        raise InvalidHubGrant
-    family = session.get(HubTokenFamily, token.family_id)
+        raise InvalidGrant
+    family = session.get(TokenFamily, token.family_id)
     if family is None or family.revoked_at is not None or current >= _aware(family.expires_at):
-        raise InvalidHubGrant
+        raise InvalidGrant
     if client_by_id(family.client_id) is None:
-        raise InvalidHubGrant
+        raise InvalidGrant
     user = _holder(session, family)
-    if not _may_hold_hub_tokens(user):
-        raise InvalidHubGrant
+    if not _may_hold_tokens(user):
+        raise InvalidGrant
     return family
 
 
-def revoke_hub_tokens(engine, credential: str, client_id: str, *, now: datetime | None = None) -> None:
+def revoke_tokens(engine, credential: str, client_id: str, *, now: datetime | None = None) -> None:
     if credential.startswith(ACCESS_PREFIX):
-        model = HubAccessToken
+        model = AccessToken
     elif credential.startswith(REFRESH_PREFIX):
-        model = HubRefreshToken
+        model = RefreshToken
     else:
         return
     with Session(engine) as session, session.begin():
@@ -247,8 +247,8 @@ def revoke_hub_tokens(engine, credential: str, client_id: str, *, now: datetime 
         if token is None:
             return
         family = session.exec(
-            select(HubTokenFamily)
-            .where(HubTokenFamily.id == token.family_id)
+            select(TokenFamily)
+            .where(TokenFamily.id == token.family_id)
             .with_for_update()
         ).one_or_none()
         if family is not None and family.client_id == client_id and family.revoked_at is None:

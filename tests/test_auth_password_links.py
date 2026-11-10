@@ -20,12 +20,12 @@ from app.auth.passwords import store_password
 from app.auth.throttle import attempt_password
 from app.cli import admin as admin_cli
 from app.tables import (
-    AuthEvent, DeviceAuthorization, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential, LoginThrottle,
+    AuthEvent, DeviceAuthorization, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, LocalCredential, LoginThrottle,
     PasswordToken, User,
 )
 from app.utils import auth_utils
 from app.utils.auth_utils import authenticate_user
-from app.utils.hub_tokens import DEVICE_CODE, issue_hub_tokens
+from app.auth.tokens import DEVICE_CODE, issue_tokens
 from app.utils.permissions import PlatformRole
 
 API_URL = "http://localhost:7777"
@@ -44,7 +44,7 @@ def people(db_engine, hub_client_registered, orcid_provider_settings, monkeypatc
     orcid_provider_settings()
     monkeypatch.setattr(routes, "get_api_root_path", lambda: "")
     SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (
-        LocalCredential, LoginThrottle, PasswordToken, HubTokenFamily, HubRefreshToken, HubAccessToken, HubLoginCode, HubLoginTransaction, DeviceAuthorization,
+        LocalCredential, LoginThrottle, PasswordToken, TokenFamily, RefreshToken, AccessToken, LoginCode, LoginTransaction, DeviceAuthorization,
     )])
     with Session(db_engine) as session:
         session.add(User(unique_id=ADA, username="ada.lovelace", first_name="Ada", last_name="Lovelace", email="ada@example.org"))
@@ -68,7 +68,7 @@ def row(engine, unique_id):
 
 
 def sign_in(engine, unique_id, *, grant_type="authorization_code"):
-    return issue_hub_tokens(engine, row(engine, unique_id).id, "crucible-hub", auth_time=datetime.now(timezone.utc), grant_type=grant_type).access_token
+    return issue_tokens(engine, row(engine, unique_id).id, "crucible-hub", auth_time=datetime.now(timezone.utc), grant_type=grant_type).access_token
 
 
 def as_admin_key(auth_as, unique_id=BOSS):
@@ -138,7 +138,7 @@ def test_setting_a_password_uses_the_link_once_and_signs_nobody_in(client, peopl
     assert done.status_code == 200 and "Password set" in done.text
     assert "set-cookie" in done.headers and "crucible_password_link=" in done.headers["set-cookie"]
     with Session(people) as session:
-        assert session.exec(select(HubTokenFamily)).all() == []
+        assert session.exec(select(TokenFamily)).all() == []
         assert session.exec(select(AuthEvent.event).order_by(AuthEvent.id)).all() == ["link_issued", "password_set"]
     assert attempt_password(people, row(people, ADA).id, NEW, None)
     assert client.get(url.removeprefix(API_URL), follow_redirects=False).status_code == 400
@@ -152,7 +152,7 @@ def test_a_reset_clears_the_lock_and_ends_sessions_codes_and_device_approvals(cl
         credential = store_password(session, session.get(User, ada.id), "an old password nobody remembers")
         credential.locked_at = datetime.now(timezone.utc)
         credential.failed_attempts = 50
-        session.add(HubLoginCode(code_hash="c" * 64, user_unique_id=ADA, user_id=ada.id, client_id="crucible-hub", callback_uri="https://hub.example/cb",
+        session.add(LoginCode(code_hash="c" * 64, user_unique_id=ADA, user_id=ada.id, client_id="crucible-hub", callback_uri="https://hub.example/cb",
                                  code_challenge="x" * 43, created_at=datetime.now(timezone.utc), expires_at=datetime.now(timezone.utc) + timedelta(minutes=1)))
         session.add(DeviceAuthorization(device_code_hash="d" * 64, user_code_hash="u" * 64, client_id="nano-crucible", created_at=datetime.now(timezone.utc),
                                         expires_at=datetime.now(timezone.utc) + timedelta(minutes=5), user_id=ada.id, approved_at=datetime.now(timezone.utc)))
@@ -168,7 +168,7 @@ def test_a_reset_clears_the_lock_and_ends_sessions_codes_and_device_approvals(cl
     with Session(people) as session:
         credential = session.get(LocalCredential, ada.id)
         assert (credential.locked_at, credential.failed_attempts, credential.blocked_until) == (None, 0, None)
-        assert session.get(HubLoginCode, "c" * 64).consumed_at is not None
+        assert session.get(LoginCode, "c" * 64).consumed_at is not None
         assert session.get(DeviceAuthorization, "d" * 64).denied_at is not None
         assert session.exec(select(AuthEvent.event).order_by(AuthEvent.id.desc())).first() == "password_reset"
     assert attempt_password(people, ada.id, NEW, None)
@@ -309,12 +309,12 @@ def test_the_command_prints_a_link_that_lets_a_locked_out_admin_back_in(client, 
 
 
 def test_cleanup_removes_links_a_day_after_they_expire(client, people, auth_as):
-    from app.utils.hub_auth_maintenance import cleanup_hub_auth
+    from app.auth.cleanup import cleanup_sign_in_records
 
     as_admin_key(auth_as)
     issue(client)
-    assert cleanup_hub_auth(people, commit=True, now=datetime.now(timezone.utc) + timedelta(hours=30))["password_token"] == 0
-    assert cleanup_hub_auth(people, commit=True, now=datetime.now(timezone.utc) + timedelta(hours=49))["password_token"] == 1
+    assert cleanup_sign_in_records(people, commit=True, now=datetime.now(timezone.utc) + timedelta(hours=30))["password_token"] == 0
+    assert cleanup_sign_in_records(people, commit=True, now=datetime.now(timezone.utc) + timedelta(hours=49))["password_token"] == 1
 
 
 @pytest.mark.parametrize("hours", ["0", "-1", "169"])

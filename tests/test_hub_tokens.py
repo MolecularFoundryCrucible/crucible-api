@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.api.dependencies import get_engine
-from app.api.routes.hub_auth import router as hub_auth_router
+from app.api.routes.browser_sign_in import router as hub_auth_router
 from app.tables import (
     DeviceAuthorization,
     PasswordToken,
@@ -18,28 +18,28 @@ from app.tables import (
     ApiKey,
     ApiToken,
     AuthEvent,
-    HubAccessToken,
-    HubLoginCode,
-    HubLoginTransaction,
-    HubRefreshToken,
-    HubTokenFamily,
+    AccessToken,
+    LoginCode,
+    LoginTransaction,
+    RefreshToken,
+    TokenFamily,
     User,
     UserAccessGroupLink,
     UserIdentity,
 )
 from tests.hub_clients import HUB_TEST_CALLBACK, hub_login_config
 import app.utils.auth_utils as auth_utils
-from app.utils.hub_tokens import (
-    InvalidHubGrant,
-    hub_access_user,
-    issue_hub_tokens,
-    refresh_hub_tokens,
-    revoke_hub_tokens,
+from app.auth.tokens import (
+    InvalidGrant,
+    access_token_user,
+    issue_tokens,
+    refresh_tokens,
+    revoke_tokens,
 )
 from app.auth.providers import VerifiedIdentity
 from app.config import OidcProvider
-from app.utils.hub_login import (
-    InvalidHubLogin, create_handoff_code, create_login,
+from app.auth.login_transactions import (
+    InvalidLoginRequest, create_handoff_code, create_login,
     consume_login, exchange_handoff_code,
 )
 from tests.people import internal_id
@@ -57,27 +57,27 @@ ORCID_PROVIDER = OidcProvider(
 
 
 def test_cleanup_preserves_refresh_replay_history_and_defaults_to_dry_run(engine):
-    from app.utils.hub_auth_maintenance import cleanup_hub_auth
+    from app.auth.cleanup import cleanup_sign_in_records
 
-    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
-    refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
-    preview = cleanup_hub_auth(engine, now=NOW + timedelta(days=31))
+    first = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
+    preview = cleanup_sign_in_records(engine, now=NOW + timedelta(days=31))
     assert preview["hubtokenfamily"] == 1
     with Session(engine) as session:
-        assert len(session.exec(select(HubRefreshToken)).all()) == 2
-    cleanup_hub_auth(engine, commit=True, now=NOW + timedelta(days=1))
+        assert len(session.exec(select(RefreshToken)).all()) == 2
+    cleanup_sign_in_records(engine, commit=True, now=NOW + timedelta(days=1))
     with Session(engine) as session:
-        assert session.exec(select(HubAccessToken)).all() == []
-        assert len(session.exec(select(HubRefreshToken)).all()) == 2
-    cleanup_hub_auth(engine, commit=True, now=NOW + timedelta(days=31))
+        assert session.exec(select(AccessToken)).all() == []
+        assert len(session.exec(select(RefreshToken)).all()) == 2
+    cleanup_sign_in_records(engine, commit=True, now=NOW + timedelta(days=31))
     with Session(engine) as session:
-        assert session.exec(select(HubTokenFamily)).all() == []
-        assert session.exec(select(HubRefreshToken)).all() == []
+        assert session.exec(select(TokenFamily)).all() == []
+        assert session.exec(select(RefreshToken)).all() == []
 
 
 def access_user(engine, token, *, now):
     with Session(engine) as session:
-        return session.get(User, hub_access_user(session, token, now=now)).unique_id
+        return session.get(User, access_token_user(session, token, now=now)).unique_id
 
 
 @pytest.fixture
@@ -91,8 +91,8 @@ def engine():
         engine,
         tables=[
             User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, ApiKey.__table__, AuthEvent.__table__,
-            LoginThrottle.__table__, DeviceAuthorization.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__,
-            HubLoginTransaction.__table__, HubLoginCode.__table__, UserIdentity.__table__, PasswordToken.__table__,
+            LoginThrottle.__table__, DeviceAuthorization.__table__, TokenFamily.__table__, RefreshToken.__table__, AccessToken.__table__,
+            LoginTransaction.__table__, LoginCode.__table__, UserIdentity.__table__, PasswordToken.__table__,
         ],
     )
     with Session(engine) as session:
@@ -104,12 +104,12 @@ def engine():
 
 
 def test_issue_refresh_and_access_expiry(engine):
-    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    first = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
     assert access_user(engine, first.access_token, now=NOW) == first.user_unique_id
-    with pytest.raises(InvalidHubGrant):
+    with pytest.raises(InvalidGrant):
         access_user(engine, first.access_token, now=NOW + timedelta(minutes=15))
 
-    second = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=14))
+    second = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=14))
     assert first.refresh_token != second.refresh_token
     assert first.access_token != second.access_token
     assert second.refresh_expires_at == first.refresh_expires_at
@@ -132,115 +132,115 @@ def test_issue_and_refresh_with_foreign_keys_enforced():
 
     SQLModel.metadata.create_all(
         engine,
-        tables=[User.__table__, UserIdentity.__table__, LoginThrottle.__table__, DeviceAuthorization.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__, PasswordToken.__table__],
+        tables=[User.__table__, UserIdentity.__table__, LoginThrottle.__table__, DeviceAuthorization.__table__, TokenFamily.__table__, RefreshToken.__table__, AccessToken.__table__, PasswordToken.__table__],
     )
     try:
         with Session(engine) as session:
             session.add(User(first_name="Test", last_name="Human", unique_id="0000-0000-0000-0001"))
             session.commit()
-        first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
-        second = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
+        first = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+        second = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
         assert access_user(engine, second.access_token, now=NOW + timedelta(minutes=1)) == first.user_unique_id
     finally:
         engine.dispose()
 
 
 def test_spent_refresh_revokes_family(engine):
-    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
-    second = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(engine, second.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=3))
-    with pytest.raises(InvalidHubGrant):
+    first = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    second = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(engine, second.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=3))
+    with pytest.raises(InvalidGrant):
         access_user(engine, second.access_token, now=NOW + timedelta(minutes=3))
 
 
 def test_a_just_spent_token_works_again_for_thirty_seconds(engine):
-    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
-    second = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
-    retried = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1, seconds=30))
+    first = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    second = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
+    retried = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1, seconds=30))
     assert retried.refresh_token != second.refresh_token
     later = NOW + timedelta(minutes=1, seconds=31)
     assert access_user(engine, second.access_token, now=later) == access_user(engine, retried.access_token, now=later)
-    third = refresh_hub_tokens(engine, retried.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=5))
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(engine, second.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=6))
-    with pytest.raises(InvalidHubGrant):
+    third = refresh_tokens(engine, retried.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=5))
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(engine, second.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=6))
+    with pytest.raises(InvalidGrant):
         access_user(engine, third.access_token, now=NOW + timedelta(minutes=6))
 
 
 def test_a_copied_token_cannot_keep_renewing_itself_beside_the_owner(engine):
-    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
-    owners = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
-    thiefs = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1, seconds=10))
-    owners = refresh_hub_tokens(engine, owners.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=15))
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(engine, thiefs.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=15, seconds=5))
-    with pytest.raises(InvalidHubGrant):
+    first = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    owners = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
+    thiefs = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1, seconds=10))
+    owners = refresh_tokens(engine, owners.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=15))
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(engine, thiefs.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=15, seconds=5))
+    with pytest.raises(InvalidGrant):
         access_user(engine, owners.access_token, now=NOW + timedelta(minutes=15, seconds=6))
 
 
 def test_the_grace_covers_only_the_token_just_before_the_newest(engine):
-    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
-    second = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(seconds=1))
-    third = refresh_hub_tokens(engine, second.refresh_token, "crucible-hub", now=NOW + timedelta(seconds=2))
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(seconds=3))
-    with pytest.raises(InvalidHubGrant):
+    first = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    second = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(seconds=1))
+    third = refresh_tokens(engine, second.refresh_token, "crucible-hub", now=NOW + timedelta(seconds=2))
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(seconds=3))
+    with pytest.raises(InvalidGrant):
         access_user(engine, third.access_token, now=NOW + timedelta(seconds=3))
 
 
 def test_client_binding_and_expiry(engine):
-    pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(engine, pair.refresh_token, "other", now=NOW + timedelta(minutes=1))
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(engine, pair.refresh_token, "crucible-hub", now=NOW + timedelta(days=7))
-    with pytest.raises(InvalidHubGrant):
+    pair = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(engine, pair.refresh_token, "other", now=NOW + timedelta(minutes=1))
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(engine, pair.refresh_token, "crucible-hub", now=NOW + timedelta(days=7))
+    with pytest.raises(InvalidGrant):
         access_user(engine, pair.access_token, now=NOW + timedelta(days=7))
 
-    second = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    second = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
     current = second
     for day in range(1, 30):
-        current = refresh_hub_tokens(engine, current.refresh_token, "crucible-hub", now=NOW + timedelta(days=day))
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(engine, current.refresh_token, "crucible-hub", now=NOW + timedelta(days=30))
+        current = refresh_tokens(engine, current.refresh_token, "crucible-hub", now=NOW + timedelta(days=day))
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(engine, current.refresh_token, "crucible-hub", now=NOW + timedelta(days=30))
 
 
 def test_revoke_and_service_accounts(engine):
-    with pytest.raises(InvalidHubGrant):
-        issue_hub_tokens(engine, internal_id(engine, "sa-test"), "crucible-hub", now=NOW)
-    pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
-    revoke_hub_tokens(engine, pair.refresh_token, "other", now=NOW + timedelta(minutes=1))
+    with pytest.raises(InvalidGrant):
+        issue_tokens(engine, internal_id(engine, "sa-test"), "crucible-hub", now=NOW)
+    pair = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    revoke_tokens(engine, pair.refresh_token, "other", now=NOW + timedelta(minutes=1))
     assert access_user(engine, pair.access_token, now=NOW + timedelta(minutes=1)) == pair.user_unique_id
-    revoke_hub_tokens(engine, pair.access_token, "crucible-hub", now=NOW + timedelta(minutes=2))
-    revoke_hub_tokens(engine, pair.access_token, "crucible-hub", now=NOW + timedelta(minutes=2))
-    with pytest.raises(InvalidHubGrant):
+    revoke_tokens(engine, pair.access_token, "crucible-hub", now=NOW + timedelta(minutes=2))
+    revoke_tokens(engine, pair.access_token, "crucible-hub", now=NOW + timedelta(minutes=2))
+    with pytest.raises(InvalidGrant):
         access_user(engine, pair.access_token, now=NOW + timedelta(minutes=2))
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(engine, pair.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(engine, pair.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
 
 
 def test_logout_with_rotated_token_revokes_only_its_family(engine):
-    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
-    other = issue_hub_tokens(engine, internal_id(engine, first.user_unique_id), "crucible-hub", now=NOW)
-    second = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
-    revoke_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
+    first = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    other = issue_tokens(engine, internal_id(engine, first.user_unique_id), "crucible-hub", now=NOW)
+    second = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
+    revoke_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
     for pair in (first, second):
-        with pytest.raises(InvalidHubGrant):
+        with pytest.raises(InvalidGrant):
             access_user(engine, pair.access_token, now=NOW + timedelta(minutes=2))
-        with pytest.raises(InvalidHubGrant):
-            refresh_hub_tokens(engine, pair.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
+        with pytest.raises(InvalidGrant):
+            refresh_tokens(engine, pair.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
     assert access_user(engine, other.access_token, now=NOW + timedelta(minutes=2)) == other.user_unique_id
-    refresh_hub_tokens(engine, other.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
+    refresh_tokens(engine, other.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
 
 
 def test_tokens_are_stored_hashed(engine):
-    pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    pair = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
     with Session(engine) as session:
-        access = session.exec(select(HubAccessToken)).one()
-        refresh = session.exec(select(HubRefreshToken)).one()
+        access = session.exec(select(AccessToken)).one()
+        refresh = session.exec(select(RefreshToken)).one()
         assert pair.access_token not in access.token_hash
         assert pair.refresh_token not in refresh.token_hash
         assert len(access.token_hash) == 64
@@ -253,7 +253,7 @@ def test_refresh_and_revoke_routes(engine, monkeypatch):
     app = FastAPI()
     app.include_router(hub_auth_router)
     app.dependency_overrides[get_engine] = lambda: engine
-    pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub")
+    pair = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub")
     with TestClient(app) as client:
         for auth in (None, ("crucible-hub", "wrong-secret")):
             denied_revoke = client.post("/auth/hub/revoke", auth=auth, json={"token": pair.refresh_token})
@@ -294,7 +294,7 @@ def test_refresh_and_revoke_routes(engine, monkeypatch):
 def test_hub_and_legacy_credentials_both_authorize(use_engine, engine, monkeypatch):
     use_engine(engine)
     monkeypatch.setattr(auth_utils, "_PUBLIC_GROUP_ID", None)
-    pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub")
+    pair = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub")
     legacy_key = "a" * 64
     with Session(engine) as session:
         session.add(
@@ -312,7 +312,7 @@ def test_hub_and_legacy_credentials_both_authorize(use_engine, engine, monkeypat
             HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
         )
         assert principal.user_id == "0000-0000-0000-0001"
-    revoke_hub_tokens(engine, pair.refresh_token, "crucible-hub")
+    revoke_tokens(engine, pair.refresh_token, "crucible-hub")
     assert auth_utils._authorize_user(
         HTTPAuthorizationCredentials(scheme="Bearer", credentials=legacy_key)
     ).user_id == "0000-0000-0000-0001"
@@ -325,38 +325,38 @@ def test_login_handoff_is_bound_and_single_use(engine):
     import hashlib
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     state, browser_secret, _ = create_login(engine, config, "crucible-hub", HUB_TEST_CALLBACK, "hub-state-123456789", challenge, now=NOW)
-    with pytest.raises(InvalidHubLogin):
+    with pytest.raises(InvalidLoginRequest):
         consume_login(engine, state, "wrong-browser", now=NOW)
     transaction = consume_login(engine, state, browser_secret, now=NOW)
-    with pytest.raises(InvalidHubLogin):
+    with pytest.raises(InvalidLoginRequest):
         consume_login(engine, state, browser_secret, now=NOW)
     code, redirect = create_handoff_code(engine, transaction, ORCID_PROVIDER, "0000-0000-0000-0001", "Test", "Human", now=NOW)
     assert "state=hub-state-123456789" in redirect
-    with pytest.raises(InvalidHubGrant):
+    with pytest.raises(InvalidGrant):
         exchange_handoff_code(engine, code, "w" * 43, "crucible-hub", HUB_TEST_CALLBACK, now=NOW)
-    with pytest.raises(InvalidHubGrant):
+    with pytest.raises(InvalidGrant):
         exchange_handoff_code(engine, code, verifier, "other", HUB_TEST_CALLBACK, now=NOW)
     pair = exchange_handoff_code(engine, code, verifier, "crucible-hub", HUB_TEST_CALLBACK, now=NOW)
     assert pair.user_unique_id == "0000-0000-0000-0001"
-    with pytest.raises(InvalidHubGrant):
+    with pytest.raises(InvalidGrant):
         exchange_handoff_code(engine, code, verifier, "crucible-hub", HUB_TEST_CALLBACK, now=NOW)
 
 
 def test_login_expiry(engine):
     config = hub_login_config()
     state, browser_secret, _ = create_login(engine, config, "crucible-hub", HUB_TEST_CALLBACK, "hub-state-123456789", "a" * 43, now=NOW)
-    with pytest.raises(InvalidHubLogin):
+    with pytest.raises(InvalidLoginRequest):
         consume_login(engine, state, browser_secret, now=NOW + timedelta(minutes=10))
 
     second_state, second_browser_secret, _ = create_login(engine, config, "crucible-hub", HUB_TEST_CALLBACK, "hub-state-123456789", "a" * 43, now=NOW)
     transaction = consume_login(engine, second_state, second_browser_secret, now=NOW)
     code, _ = create_handoff_code(engine, transaction, ORCID_PROVIDER, "0000-0000-0000-0001", None, None, now=NOW)
-    with pytest.raises(InvalidHubGrant):
+    with pytest.raises(InvalidGrant):
         exchange_handoff_code(engine, code, "a" * 43, "crucible-hub", HUB_TEST_CALLBACK, now=NOW + timedelta(minutes=1))
 
 
 def test_browser_login_and_code_exchange_routes(engine, monkeypatch, orcid_provider_settings):
-    import app.api.routes.hub_auth as routes
+    import app.api.routes.browser_sign_in as routes
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://crucible.lbl.gov/hub/auth/callback")
     monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", "http://localhost:7777")
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
@@ -412,7 +412,7 @@ def test_browser_login_and_code_exchange_routes(engine, monkeypatch, orcid_provi
 @pytest.fixture
 def hub_routes(engine, monkeypatch, orcid_provider_settings):
     import httpx
-    import app.api.routes.hub_auth as routes
+    import app.api.routes.browser_sign_in as routes
     from tests.test_auth_providers import FakeProvider
 
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://crucible.lbl.gov/hub/auth/callback")
@@ -513,18 +513,18 @@ def test_auth_time_flows_from_handoff_code_to_hub_principal(use_engine, engine, 
     code, _ = create_handoff_code(engine, transaction, ORCID_PROVIDER, "0000-0000-0000-0001", None, None, auth_time=signed_in)
     pair = exchange_handoff_code(engine, code, verifier, "crucible-hub", HUB_TEST_CALLBACK)
     with Session(engine) as session:
-        assert session.exec(select(HubTokenFamily)).one().auth_time.replace(tzinfo=timezone.utc) == signed_in
+        assert session.exec(select(TokenFamily)).one().auth_time.replace(tzinfo=timezone.utc) == signed_in
     principal = auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=pair.access_token))
     assert principal.credential == "session"
     assert principal.authenticated_at == signed_in
-    refreshed = refresh_hub_tokens(engine, pair.refresh_token, "crucible-hub")
+    refreshed = refresh_tokens(engine, pair.refresh_token, "crucible-hub")
     assert auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=refreshed.access_token)).authenticated_at == signed_in
 
 
 def test_login_accepts_only_an_exact_configured_callback(engine, monkeypatch, orcid_provider_settings):
     from app.config import get_settings
     orcid_provider_settings()
-    from app.utils.hub_login import HubLoginUnavailable, load_login_config
+    from app.auth.login_transactions import SignInUnavailable, load_login_config
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret-padded-to-32-characters")
     monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", "https://crucible.lbl.gov/testapi-staging")
@@ -534,10 +534,10 @@ def test_login_accepts_only_an_exact_configured_callback(engine, monkeypatch, or
     for callback in config.client("crucible-hub").redirect_uris:
         create_login(engine, config, "crucible-hub", callback, "hub-state-123456789", "a" * 43)
     for callback in ("http://localhost:3001/hub/auth/callback", "https://hub.example.org/hub/auth/callback/x", "http://localhost:3000/hub/auth/callback, https://hub.example.org/hub/auth/callback"):
-        with pytest.raises(InvalidHubLogin):
+        with pytest.raises(InvalidLoginRequest):
             create_login(engine, config, "crucible-hub", callback, "hub-state-123456789", "a" * 43)
     for configured in ("", " , ", "http://localhost:3000/cb,http://evil.example/cb"):
         monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", configured)
         get_settings.cache_clear()
-        with pytest.raises(HubLoginUnavailable):
+        with pytest.raises(SignInUnavailable):
             load_login_config()

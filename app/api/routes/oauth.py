@@ -6,7 +6,7 @@ from app.api.dependencies import get_engine
 from app.auth.clients import ClientUnavailable, sign_in_enabled
 from app.auth.oauth_server import FormRequest, authorization_server
 from app.auth.throttle import client_address
-from app.utils.hub_login import HubLoginUnavailable, public_api_url
+from app.auth.login_transactions import SignInUnavailable, public_api_url
 
 router = APIRouter(prefix="/oauth", tags=["auth"])
 discovery = APIRouter(tags=["auth"])
@@ -17,7 +17,7 @@ _FORM = {"requestBody": {"content": {"application/x-www-form-urlencoded": {"sche
 def public_uri(path: str) -> str:
     try:
         return f"{public_api_url()}{path}"
-    except HubLoginUnavailable:
+    except SignInUnavailable:
         raise HTTPException(status_code=503, detail="Sign-in is unavailable") from None
 
 
@@ -105,7 +105,7 @@ async def authorize(
     """The OAuth 2.0 authorization endpoint (RFC 6749 4.1) for registered clients: `response_type=code`,
     `client_id`, an exact `redirect_uri`, `state`, and PKCE with S256. The answer comes back to the
     redirect with `code` or `error`, `state`, and `iss` (RFC 9207)."""
-    from app.api.routes.hub_auth import start_sign_in
+    from app.api.routes.browser_sign_in import start_sign_in
 
     return await start_sign_in(request, engine, path="/oauth/authorize", response_type=response_type, client_id=client_id, redirect_uri=redirect_uri, state=state,
                                code_challenge=code_challenge, code_challenge_method=code_challenge_method, max_age=max_age, provider=provider, required_user=required_user)
@@ -119,7 +119,7 @@ def authorization_server_metadata() -> JSONResponse:
         raise HTTPException(status_code=404, detail="Not found")
     try:
         issuer = public_api_url()
-    except HubLoginUnavailable:
+    except SignInUnavailable:
         raise HTTPException(status_code=503, detail="Sign-in is unavailable") from None
     return JSONResponse({
         "issuer": issuer,

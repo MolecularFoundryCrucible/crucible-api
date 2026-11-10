@@ -14,11 +14,11 @@ from sqlmodel import Session, SQLModel, select
 
 from app import config
 from app.api.dependencies import get_engine
-from app.api.routes import hub_auth as routes
+from app.api.routes import browser_sign_in as routes
 from app.api.routes import oauth as oauth_routes
 from app.auth.passwords import store_password
 from app.tables import (
-    AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential, LoginThrottle, User,
+    AuthEvent, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, LocalCredential, LoginThrottle, User,
 )
 
 API_URL = "http://localhost:7777"
@@ -47,7 +47,7 @@ def settings(monkeypatch):
 
 @pytest.fixture
 def client(db_engine, settings):
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginTransaction, HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken, LocalCredential, LoginThrottle)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginTransaction, LoginCode, TokenFamily, RefreshToken, AccessToken, LocalCredential, LoginThrottle)])
     from fastapi.exceptions import RequestValidationError
 
     from app.api import main
@@ -187,7 +187,7 @@ def test_form_past_the_sign_in_lifetime_says_expired_and_is_not_counted(client, 
     user = person(db_engine)
     state = start(client)
     with Session(db_engine) as session:
-        for transaction in session.exec(select(HubLoginTransaction)).all():
+        for transaction in session.exec(select(LoginTransaction)).all():
             transaction.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
             session.add(transaction)
         session.commit()

@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 import tests.test_auth_linking as linking_tests
 import tests.test_auth_providers as provider_tests
 from app.cli import identity as identity_cli
-from app.tables import AuthEvent, Dataset, HubTokenFamily, User, UserIdentity
+from app.tables import AuthEvent, Dataset, TokenFamily, User, UserIdentity
 from tests.test_auth_linking import ADA, BOB, LAB_ISSUER, ORCID_ISSUER, bearer, hub_session, user_id
 
 remote = provider_tests.remote
@@ -65,7 +65,7 @@ def test_admin_removes_a_login_but_never_the_last_and_ends_their_sessions(world)
     assert logins(engine, NEWCOMER) == [(ORCID_ISSUER, "0000-0004-0000-0004", False)]
     assert client.delete(f"/users/{BOB}/identities/{added}", headers=bearer(admin)).status_code == 404
     with Session(engine) as session:
-        families = session.exec(select(HubTokenFamily).where(HubTokenFamily.user_id == user_id(engine, NEWCOMER))).all()
+        families = session.exec(select(TokenFamily).where(TokenFamily.user_id == user_id(engine, NEWCOMER))).all()
         assert families and all(family.revoked_at is not None for family in families)
 
 
@@ -83,7 +83,7 @@ def test_move_takes_a_login_off_an_empty_account_and_switches_it_off(world, use_
     with Session(engine) as session:
         newcomer = session.exec(select(User).where(User.unique_id == NEWCOMER)).one()
         assert newcomer.disabled_at is not None
-        assert all(family.revoked_at is not None for family in session.exec(select(HubTokenFamily).where(HubTokenFamily.user_id == newcomer.id)).all())
+        assert all(family.revoked_at is not None for family in session.exec(select(TokenFamily).where(TokenFamily.user_id == newcomer.id)).all())
         assert session.exec(select(AuthEvent.event)).all() == ["identity_unlinked", "identity_linked", "disabled"]
 
 

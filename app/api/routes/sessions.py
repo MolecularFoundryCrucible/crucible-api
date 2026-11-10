@@ -10,7 +10,7 @@ from app.auth.sessions import ActiveSession, active_sessions, end_session, end_s
 from app.tables import AuthEvent, User
 from app.models.identities import AuthEventRead, SessionRead
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, caller_row, require_human_admin_safeguard, require_platform_admin, require_recent_hub_session
+from app.utils.auth_utils import authorize_user, caller_row, require_human_admin_safeguard, require_platform_admin, require_recent_session
 from app.utils.cursor_utils import CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor
 from app.utils.permissions import Principal
 from app.utils.user_utils import person_by_reference, resolve_user_by_identifier
@@ -69,7 +69,7 @@ def list_account_sessions(auth_res: Annotated[Principal, Depends(authorize_user)
 def end_account_session(session_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """End one of your sessions at once; ending the current one signs you out. Needs a recent sign-in
     (OWASP ASVS 5.0 V7.5.2)."""
-    require_recent_hub_session(auth_res, SIGN_IN_AGAIN)
+    require_recent_session(auth_res, SIGN_IN_AGAIN)
     with Session(get_engine()) as session, session.begin():
         user = _caller(session, auth_res)
         if not end_session(session, user, session_id, actor=user):
@@ -80,7 +80,7 @@ def end_account_session(session_id: str, auth_res: Annotated[Principal, Depends(
 @router.delete("/account/sessions", status_code=204, responses=_STEP_UP)
 def end_other_account_sessions(auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Sign out everywhere else: end every session but this one. Needs a recent sign-in."""
-    require_recent_hub_session(auth_res, SIGN_IN_AGAIN)
+    require_recent_session(auth_res, SIGN_IN_AGAIN)
     with Session(get_engine()) as session, session.begin():
         user = _caller(session, auth_res)
         end_sessions(session, user, actor=user, keep=auth_res.session_family_id)

@@ -6,7 +6,7 @@ Status: proposed 2026-10-26, not scheduled. No behavior change intended.
 
 `get_engine()` in `app/api/dependencies.py` creates one engine on first use and caches it. Route and auth code call `get_engine()` where they need it (`Session(get_engine())`); nothing creates an engine while the code loads. Tests point it at a test database with the `use_engine` fixture in `tests/conftest.py`, which replaces the engine factory and clears the cache.
 
-The Hub sign-in routes (`app/api/routes/hub_auth.py`) already receive the engine as a FastAPI dependency (`engine=Depends(get_engine)`), and their tests use `app.dependency_overrides`.
+The Hub sign-in routes (`app/api/routes/browser_sign_in.py`) already receive the engine as a FastAPI dependency (`engine=Depends(get_engine)`), and their tests use `app.dependency_overrides`.
 
 ## Proposal
 

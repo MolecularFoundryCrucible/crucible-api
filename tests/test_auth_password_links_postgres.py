@@ -17,7 +17,7 @@ from app import config
 from app.auth import throttle
 from app.auth.password_links import LinkRefused, issue_link, use_link
 from app.tables import (
-    DeviceAuthorization, HubAccessToken, HubLoginCode, HubRefreshToken, HubTokenFamily, LocalCredential, PasswordToken, User, UserIdentity, AuthEvent,
+    DeviceAuthorization, AccessToken, LoginCode, RefreshToken, TokenFamily, LocalCredential, PasswordToken, User, UserIdentity, AuthEvent,
 )
 
 NEW = "violet ladder under quiet rain"
@@ -46,7 +46,7 @@ def pg_engine():
     engine = create_engine(value, pool_size=10, connect_args={"options": f"-csearch_path={schema}"})
     try:
         SQLModel.metadata.create_all(engine, tables=[model.__table__ for model in (
-            User, UserIdentity, AuthEvent, LocalCredential, PasswordToken, HubTokenFamily, HubRefreshToken, HubAccessToken, HubLoginCode, DeviceAuthorization,
+            User, UserIdentity, AuthEvent, LocalCredential, PasswordToken, TokenFamily, RefreshToken, AccessToken, LoginCode, DeviceAuthorization,
         )])
         with Session(engine) as session:
             session.add(User(unique_id="0tmnyhfztdwc1000w2kspzsnh0", username="ada", first_name="A", last_name="B"))

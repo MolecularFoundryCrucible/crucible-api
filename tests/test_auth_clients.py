@@ -11,16 +11,16 @@ from sqlalchemy import update
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app import config
-from app.api.routes.hub_auth import require_hub_client
+from app.api.routes.browser_sign_in import require_client
 from app.auth.clients import registered_clients
 from app.tables import (
-    AccessGroup, ApiKey, ApiToken, AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User,
+    AccessGroup, ApiKey, ApiToken, AuthEvent, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User,
     UserAccessGroupLink, UserIdentity,
 )
 from app.config import ConfigurationError, OidcProvider, check_settings, get_secret, get_settings
 from app.utils import auth_utils
-from app.utils.hub_login import InvalidHubLogin, consume_login, create_handoff_code, create_login, exchange_handoff_code, load_login_config
-from app.utils.hub_tokens import InvalidHubGrant, refresh_hub_tokens
+from app.auth.login_transactions import InvalidLoginRequest, consume_login, create_handoff_code, create_login, exchange_handoff_code, load_login_config
+from app.auth.tokens import InvalidGrant, refresh_tokens
 from app.utils.permissions import API_KEY, SESSION, PlatformRole, PrivilegeMode, Principal, resolve_authorization_context
 
 NOW = datetime.now(timezone.utc)
@@ -40,7 +40,7 @@ def db_engine(use_engine):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine, tables=[
         User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, ApiKey.__table__, AuthEvent.__table__,
-        HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__, HubLoginTransaction.__table__, HubLoginCode.__table__, UserIdentity.__table__,
+        TokenFamily.__table__, RefreshToken.__table__, AccessToken.__table__, LoginTransaction.__table__, LoginCode.__table__, UserIdentity.__table__,
     ])
     with Session(engine) as session:
         session.add(User(first_name="Test", last_name="Human", unique_id="0000-0000-0000-0001"))
@@ -72,29 +72,29 @@ def signed_in(engine, client):
 
 
 def test_each_client_authenticates_with_its_own_secret(two_clients):
-    assert require_hub_client(basic("crucible-hub", SECRETS["OAUTH_HUB_CLIENT_SECRET"])) == "crucible-hub"
-    assert require_hub_client(basic("lab-notes", SECRETS["OAUTH_NOTES_CLIENT_SECRET"])) == "lab-notes"
+    assert require_client(basic("crucible-hub", SECRETS["OAUTH_HUB_CLIENT_SECRET"])) == "crucible-hub"
+    assert require_client(basic("lab-notes", SECRETS["OAUTH_NOTES_CLIENT_SECRET"])) == "lab-notes"
     for wrong in (basic("crucible-hub", SECRETS["OAUTH_NOTES_CLIENT_SECRET"]), basic("unknown", "x" * 40), None):
         with pytest.raises(HTTPException) as refused:
-            require_hub_client(wrong)
+            require_client(wrong)
         assert refused.value.status_code == 401
 
 
 def test_a_redirect_must_be_on_that_clients_own_list(two_clients, db_engine):
     login = load_login_config()
-    with pytest.raises(InvalidHubLogin):
+    with pytest.raises(InvalidLoginRequest):
         create_login(db_engine, login, "lab-notes", HUB["redirect_uris"][0], "client-state-123456789", CHALLENGE, now=NOW)
-    with pytest.raises(InvalidHubLogin):
+    with pytest.raises(InvalidLoginRequest):
         create_login(db_engine, login, "nobody", HUB["redirect_uris"][0], "client-state-123456789", CHALLENGE, now=NOW)
 
 
 def test_one_clients_code_and_session_are_useless_to_another(two_clients, db_engine):
     code = signed_in(db_engine, HUB)
-    with pytest.raises(InvalidHubGrant):
+    with pytest.raises(InvalidGrant):
         exchange_handoff_code(db_engine, code, VERIFIER, "lab-notes", HUB["redirect_uris"][0], now=NOW)
     pair = exchange_handoff_code(db_engine, code, VERIFIER, "crucible-hub", HUB["redirect_uris"][0], now=NOW)
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(db_engine, pair.refresh_token, "lab-notes", now=NOW)
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(db_engine, pair.refresh_token, "lab-notes", now=NOW)
     principal = auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=pair.access_token))
     assert (principal.credential, principal.client_id) == (SESSION, "crucible-hub")
 
@@ -234,7 +234,7 @@ def test_wrong_client_is_invalid_client_and_another_clients_code_is_useless(api,
 
 def past_the_grace(engine):
     with Session(engine) as session:
-        session.execute(update(HubRefreshToken).where(HubRefreshToken.spent_at.is_not(None)).values(spent_at=datetime.now(timezone.utc) - timedelta(minutes=1)))
+        session.execute(update(RefreshToken).where(RefreshToken.spent_at.is_not(None)).values(spent_at=datetime.now(timezone.utc) - timedelta(minutes=1)))
         session.commit()
 
 
@@ -326,15 +326,15 @@ def test_public_client_cannot_use_the_hubs_secret_routes_or_a_secret(with_cli, a
 def test_public_sessions_last_longer_and_their_codes_wait_for_the_confirmation(with_cli, db_engine):
     from datetime import timedelta
 
-    from app.utils.hub_login import code_lifetime
-    from app.utils.hub_tokens import issue_hub_tokens, session_lifetimes
+    from app.auth.login_transactions import code_lifetime
+    from app.auth.tokens import issue_tokens, session_lifetimes
 
     assert session_lifetimes("nano-crucible") == (timedelta(days=90), timedelta(days=14))
     assert session_lifetimes("crucible-hub") == (timedelta(days=30), timedelta(days=7))
     assert (code_lifetime("nano-crucible"), code_lifetime("crucible-hub")) == (timedelta(minutes=5), timedelta(minutes=1))
     with Session(db_engine) as session:
         user_id = session.exec(select(User.id)).first()
-    pair = issue_hub_tokens(db_engine, user_id, "nano-crucible", now=NOW)
+    pair = issue_tokens(db_engine, user_id, "nano-crucible", now=NOW)
     assert abs((pair.refresh_expires_at - NOW) - timedelta(days=90)) < timedelta(seconds=1)
 
 

@@ -7,12 +7,12 @@ from sqlmodel import Session, SQLModel, select
 
 from app.auth.sign_in import DISABLED, SignInRefused, resolve_sign_in
 from app.tables import (
-    AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserIdentity,
+    AuthEvent, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User, UserIdentity,
 )
 from app.utils import auth_utils
 from app.utils.auth_utils import add_apikey
-from app.utils.hub_login import HubLoginRefused, create_handoff_code, create_login, consume_login, exchange_handoff_code
-from app.utils.hub_tokens import InvalidHubGrant, hub_access_family, issue_hub_tokens, refresh_hub_tokens
+from app.auth.login_transactions import LoginRefused, create_handoff_code, create_login, consume_login, exchange_handoff_code
+from app.auth.tokens import InvalidGrant, access_token_family, issue_tokens, refresh_tokens
 from app.utils.permissions import PlatformRole
 from tests.test_hub_tokens import ORCID_PROVIDER
 from tests.people import internal_id, person_row
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.usefixtures("hub_client_registered")
 
 @pytest.fixture(autouse=True)
 def hub_tables(db_engine):
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginCode, HubLoginTransaction, HubTokenFamily, HubRefreshToken, HubAccessToken)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginCode, LoginTransaction, TokenFamily, RefreshToken, AccessToken)])
     with auth_utils._auth_cache_lock:
         auth_utils._auth_cache.clear()
 
@@ -60,7 +60,7 @@ def authorize(token):
 
 
 def login_record():
-    return HubLoginTransaction(state_hash="s", browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=NOW, expires_at=NOW + timedelta(minutes=10))
+    return LoginTransaction(state_hash="s", browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=NOW, expires_at=NOW + timedelta(minutes=10))
 
 
 def test_disabled_refused_at_the_resolver_and_never_continues(db_engine):
@@ -83,11 +83,11 @@ def test_disabled_refused_at_the_resolver_with_the_lookup_on(db_engine, monkeypa
 
 def test_disabled_refused_at_the_hub_callback(db_engine):
     person(db_engine, disabled=True)
-    with pytest.raises(HubLoginRefused) as caught:
+    with pytest.raises(LoginRefused) as caught:
         create_handoff_code(db_engine, login_record(), ORCID_PROVIDER, ORCID, None, None)
     assert caught.value.error == "access_denied"
     with Session(db_engine) as session:
-        assert session.exec(select(HubLoginCode)).all() == []
+        assert session.exec(select(LoginCode)).all() == []
 
 
 def test_disabled_refused_on_handoff_redemption(db_engine):
@@ -101,27 +101,27 @@ def test_disabled_refused_on_handoff_redemption(db_engine):
     state, secret, _ = create_login(db_engine, config, "crucible-hub", "https://hub.example/cb", "hub-state-123456789", challenge)
     code, _ = create_handoff_code(db_engine, consume_login(db_engine, state, secret), ORCID_PROVIDER, ORCID, None, None)
     set_disabled(db_engine)
-    with pytest.raises(InvalidHubGrant):
+    with pytest.raises(InvalidGrant):
         exchange_handoff_code(db_engine, code, verifier, "crucible-hub", "https://hub.example/cb")
 
 
 def test_disabled_refused_on_hub_refresh_and_the_family_is_revoked(db_engine):
     person(db_engine)
-    pair = issue_hub_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
+    pair = issue_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
     set_disabled(db_engine)
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(db_engine, pair.refresh_token, "crucible-hub")
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(db_engine, pair.refresh_token, "crucible-hub")
     with Session(db_engine) as session:
-        assert session.exec(select(HubTokenFamily)).one().revoked_at is not None
+        assert session.exec(select(TokenFamily)).one().revoked_at is not None
 
 
 def test_disabled_refused_on_hub_access_token(db_engine):
     person(db_engine)
-    pair = issue_hub_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
+    pair = issue_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
     set_disabled(db_engine)
     with Session(db_engine) as session:
-        with pytest.raises(InvalidHubGrant):
-            hub_access_family(session, pair.access_token)
+        with pytest.raises(InvalidGrant):
+            access_token_family(session, pair.access_token)
     with pytest.raises(HTTPException) as caught:
         authorize(pair.access_token)
     assert caught.value.status_code == 401
@@ -161,7 +161,7 @@ def test_admin_disables_and_everything_stops_at_once(client, auth_as, db_engine)
     person(db_engine)
     key = api_key_for(db_engine)
     assert authorize(key).user_id == ORCID
-    pair = issue_hub_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
+    pair = issue_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
     as_admin(auth_as, client)
     response = client.post(f"/users/{ORCID}/disable")
     assert response.status_code == 200, response.text
@@ -169,27 +169,27 @@ def test_admin_disables_and_everything_stops_at_once(client, auth_as, db_engine)
     with pytest.raises(HTTPException):
         authorize(key)
     with Session(db_engine) as session:
-        assert session.exec(select(HubTokenFamily)).one().revoked_at is not None
+        assert session.exec(select(TokenFamily)).one().revoked_at is not None
         event = session.exec(select(AuthEvent)).one()
         admin_id = session.exec(select(User.id).where(User.unique_id == ADMIN)).one()
         assert (event.event, event.user_unique_id, event.actor_user_id) == ("disabled", ORCID, admin_id)
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(db_engine, pair.refresh_token, "crucible-hub")
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(db_engine, pair.refresh_token, "crucible-hub")
 
 
 def test_enable_restores_sign_in_but_not_old_sessions(client, auth_as, db_engine):
     human_admins(db_engine, ADMIN)
     person(db_engine)
     key = api_key_for(db_engine)
-    pair = issue_hub_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
+    pair = issue_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
     as_admin(auth_as, client)
     assert client.post(f"/users/{ORCID}/disable").status_code == 200
     response = client.post(f"/users/{ORCID}/enable")
     assert response.status_code == 200, response.text
     assert response.json()["disabled_at"] is None
     assert authorize(key).user_id == ORCID
-    with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(db_engine, pair.refresh_token, "crucible-hub")
+    with pytest.raises(InvalidGrant):
+        refresh_tokens(db_engine, pair.refresh_token, "crucible-hub")
     with Session(db_engine) as session:
         assert [row for row in session.exec(select(AuthEvent.event).order_by(AuthEvent.id))] == ["disabled", "enabled"]
 

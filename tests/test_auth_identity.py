@@ -115,20 +115,20 @@ def test_one_person_cannot_hold_two_orcids_in_the_database(db_engine):
 
 @pytest.fixture
 def hub_tables(db_engine):
-    from app.tables import HubLoginCode, HubLoginTransaction
+    from app.tables import LoginCode, LoginTransaction
 
-    SQLModel.metadata.create_all(db_engine, tables=[HubLoginCode.__table__, HubLoginTransaction.__table__])
+    SQLModel.metadata.create_all(db_engine, tables=[LoginCode.__table__, LoginTransaction.__table__])
 
 
 def test_hub_sign_in_writes_the_identity_row_for_new_and_existing_users(db_engine, hub_tables):
     from datetime import datetime, timedelta, timezone
 
-    from app.tables import HubLoginTransaction
-    from app.utils.hub_login import create_handoff_code
+    from app.tables import LoginTransaction
+    from app.auth.login_transactions import create_handoff_code
 
     now = datetime.now(timezone.utc)
     def transaction(state):
-        return HubLoginTransaction(state_hash=state, browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=now, expires_at=now + timedelta(minutes=10))
+        return LoginTransaction(state_hash=state, browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=now, expires_at=now + timedelta(minutes=10))
     create_handoff_code(db_engine, transaction("s1"), ORCID_PROVIDER, ORCID, "Ada", "Lovelace")
     create_handoff_code(db_engine, transaction("s2"), ORCID_PROVIDER, ORCID, "Ada", "Lovelace")
     with Session(db_engine) as session, session.begin():
@@ -140,13 +140,13 @@ def test_hub_sign_in_writes_the_identity_row_for_new_and_existing_users(db_engin
 def test_hub_sign_in_uses_the_hub_issuer(db_engine, hub_tables, monkeypatch, orcid_provider_settings):
     from datetime import datetime, timedelta, timezone
 
-    from app.tables import HubLoginTransaction
-    from app.utils.hub_login import create_handoff_code
+    from app.tables import LoginTransaction
+    from app.auth.login_transactions import create_handoff_code
 
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     orcid_provider_settings(issuer=SANDBOX)
     now = datetime.now(timezone.utc)
-    create_handoff_code(db_engine, HubLoginTransaction(state_hash="s", browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=now, expires_at=now + timedelta(minutes=10)), ORCID_PROVIDER.model_copy(update={"issuer": SANDBOX}), ORCID, None, None)
+    create_handoff_code(db_engine, LoginTransaction(state_hash="s", browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=now, expires_at=now + timedelta(minutes=10)), ORCID_PROVIDER.model_copy(update={"issuer": SANDBOX}), ORCID, None, None)
     assert identities(db_engine) == [(SANDBOX, ORCID)]
 
 
@@ -534,9 +534,9 @@ def test_concurrent_first_write_keeps_one_row_and_both_callers_succeed(pg_engine
 
 @pytest.fixture
 def pg_sign_in(pg_engine, monkeypatch):
-    from app.tables import AccessGroup, ApiKey, ApiToken, AuthEvent, HubLoginCode, UserAccessGroupLink
+    from app.tables import AccessGroup, ApiKey, ApiToken, AuthEvent, LoginCode, UserAccessGroupLink
 
-    SQLModel.metadata.create_all(pg_engine, tables=[AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, ApiKey.__table__, HubLoginCode.__table__, AuthEvent.__table__])
+    SQLModel.metadata.create_all(pg_engine, tables=[AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, ApiKey.__table__, LoginCode.__table__, AuthEvent.__table__])
     return pg_engine
 
 
@@ -620,7 +620,7 @@ def test_simultaneous_first_hub_sign_ins_create_one_person_on_postgres(pg_sign_i
     from types import SimpleNamespace
 
     from app.config import get_settings
-    from app.utils.hub_login import create_handoff_code
+    from app.auth.login_transactions import create_handoff_code
 
     monkeypatch.setenv("CRUCIBLE_AUTH_IDENTITY_LOOKUP", lookup)
     get_settings.cache_clear()
@@ -636,7 +636,7 @@ def test_first_sign_in_committed_between_the_two_lookups_is_found_on_postgres(pg
 
     from app.auth import sign_in as sign_in_module
     from app.config import get_settings
-    from app.utils.hub_login import create_handoff_code
+    from app.auth.login_transactions import create_handoff_code
 
     monkeypatch.setenv("CRUCIBLE_AUTH_IDENTITY_LOOKUP", "true")
     get_settings.cache_clear()

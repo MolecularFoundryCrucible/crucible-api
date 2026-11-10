@@ -9,7 +9,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect, text
 
-from app.api.routes.hub_auth import LOGIN_COOKIE, login_cookie_name
+from app.api.routes.browser_sign_in import LOGIN_COOKIE, login_cookie_name
 import tests.test_hub_tokens as hub_tokens_tests
 from tests.test_hub_tokens import HUB_LOGIN, hub_error_of
 
@@ -93,17 +93,17 @@ def test_hub_principal_carries_its_token_family(engine, use_engine, monkeypatch)
     from fastapi.security import HTTPAuthorizationCredentials
     from sqlmodel import Session, select
 
-    from app.tables import HubTokenFamily
+    from app.tables import TokenFamily
     from app.utils import auth_utils
-    from app.utils.hub_tokens import issue_hub_tokens
+    from app.auth.tokens import issue_tokens
     from tests.people import internal_id
 
     use_engine(engine)
     monkeypatch.setattr(auth_utils, "_PUBLIC_GROUP_ID", None)
-    pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub")
+    pair = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub")
     principal = auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=pair.access_token))
     with Session(engine) as session:
-        family = session.exec(select(HubTokenFamily)).one()
+        family = session.exec(select(TokenFamily)).one()
     assert principal.session_family_id == family.id
 
 

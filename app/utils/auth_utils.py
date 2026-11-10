@@ -17,7 +17,7 @@ from app.config import get_secret
 from app.api.dependencies import get_engine
 from app.tables import ApiKey, ApiToken, User
 from app.models.resource import ResourceCapabilities
-from app.utils.hub_tokens import ACCESS_PREFIX, DEVICE_CODE, InvalidHubGrant, hub_access_family
+from app.auth.tokens import ACCESS_PREFIX, DEVICE_CODE, InvalidGrant, access_token_family
 from app.auth.api_keys import DEFAULT_KEY_NAME, find_api_key, replace_plain_keys, status_of, store_key
 from app.services.activity import record_caller_activity
 from app.utils.permissions import (
@@ -188,8 +188,8 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
     if apikey.startswith(ACCESS_PREFIX):
         with Session(engine) as session:
             try:
-                family = hub_access_family(session, apikey)
-            except InvalidHubGrant:
+                family = access_token_family(session, apikey)
+            except InvalidGrant:
                 raise HTTPException(status_code=401, detail="Invalid or expired API credential.")
             authenticated_at = family.auth_time.replace(tzinfo=family.auth_time.tzinfo or datetime.timezone.utc) if family.auth_time else None
             principal = replace(load_principal(session, family.user_id), credential=SESSION, authenticated_at=authenticated_at, session_family_id=family.id, client_id=family.client_id,
@@ -668,10 +668,10 @@ def require_human_admin_safeguard(principal: Principal, target, *, makes_admin: 
         return
     if target.platform_role != PlatformRole.ADMIN.value and not makes_admin:
         return
-    require_recent_hub_session(principal, "Changing a human administrator needs a Hub session, not an API key")
+    require_recent_session(principal, "Changing a human administrator needs a Hub session, not an API key")
 
 
-def require_recent_hub_session(principal: Principal, message: str) -> None:
+def require_recent_session(principal: Principal, message: str) -> None:
     """For actions that need a person at a browser: API keys get 403, and a Hub session needs a recent sign-in."""
     if principal.credential != SESSION:
         raise HTTPException(status_code=403, detail={"code": "hub_session_required", "message": message})
@@ -683,7 +683,7 @@ def require_credential_change(principal: Principal, *, target) -> None:
     an API key or a device-code session. Someone else's: a platform administrator, whose API key works
     for ordinary people, while any human administrator's needs a browser session with a recent sign-in."""
     if principal.is_user(target):
-        require_recent_hub_session(principal, "Changing how you sign in needs a browser session with a recent sign-in, not an API key")
+        require_recent_session(principal, "Changing how you sign in needs a browser session with a recent sign-in, not an API key")
         return
     require_platform_admin(principal)
     require_recent_authentication(principal)

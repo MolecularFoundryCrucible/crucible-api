@@ -92,7 +92,7 @@ def _run_end_sessions(args: argparse.Namespace) -> int:
 
 def _run_cleanup(args: argparse.Namespace) -> int:
     from app.api.dependencies import get_engine
-    from app.utils.hub_auth_maintenance import cleanup_hub_auth
+    from app.auth.cleanup import cleanup_sign_in_records
 
     if not 1 <= args.batch <= 10000 or not 1 <= args.batches <= 1000:
         print("--batch must be 1..10000 and --batches 1..1000", file=sys.stderr)
@@ -103,7 +103,7 @@ def _run_cleanup(args: argparse.Namespace) -> int:
         print(f"The database is not usable: {error}", file=sys.stderr)
         return 1
     for _ in range(1 if args.dry_run else args.batches):
-        counts = cleanup_hub_auth(engine, commit=not args.dry_run, batch_size=args.batch)
+        counts = cleanup_sign_in_records(engine, commit=not args.dry_run, batch_size=args.batch)
         print(json.dumps({"mode": "dry-run" if args.dry_run else "commit", "counts": counts}))
         if not any(counts.values()):
             break

@@ -19,7 +19,7 @@ from app import config
 from app.api.dependencies import get_engine
 from app.auth.passwords import store_password
 from app.tables import (
-    AuthEvent, DeviceAuthorization, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, LocalCredential, LoginThrottle, PasswordToken, User,
+    AuthEvent, DeviceAuthorization, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, LocalCredential, LoginThrottle, PasswordToken, User,
     UserIdentity,
 )
 
@@ -41,7 +41,7 @@ def servers(tmp_path, monkeypatch):
     import uvicorn
     from fastapi import FastAPI
 
-    from app.api.routes import hub_auth, oauth, passwords
+    from app.api.routes import browser_sign_in, oauth, passwords
 
     api_port, hub_port = free_port(), free_port()
     api_url, callback = f"http://127.0.0.1:{api_port}", f"http://127.0.0.1:{hub_port}/hub/auth/callback"
@@ -52,12 +52,12 @@ def servers(tmp_path, monkeypatch):
     }.items():
         monkeypatch.setenv(name, value)
     monkeypatch.delenv("CRUCIBLE_AUTH_PROVIDERS", raising=False)
-    monkeypatch.setattr(hub_auth, "get_api_root_path", lambda: "")
+    monkeypatch.setattr(browser_sign_in, "get_api_root_path", lambda: "")
     monkeypatch.setattr(passwords, "get_api_root_path", lambda: "")
     config.get_settings.cache_clear()
 
     engine = create_engine(f"sqlite:///{tmp_path / 'browser.db'}", connect_args={"check_same_thread": False})
-    SQLModel.metadata.create_all(engine, tables=[model.__table__ for model in (User, UserIdentity, AuthEvent, HubLoginTransaction, HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken, LocalCredential, LoginThrottle, PasswordToken, DeviceAuthorization)])
+    SQLModel.metadata.create_all(engine, tables=[model.__table__ for model in (User, UserIdentity, AuthEvent, LoginTransaction, LoginCode, TokenFamily, RefreshToken, AccessToken, LocalCredential, LoginThrottle, PasswordToken, DeviceAuthorization)])
     with Session(engine) as session:
         user = User(unique_id="0tmnyhfztdwc1000w2kspzsnh0", username="ada.lovelace", first_name="Ada", last_name="Lovelace")
         session.add(user)
@@ -66,7 +66,7 @@ def servers(tmp_path, monkeypatch):
         session.commit()
 
     app = FastAPI()
-    for router in (hub_auth.router, hub_auth.password_router, oauth.router, passwords.pages):
+    for router in (browser_sign_in.router, browser_sign_in.password_router, oauth.router, passwords.pages):
         app.include_router(router)
     app.dependency_overrides[get_engine] = lambda: engine
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=api_port, log_level="warning"))

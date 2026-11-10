@@ -11,14 +11,14 @@ from app.auth.providers import ProviderUnavailable, new_code_verifier
 from app.config import ConfigurationError, get_settings
 from app.models.identities import IdentityRead, LinkStart, LinkStartRead
 from app.api.path_params import UserRef
-from app.utils.auth_utils import authorize_user, caller_row, require_human_admin_safeguard, require_platform_admin, require_recent_hub_session, require_self_or_platform_admin
+from app.utils.auth_utils import authorize_user, caller_row, require_human_admin_safeguard, require_platform_admin, require_recent_session, require_self_or_platform_admin
 from app.utils.user_utils import person_by_reference, resolve_user_by_identifier
-from app.utils.hub_login import HubLoginUnavailable, InvalidHubLogin, load_login_config
+from app.auth.login_transactions import SignInUnavailable, InvalidLoginRequest, load_login_config
 from app.utils.permissions import Principal
 
 router = APIRouter(tags=["account"])
 
-HUB_ONLY = "Changing how you sign in needs a Hub session, not an API key"
+SESSION_ONLY = "Changing how you sign in needs a Hub session, not an API key"
 LOOKUP_OFF = {"code": "identity_lookup_off", "message": "Linking is not available yet on this server"}
 _STEP_UP = {401: {"description": "A Hub session needs a recent sign-in (`insufficient_user_authentication`)"}, 403: {"description": "`hub_session_required`: API keys cannot change how you sign in; `browser_sign_in_required`: nor can a session approved with a device code"}}
 
@@ -38,13 +38,13 @@ async def start_account_link(provider_key: Annotated[str, Path(max_length=32)], 
     """Start adding another way to sign in. Returns a one-time address on the API to send the
     person's browser to; the provider asks them to sign in, and the Hub then previews and confirms
     the link with POST /oauth/link/preview and /oauth/link/confirm."""
-    require_recent_hub_session(auth_res, HUB_ONLY)
+    require_recent_session(auth_res, SESSION_ONLY)
     try:
         require_linking_available()
         config = load_login_config()
     except LinkingUnavailable:
         raise HTTPException(status_code=409, detail=LOOKUP_OFF)
-    except HubLoginUnavailable:
+    except SignInUnavailable:
         raise HTTPException(status_code=503, detail="Hub sign-in is unavailable")
     provider = get_settings().auth.provider(provider_key)
     if provider is None:
@@ -52,7 +52,7 @@ async def start_account_link(provider_key: Annotated[str, Path(max_length=32)], 
     try:
         code_verifier = await new_code_verifier(provider)
         start = await run_in_threadpool(begin_link, get_engine(), config, auth_res.internal_user_id, auth_res.client_id, auth_res.session_family_id, provider, body.callback_uri, body.state, body.code_challenge, code_verifier=code_verifier)
-    except InvalidHubLogin:
+    except InvalidLoginRequest:
         raise HTTPException(status_code=400, detail="Invalid link request")
     except TooManyLinks:
         raise HTTPException(status_code=429, detail={"code": "too_many_links", "message": "Too many links started recently; try again in a few minutes"}, headers={"Retry-After": "600"})
@@ -66,7 +66,7 @@ def unlink_account_identity(identity_id: int, auth_res: Annotated[Principal, Dep
     """Remove one of your ways to sign in. Your other Hub sessions end; this one stays. Your last
     way to sign in cannot be removed. Signing in again with a removed login from a provider that
     lets anyone register creates a new, separate account."""
-    require_recent_hub_session(auth_res, HUB_ONLY)
+    require_recent_session(auth_res, SESSION_ONLY)
     try:
         require_linking_available()
     except LinkingUnavailable:
@@ -84,12 +84,12 @@ def unlink_account_identity(identity_id: int, auth_res: Annotated[Principal, Dep
         session.commit()
 
 
-ADMIN_HUB_ONLY = "Changing how someone signs in needs a Hub session, not an API key"
+ADMIN_SESSION_ONLY = "Changing how someone signs in needs a Hub session, not an API key"
 
 
 def _admin_target(session: Session, user_ref: str, auth_res: Principal):
     require_platform_admin(auth_res)
-    require_recent_hub_session(auth_res, ADMIN_HUB_ONLY)
+    require_recent_session(auth_res, ADMIN_SESSION_ONLY)
     try:
         require_linking_available()
     except LinkingUnavailable:

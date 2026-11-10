@@ -12,10 +12,10 @@ from app.auth.sign_in import NOT_LINKED, SignInRefused, resolve_sign_in
 from app.tables import (
     DeviceAuthorization,
     LoginThrottle,
-    AccessGroup, AuthEvent, Dataset, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserAccessGroupLink, UserIdentity,
+    AccessGroup, AuthEvent, Dataset, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User, UserAccessGroupLink, UserIdentity,
 )
 from app.utils.auth_utils import authenticate_user
-from app.utils.hub_tokens import InvalidHubGrant, issue_hub_tokens
+from app.auth.tokens import InvalidGrant, issue_tokens
 from app.utils.permissions import PlatformRole
 from tests.test_auth_providers import LAB_ENTRY, ORCID_ENTRY, set_providers
 
@@ -75,11 +75,11 @@ def test_waiting_accounts_get_no_hub_tokens_or_api_key(db_engine, use_engine):
     from app.utils import auth_utils
 
     use_engine(db_engine)
-    SQLModel.metadata.create_all(db_engine, tables=[LoginThrottle.__table__, DeviceAuthorization.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__])
+    SQLModel.metadata.create_all(db_engine, tables=[LoginThrottle.__table__, DeviceAuthorization.__table__, TokenFamily.__table__, RefreshToken.__table__, AccessToken.__table__])
     unique_id, _ = sign_in(db_engine, LAB_ISSUER, "newcomer", "approval")
     user = people(db_engine)[unique_id]
-    with pytest.raises(InvalidHubGrant):
-        issue_hub_tokens(db_engine, user.id, "crucible-hub")
+    with pytest.raises(InvalidGrant):
+        issue_tokens(db_engine, user.id, "crucible-hub")
     with Session(db_engine) as session:
         session.add(ApiToken(token="planted", user_id=user.id, user_unique_id=unique_id, access_group_id=unique_id, token_created=datetime.now(timezone.utc).date().isoformat()))
         session.commit()
@@ -90,14 +90,14 @@ def test_waiting_accounts_get_no_hub_tokens_or_api_key(db_engine, use_engine):
 
 @pytest.fixture
 def hub(remote, client, db_engine, monkeypatch):
-    import app.api.routes.hub_auth as hub_routes
+    import app.api.routes.browser_sign_in as hub_routes
 
     for name, value in {"HUB_AUTH_CALLBACK_URI": SIGN_IN_CALLBACK, "HUB_AUTH_PUBLIC_API_URL": "http://localhost:7777", "HUB_AUTH_ENABLED": "true",
                         "HUB_AUTH_CLIENT_SECRET": "test-only-secret-padded-to-32-characters", "CRUCIBLE_AUTH_IDENTITY_LOOKUP": "true"}.items():
         monkeypatch.setenv(name, value)
     set_providers(monkeypatch, ORCID_ENTRY, {**LAB_ENTRY, "registration": "approval"})
     monkeypatch.setattr(hub_routes, "get_api_root_path", lambda: "")
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginTransaction, HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginTransaction, LoginCode, TokenFamily, RefreshToken, AccessToken)])
     return remote, client
 
 
@@ -116,7 +116,7 @@ def test_hub_sign_in_shows_the_waiting_page_and_issues_no_code(hub, db_engine):
     assert "waiting for approval" in response.text
     assert response.headers["content-security-policy"].startswith("default-src 'none'")
     with Session(db_engine) as session:
-        assert session.exec(select(HubLoginCode)).all() == []
+        assert session.exec(select(LoginCode)).all() == []
     assert [user.pending_at is not None for user in people(db_engine).values()] == [True]
 
 
@@ -226,13 +226,13 @@ def test_stale_waiting_accounts_expire_through_the_same_function(db_engine):
 
 
 def test_cleanup_job_reports_and_removes_stale_waiting_accounts(db_engine):
-    from app.utils.hub_auth_maintenance import cleanup_hub_auth
+    from app.auth.cleanup import cleanup_sign_in_records
 
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginTransaction, HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken, LoginThrottle, DeviceAuthorization)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginTransaction, LoginCode, TokenFamily, RefreshToken, AccessToken, LoginThrottle, DeviceAuthorization)])
     waiting(db_engine)
     later = datetime.now(timezone.utc) + timedelta(days=31)
-    assert cleanup_hub_auth(db_engine, now=later)["pending_users"] == 1
-    assert cleanup_hub_auth(db_engine, commit=True, now=later)["pending_users"] == 1
+    assert cleanup_sign_in_records(db_engine, now=later)["pending_users"] == 1
+    assert cleanup_sign_in_records(db_engine, commit=True, now=later)["pending_users"] == 1
     assert people(db_engine) == {}
 
 

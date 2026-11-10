@@ -13,8 +13,8 @@ from sqlmodel import Session, SQLModel, select
 
 import app.utils.auth_utils as auth_utils
 from app.auth.api_keys import newest_key, status_of
-from app.tables import ApiToken, HubAccessToken, HubLoginCode, HubRefreshToken, HubTokenFamily, User
-from app.utils.hub_tokens import hub_access_family, issue_hub_tokens, refresh_hub_tokens, revoke_all_hub_tokens
+from app.tables import ApiToken, AccessToken, LoginCode, RefreshToken, TokenFamily, User
+from app.auth.tokens import access_token_family, issue_tokens, refresh_tokens, revoke_all_tokens
 
 ORCID = "0000-0002-1825-0097"
 MFID = "0tmnyhfztdwc1000w2kspzsnh9"
@@ -24,7 +24,7 @@ pytestmark = pytest.mark.usefixtures("hub_client_registered")
 
 @pytest.fixture
 def person_with_key_and_hub_session(db_engine, use_engine):
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginCode, TokenFamily, RefreshToken, AccessToken)])
     use_engine(db_engine)
     with auth_utils._auth_cache_lock:
         auth_utils._auth_cache.clear()
@@ -34,7 +34,7 @@ def person_with_key_and_hub_session(db_engine, use_engine):
         session.flush()
         user_id = user.id
     key = auth_utils.find_or_add_api_access(user_id, db_engine)
-    pair = issue_hub_tokens(db_engine, user_id, "crucible-hub")
+    pair = issue_tokens(db_engine, user_id, "crucible-hub")
     with Session(db_engine) as session, session.begin():
         session.get(User, user_id).unique_id = MFID
     with auth_utils._auth_cache_lock:
@@ -50,14 +50,14 @@ def test_new_keys_and_hub_sessions_name_the_person_by_internal_id(db_engine, per
     user_id, _, _ = person_with_key_and_hub_session
     with Session(db_engine) as session:
         assert [(t.user_id, t.user_unique_id) for t in session.exec(select(ApiToken)).all()] == [(user_id, ORCID)]
-        assert [(f.user_id, f.user_unique_id) for f in session.exec(select(HubTokenFamily)).all()] == [(user_id, ORCID)]
+        assert [(f.user_id, f.user_unique_id) for f in session.exec(select(TokenFamily)).all()] == [(user_id, ORCID)]
 
 
 def test_key_and_hub_session_still_work_after_unique_id_changes(db_engine, person_with_key_and_hub_session):
     user_id, key, pair = person_with_key_and_hub_session
     assert (authorize(key).user_id, authorize(key).internal_user_id) == (MFID, user_id)
     assert authorize(pair.access_token).user_id == MFID
-    assert refresh_hub_tokens(db_engine, pair.refresh_token, "crucible-hub").user_unique_id == MFID
+    assert refresh_tokens(db_engine, pair.refresh_token, "crucible-hub").user_unique_id == MFID
     with Session(db_engine) as session:
         assert status_of(newest_key(session, user_id)) == "active"
     assert auth_utils.find_or_add_api_access(user_id, db_engine) == key
@@ -66,10 +66,10 @@ def test_key_and_hub_session_still_work_after_unique_id_changes(db_engine, perso
 def test_revoking_hub_sessions_by_internal_id_after_unique_id_changes(db_engine, person_with_key_and_hub_session):
     user_id, _, pair = person_with_key_and_hub_session
     with Session(db_engine) as session, session.begin():
-        revoke_all_hub_tokens(session, user_id, now=datetime.now(timezone.utc))
+        revoke_all_tokens(session, user_id, now=datetime.now(timezone.utc))
     with Session(db_engine) as session:
         with pytest.raises(Exception):
-            hub_access_family(session, pair.access_token)
+            access_token_family(session, pair.access_token)
 
 
 def test_a_key_with_no_owner_signs_nobody_in(db_engine, use_engine):

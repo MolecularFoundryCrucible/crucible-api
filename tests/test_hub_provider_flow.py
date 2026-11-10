@@ -18,9 +18,9 @@ from sqlmodel import Session, SQLModel, select
 
 from app.api.dependencies import get_engine
 from app.api.routes import auth as auth_routes
-from app.api.routes import hub_auth as routes
+from app.api.routes import browser_sign_in as routes
 from app.config import get_settings, missing_required_settings
-from app.tables import HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserIdentity
+from app.tables import AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User, UserIdentity
 from tests.test_auth_providers import LAB_ENTRY, ORCID_ENTRY, FakeProvider
 
 HUB_CALLBACK = "https://hub.example/hub/auth/callback"
@@ -67,7 +67,7 @@ def configure(monkeypatch):
 
 @pytest.fixture
 def client(db_engine, configure, remote):
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginCode, HubLoginTransaction, HubTokenFamily, HubRefreshToken, HubAccessToken)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginCode, LoginTransaction, TokenFamily, RefreshToken, AccessToken)])
     app = FastAPI()
     app.include_router(routes.router)
     app.include_router(auth_routes.router)
@@ -121,7 +121,7 @@ def hub_answer(response):
 
 def issued_codes(db_engine):
     with Session(db_engine) as session:
-        return session.exec(select(HubLoginCode)).all()
+        return session.exec(select(LoginCode)).all()
 
 
 def people(db_engine):
@@ -154,7 +154,7 @@ def test_several_methods_show_chooser_and_start_nothing(client, db_engine):
     assert "ORCID" in page.text and "Example Lab" in page.text
     assert "crucible_hub_login" not in page.cookies
     with Session(db_engine) as session:
-        assert session.exec(select(HubLoginTransaction)).all() == []
+        assert session.exec(select(LoginTransaction)).all() == []
 
 
 def test_chooser_refuses_a_bad_request_before_showing_anything(client):
@@ -331,7 +331,7 @@ def test_pkce_omitted_for_orcid(client, remote):
 def test_in_flight_login_without_provider_key_finishes(client, remote, db_engine):
     query = start(client, remote, "orcid")
     with Session(db_engine) as session, session.begin():
-        row = session.exec(select(HubLoginTransaction)).one()
+        row = session.exec(select(LoginTransaction)).one()
         row.provider_key = None
         row.provider_code_verifier = None
     remote["orcid.org"].claims = {"nonce": query["nonce"][0], "sub": ORCID}
@@ -469,7 +469,7 @@ def test_login_record_is_single_use(client, remote, db_engine):
 def test_expired_login_record_never_redirects(client, remote, db_engine):
     query = start(client, remote, "lab")
     with Session(db_engine) as session, session.begin():
-        session.exec(select(HubLoginTransaction)).one().expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        session.exec(select(LoginTransaction)).one().expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     assert finish(client, "/auth/hub/oidc/lab/callback", query).status_code == 400
 
 
@@ -541,7 +541,7 @@ def test_failure_detail_is_not_sent_to_the_hub(client, remote):
 def oauth_client(db_engine, configure, remote):
     from app.api.routes import oauth as oauth_routes
 
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginCode, HubLoginTransaction, HubTokenFamily, HubRefreshToken, HubAccessToken)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginCode, LoginTransaction, TokenFamily, RefreshToken, AccessToken)])
     app = FastAPI()
     for router in (routes.router, auth_routes.router, oauth_routes.router, oauth_routes.discovery):
         app.include_router(router)

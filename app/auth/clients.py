@@ -55,13 +55,13 @@ def _device_approval(listed: tuple[RegisteredClient, ...]) -> tuple[RegisteredCl
     """The API's own page for approving device sign-ins signs people in like a client, with its own
     callback, but never receives tokens. It exists only when a public client may use the device flow."""
     from app.auth.devices import INTERNAL_CLIENT_ID
-    from app.utils.hub_login import HubLoginUnavailable, public_api_url
+    from app.auth.login_transactions import SignInUnavailable, public_api_url
 
     if not any(client.is_public for client in listed):
         return ()
     try:
         callback = f"{public_api_url()}/oauth/device/callback"
-    except (HubLoginUnavailable, ConfigurationError):
+    except (SignInUnavailable, ConfigurationError):
         return ()
     return (RegisteredClient(INTERNAL_CLIENT_ID, "Crucible", (callback,), None, "internal"),)
 

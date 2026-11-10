@@ -24,7 +24,7 @@ from app.api.routes import (account, api_keys, auth, identities, files, datasets
                             samples, instruments, users, projects,
                             access_groups, entities, misc, deletion,
                             ingestion_requests, join_requests, pipelines, service_accounts,
-                            resource_graph, hub_auth, oauth, device, passwords, sessions, print as print_routes)
+                            resource_graph, browser_sign_in, oauth, device, passwords, sessions, print as print_routes)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,7 +55,7 @@ app = FastAPI(
 register_error_handlers(app)
 
 
-HUB_AUTH_HEADERS = {
+SIGN_IN_HEADERS = {
     "Cache-Control": "no-store",
     "Pragma": "no-cache",
     "Referrer-Policy": "no-referrer",
@@ -63,7 +63,7 @@ HUB_AUTH_HEADERS = {
 }
 
 
-def _is_hub_auth_request(request: Request) -> bool:
+def _is_sign_in_request(request: Request) -> bool:
     path = request.scope["path"]
     root = request.scope.get("root_path", "").rstrip("/")
     if root and path.startswith(root + "/"):
@@ -73,7 +73,7 @@ def _is_hub_auth_request(request: Request) -> bool:
 
 @app.exception_handler(RequestValidationError)
 async def handle_request_validation(request: Request, error: RequestValidationError):
-    if not _is_hub_auth_request(request):
+    if not _is_sign_in_request(request):
         return await request_validation_exception_handler(request, error)
     return JSONResponse(
         status_code=422,
@@ -82,7 +82,7 @@ async def handle_request_validation(request: Request, error: RequestValidationEr
             "msg": "Invalid authentication request",
             "type": "value_error",
         }]},
-        headers=HUB_AUTH_HEADERS,
+        headers=SIGN_IN_HEADERS,
     )
 
 
@@ -266,7 +266,7 @@ async def log_requests(request: Request, call_next):
             _deprecated_caller_agent(request),
         )
         _audit_privileged_request(request, 500, duration_ms)
-        if _is_hub_auth_request(request):
+        if _is_sign_in_request(request):
             logger.error(
                 "Hub authentication failure error_type=%s request_id=%s",
                 type(error).__name__, request.state.request_id,
@@ -274,7 +274,7 @@ async def log_requests(request: Request, call_next):
             return JSONResponse(
                 status_code=500,
                 content={"detail": "Authentication request failed"},
-                headers={**HUB_AUTH_HEADERS, "X-Request-ID": request.state.request_id},
+                headers={**SIGN_IN_HEADERS, "X-Request-ID": request.state.request_id},
             )
         raise
 
@@ -288,8 +288,8 @@ async def log_requests(request: Request, call_next):
         elif "cache-control" not in response.headers:
             response.headers["Cache-Control"] = "private"
     response.headers["X-Request-ID"] = request.state.request_id
-    if _is_hub_auth_request(request):
-        response.headers.update(HUB_AUTH_HEADERS)
+    if _is_sign_in_request(request):
+        response.headers.update(SIGN_IN_HEADERS)
     duration_ms = (time.perf_counter() - started) * 1000
     route = _route_template(request)
     if response.status_code < 400 and route in QUIET_ROUTES:
@@ -314,9 +314,9 @@ app.include_router(account.router)
 app.include_router(identities.router)
 app.include_router(api_keys.router)
 app.include_router(auth.router)
-app.include_router(hub_auth.router)
-app.include_router(hub_auth.link_router)
-app.include_router(hub_auth.password_router)
+app.include_router(browser_sign_in.router)
+app.include_router(browser_sign_in.link_router)
+app.include_router(browser_sign_in.password_router)
 app.include_router(oauth.router)
 app.include_router(oauth.discovery)
 app.include_router(device.router)
@@ -394,7 +394,7 @@ def custom_openapi():
                     operation["responses"]["422"]["description"] = "Invalid authentication request; submitted values and validation context are omitted"
                 for response in operation["responses"].values():
                     response_headers = response.setdefault("headers", {})
-                    for name, value in HUB_AUTH_HEADERS.items():
+                    for name, value in SIGN_IN_HEADERS.items():
                         response_headers[name] = {"schema": {"type": "string", "const": value}}
                     response_headers["X-Request-ID"] = {"$ref": "#/components/headers/CrucibleRequestId"}
             security_requirements = operation.get("security", [])

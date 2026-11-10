@@ -41,7 +41,7 @@ async def start_account_link(provider_key: Annotated[str, Path(max_length=32)], 
     require_recent_session(auth_res, SESSION_ONLY)
     try:
         require_linking_available()
-        config = load_login_config()
+        config = await run_in_threadpool(load_login_config)
     except LinkingUnavailable:
         raise HTTPException(status_code=409, detail=LOOKUP_OFF)
     except SignInUnavailable:

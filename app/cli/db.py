@@ -95,14 +95,19 @@ def sequences_behind(connection) -> list[dict]:
         highest = connection.execute(text(f"SELECT max({_quoted(column)}) FROM {_quoted(schema)}.{_quoted(table)}")).scalar()
         next_value = last_value + 1 if is_called else last_value
         if highest is not None and next_value <= highest:
-            behind.append({"table": table, "column": column, "sequence": sequence, "next_value": next_value, "highest_id": highest})
+            behind.append({"schema": schema, "table": table, "column": column, "sequence": sequence, "next_value": next_value, "highest_id": highest})
     return behind
 
 
 def advance_sequences(connection, behind: list[dict]) -> None:
-    """Move each sequence to its table's highest id, never backwards."""
+    """Move each sequence to its table's highest id. The value is read again in the same statement
+    and compared with where the sequence is by then, so rows or inserts that arrived since the
+    report cannot make this move a sequence backwards or leave it short."""
     for entry in behind:
-        connection.execute(text("SELECT setval(CAST(:sequence AS regclass), :highest)"), {"sequence": entry["sequence"], "highest": entry["highest_id"]})
+        target = f"{_quoted(entry['schema'])}.{_quoted(entry['table'])}"
+        connection.execute(text(
+            f"SELECT setval(CAST(:sequence AS regclass), GREATEST((SELECT max({_quoted(entry['column'])}) FROM {target}), (SELECT last_value FROM {entry['sequence']})))"
+        ), {"sequence": entry["sequence"]})
 
 
 def register(groups: argparse._SubParsersAction) -> None:

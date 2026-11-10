@@ -60,3 +60,14 @@ def test_the_production_database_needs_its_confirmation_before_a_change(engine, 
     with pytest.raises(RuntimeError, match="production"):
         db_cli._run_sequences(SimpleNamespace(commit=True, yes_this_is_production=False))
     assert db_cli._run_sequences(SimpleNamespace(commit=True, yes_this_is_production=True)) == 0
+
+
+def test_a_report_gone_stale_cannot_move_a_sequence_backwards_or_leave_it_short(engine):
+    with engine.begin() as connection:
+        stale = db_cli.sequences_behind(connection)
+        connection.execute(text("INSERT INTO keyword (id, keyword) VALUES (90, 'copied after the report')"))
+        db_cli.advance_sequences(connection, stale)
+        assert connection.execute(text("INSERT INTO keyword (keyword) VALUES ('new') RETURNING id")).scalar() == 91
+        connection.execute(text("SELECT setval(pg_get_serial_sequence('keyword', 'id'), 500)"))
+        db_cli.advance_sequences(connection, stale)
+        assert connection.execute(text("INSERT INTO keyword (keyword) VALUES ('newer') RETURNING id")).scalar() == 501

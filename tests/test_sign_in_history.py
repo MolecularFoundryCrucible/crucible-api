@@ -97,3 +97,21 @@ def test_a_waiting_account_has_a_history_for_administrators(client, people, auth
     client.headers["Crucible-Privilege-Mode"] = "elevated"
     auth_as(BOSS, platform_role=PlatformRole.ADMIN)
     assert [item["event"] for item in client.get("/users/waiting/auth-events").json()["items"]] == ["registered"]
+
+
+def test_people_read_their_own_history_and_nobody_elses(client, people, auth_as):
+    engine, ada = people
+    with Session(engine) as session:
+        person, boss = session.get(User, ada), session.exec(select(User).where(User.unique_id == BOSS)).one()
+        for event, about, actor in ((AuthEventType.SIGN_IN, person, None), (AuthEventType.SIGN_IN, boss, None), (AuthEventType.LINK_ISSUED, person, boss), (AuthEventType.PASSWORD_RESET, person, person)):
+            record_event(session, event, user=about, actor=actor)
+        session.commit()
+    auth_as(ADA)
+    first = client.get("/account/auth-events", params={"limit": 2}).json()
+    assert first["total"] == 3 and [(item["event"], item["actor_unique_id"]) for item in first["items"]] == [("password_reset", None), ("link_issued", BOSS)]
+    assert "client_address" not in first["items"][0]
+    rest = client.get("/account/auth-events", params={"limit": 2, "cursor": first["next_cursor"]}).json()
+    assert [item["event"] for item in rest["items"]] == ["sign_in"] and rest["next_cursor"] is None
+    auth_as(BOSS, platform_role=PlatformRole.ADMIN)
+    assert [item["event"] for item in client.get("/account/auth-events").json()["items"]] == ["sign_in"]
+    assert client.get("/account/auth-events", params={"cursor": first["next_cursor"]}).status_code == 422

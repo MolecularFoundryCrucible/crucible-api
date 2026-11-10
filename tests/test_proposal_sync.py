@@ -50,10 +50,10 @@ def person(db_engine, unique_id=ORCID, linked=None, **fields):
             session.add(UserIdentity(user_id=user.id, issuer=ISSUER, subject=linked))
 
 
-def project(db_engine, project_id="MF-1", group=True, pending=False):
+def project(db_engine, project_id="MF-1", group=True, pending=False, proposal_sync=True):
     unique_id = project_id.lower().replace("-", "x").ljust(26, "0")
     with Session(db_engine) as session, session.begin():
-        session.add(Project(project_id=project_id, unique_id=unique_id, organization="MF", project_lead_orcid="lead"))
+        session.add(Project(project_id=project_id, unique_id=unique_id, organization="MF", project_lead_orcid="lead", proposal_sync=proposal_sync))
         if group:
             session.add(AccessGroup(group_name=unique_id, group_type="project"))
         if pending:
@@ -142,6 +142,15 @@ def test_sync_returns_502_when_the_proposal_service_is_down(client, auth_as, db_
 def test_sync_skips_projects_pending_deletion(client, auth_as, db_engine, monkeypatch, lookup_on):
     person(db_engine, ORCID, linked=ORCID)
     group = project(db_engine, pending=True)
+    answers(monkeypatch, "MF-1")
+    result = sync(client, auth_as).json()
+    assert result["projects_added"] == [] and result["projects_not_found"] == ["MF-1"]
+    assert group not in memberships(db_engine)
+
+
+def test_sync_skips_projects_an_administrator_did_not_create(client, auth_as, db_engine, monkeypatch, lookup_on):
+    person(db_engine, ORCID, linked=ORCID)
+    group = project(db_engine, proposal_sync=False)
     answers(monkeypatch, "MF-1")
     result = sync(client, auth_as).json()
     assert result["projects_added"] == [] and result["projects_not_found"] == ["MF-1"]

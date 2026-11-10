@@ -64,16 +64,22 @@ SIGN_IN_HEADERS = {
 }
 
 
-def _is_sign_in_request(request: Request) -> bool:
+def _path(request: Request) -> str:
     path = request.scope["path"]
     root = request.scope.get("root_path", "").rstrip("/")
-    if root and path.startswith(root + "/"):
-        path = path[len(root):]
+    return path[len(root):] if root and path.startswith(root + "/") else path
+
+
+def _is_sign_in_request(request: Request) -> bool:
+    path = _path(request)
     return path == "/auth/hub" or path.startswith(("/auth/hub/", "/oauth/"))
 
 
 @app.exception_handler(RequestValidationError)
 async def handle_request_validation(request: Request, error: RequestValidationError):
+    if _path(request) == "/account/password":
+        # The default answer repeats the submitted body, which here is a password.
+        return JSONResponse(status_code=422, content={"detail": [{"loc": list(item["loc"]), "msg": item["msg"], "type": item["type"]} for item in error.errors()]}, headers={"Cache-Control": "no-store"})
     if not _is_sign_in_request(request):
         return await request_validation_exception_handler(request, error)
     return JSONResponse(

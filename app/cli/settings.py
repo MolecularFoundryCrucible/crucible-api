@@ -38,6 +38,7 @@ RETIRED_VARIABLES = {
         )
     },
     "API_CONF_FILE": "the YAML settings files are gone; set API_PUBLIC_URL and API_PATH",
+    "LEGACY_UPLOAD_TOKEN_DOWNSCOPE": "the upload routes that handed out storage tokens were removed",
     **{
         name: "the browser page that handed out an API key was removed; the ORCID provider in CRUCIBLE_AUTH_PROVIDERS has its own client_id and OIDC_ORCID_CLIENT_SECRET"
         for name in ("ORCID_CLIENT_ID", "ORCID_CLIENT_SECRET", "ORCID_CLIENT_SECRET_FILE", "ORCID_CLIENT_SECRET_VERSION")

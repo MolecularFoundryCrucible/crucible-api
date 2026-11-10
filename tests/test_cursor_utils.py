@@ -34,13 +34,13 @@ def _restart():
 
 
 def test_cursor_signing_key_rotation_accepts_retained_old_key(monkeypatch):
-    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", json.dumps({"old": "old-secret"}))
+    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", json.dumps({"old": "old-secret" * 4}))
     monkeypatch.setenv("CRUCIBLE_CURSOR_ACTIVE_KEY_ID", "old")
     old_cursor = _new_cursor()
 
     monkeypatch.setenv(
         "CRUCIBLE_CURSOR_SIGNING_KEYS",
-        json.dumps({"old": "old-secret", "new": "new-secret"}),
+        json.dumps({"old": "old-secret" * 4, "new": "new-secret" * 4}),
     )
     monkeypatch.setenv("CRUCIBLE_CURSOR_ACTIVE_KEY_ID", "new")
     _restart()
@@ -50,11 +50,11 @@ def test_cursor_signing_key_rotation_accepts_retained_old_key(monkeypatch):
 
 
 def test_cursor_rejects_removed_key_and_invalid_configuration(monkeypatch):
-    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", json.dumps({"old": "old-secret"}))
+    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", json.dumps({"old": "old-secret" * 4}))
     monkeypatch.setenv("CRUCIBLE_CURSOR_ACTIVE_KEY_ID", "old")
     old_cursor = _new_cursor()
 
-    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", json.dumps({"new": "new-secret"}))
+    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", json.dumps({"new": "new-secret" * 4}))
     monkeypatch.setenv("CRUCIBLE_CURSOR_ACTIVE_KEY_ID", "new")
     _restart()
     with pytest.raises(CursorError, match="Unknown cursor signing key"):
@@ -63,6 +63,11 @@ def test_cursor_rejects_removed_key_and_invalid_configuration(monkeypatch):
     monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", "[]")
     _restart()
     with pytest.raises(RuntimeError, match="must map"):
+        _new_cursor()
+
+    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", json.dumps({"new": "short"}))
+    _restart()
+    with pytest.raises(RuntimeError, match="at least 32 characters"):
         _new_cursor()
 
 
@@ -89,8 +94,8 @@ def test_cursor_signing_key_reference_is_used(monkeypatch):
     monkeypatch.delenv("CRUCIBLE_CURSOR_SIGNING_KEYS", raising=False)
     monkeypatch.delenv("CRUCIBLE_CURSOR_SIGNING_KEY", raising=False)
     monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEY_VERSION", "projects/1/secrets/cursor/versions/1")
-    monkeypatch.setattr(config, "get_gcs_secret", lambda name: "from-manager")
+    monkeypatch.setattr(config, "get_gcs_secret", lambda name: "from-manager" * 3)
     _restart()
     from app.utils import cursor_utils
 
-    assert cursor_utils._signing_keys() == ("v1", {"v1": b"from-manager"})
+    assert cursor_utils._signing_keys() == ("v1", {"v1": b"from-manager" * 3})

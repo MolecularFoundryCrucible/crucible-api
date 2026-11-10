@@ -101,15 +101,29 @@ def device_by_hash(engine, device_hash: str, *, now: datetime | None = None) -> 
         return PendingDevice(row.device_code_hash, row.client_id, _aware(row.created_at), "", row.requested_from)
 
 
-def decide(engine, device_hash: str, *, user_id: int, auth_time: datetime, approve: bool, now: datetime | None = None) -> bool:
-    """Record the person's decision once, while the device sign-in is still waiting."""
-    current = _now(now)
-    values = {"user_id": user_id, "auth_time": auth_time, "approved_at": current} if approve else {"denied_at": current}
+def _waiting(device_hash: str, current: datetime) -> tuple:
+    return (
+        DeviceAuthorization.device_code_hash == device_hash, DeviceAuthorization.approved_at.is_(None), DeviceAuthorization.denied_at.is_(None),
+        DeviceAuthorization.consumed_at.is_(None), DeviceAuthorization.expires_at > current,
+    )
+
+
+def record_signed_in(engine, device_hash: str, *, user_id: int, auth_time: datetime, now: datetime | None = None) -> bool:
+    """Note who signed in to decide on this device sign-in. Only that person's decision is then
+    accepted, so the signed form that carries it cannot name anyone else."""
     with Session(engine) as session, session.begin():
-        row = session.execute(update(DeviceAuthorization).where(
-            DeviceAuthorization.device_code_hash == device_hash, DeviceAuthorization.approved_at.is_(None), DeviceAuthorization.denied_at.is_(None),
-            DeviceAuthorization.consumed_at.is_(None), DeviceAuthorization.expires_at > current,
-        ).values(**values).execution_options(synchronize_session=False).returning(DeviceAuthorization.device_code_hash)).first()
+        row = session.execute(update(DeviceAuthorization).where(*_waiting(device_hash, _now(now)))
+                              .values(user_id=user_id, auth_time=auth_time).execution_options(synchronize_session=False).returning(DeviceAuthorization.device_code_hash)).first()
+    return row is not None
+
+
+def decide(engine, device_hash: str, *, user_id: int, approve: bool, now: datetime | None = None) -> bool:
+    """Record the decision of the person who signed in for it, once, while the device sign-in is still waiting."""
+    current = _now(now)
+    with Session(engine) as session, session.begin():
+        row = session.execute(update(DeviceAuthorization).where(*_waiting(device_hash, current), DeviceAuthorization.user_id == user_id)
+                              .values(**({"approved_at": current} if approve else {"denied_at": current}))
+                              .execution_options(synchronize_session=False).returning(DeviceAuthorization.device_code_hash)).first()
     return row is not None
 
 

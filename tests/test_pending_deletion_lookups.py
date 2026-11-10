@@ -115,7 +115,6 @@ def writer(records, db_engine, auth_as, monkeypatch):
     ("delete", "/files/f-ds-pending", None),
     ("post", "/files/f-ds-pending/ingest", None),
     ("post", "/datasets/ds-pending/postprocess", {"pipeline": "rga_analysis"}),
-    ("post", "/datasets/ds-pending/upload/initiate", {"filename": "b.h5", "size": 1}),
     ("post", "/datasets/ds-pending/upload/multipart/initiate", {"filename": "b.h5", "size": 1}),
     ("post", "/datasets/ds/children/ds-pending", None),
     ("post", "/datasets/ds-pending/samples/sm", None),

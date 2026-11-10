@@ -427,8 +427,8 @@ def set_instrument_status(
     """Change an instrument's lifecycle status.
 
     Its own route rather than a field on PATCH: decommissioning is a lifecycle
-    transition, not a metadata edit, and carries a higher bar. Instruments are
-    never deleted, so this is how one is retired.
+    transition, not a metadata edit, and carries a higher bar. An instrument with
+    datasets cannot be deleted, so this is how one is retired.
     """
     if status not in VALID_INSTRUMENT_STATUSES:
         raise HTTPException(

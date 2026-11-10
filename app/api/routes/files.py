@@ -20,6 +20,7 @@ from app.general_utils import get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_readable_file, touch_resource_modification_time
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
+from app.models.multipart import checked_filename
 from app.models.ingestion import INGESTION_CLASS_PATTERN, IngestionRequestRead
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import DownloadLinkRead, MessageResponse
@@ -128,6 +129,10 @@ def update_file(
         if "filename" in changed and changed["filename"] != af.filename:
             if af.storage_backend != "gcs":
                 raise HTTPException(status_code=409, detail={"code": "filename_immutable", "message": "The filename of a non-GCS file is its identity and cannot change"})
+            try:
+                checked_filename(changed["filename"])
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from None
             taken = session.exec(select(AssociatedFile.mfid).where(AssociatedFile.dataset_id == af.dataset_id, AssociatedFile.filename == changed["filename"])).first()
             if taken is not None:
                 raise HTTPException(status_code=409, detail={"code": "filename_exists", "file_mfid": taken, "message": "Filename already exists"})

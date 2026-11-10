@@ -29,7 +29,7 @@ for _name, _value in {
     "DB_USERNAME": "test",
     "DB_DATABASE": "test",
     "PGDB_PW": "test-only",
-    "CRUCIBLE_SECRET_KEY": "test-only",
+    "CRUCIBLE_SECRET_KEY": "test-only-secret-key-of-32-characters",
     "RABBITMQ_DEFAULT_PW": "test-only",
     "API_PUBLIC_URL": "https://127.0.0.1:7777",
     "API_PATH": "testapi",
@@ -60,7 +60,7 @@ from app.tables import (
     AssociatedFile, IngestionRequest, Project, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
     DatasetLink, ApiToken, UploadSession, DeletionAuditLog, DatasetKeywordLink, Thumbnail,
-    ResourceEmbedding, UserPreferences, UserRecentResource, PostprocessingRun, FileVersion, UserIdentity, AuthEvent, ApiKey, PasswordToken, LocalCredential,
+    ResourceEmbedding, UserPreferences, UserRecentResource, PostprocessingRun, FileVersion, UserIdentity, AuthEvent, ApiKey, PasswordToken, LocalCredential, LoginCode, DeviceAuthorization,
 )
 from app.utils.auth_utils import authenticate_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
@@ -77,6 +77,7 @@ TEST_TABLES = [
     DeletionAuditLog.__table__, DatasetKeywordLink.__table__, Thumbnail.__table__,
     ResourceEmbedding.__table__, UserPreferences.__table__, UserRecentResource.__table__, UserIdentity.__table__, AuthEvent.__table__, ApiKey.__table__,
     PostprocessingRun.__table__, FileVersion.__table__, PasswordToken.__table__, LocalCredential.__table__,
+    LoginCode.__table__, DeviceAuthorization.__table__,
 ]
 
 

@@ -163,7 +163,8 @@ def authorize_user(
             alias=PRIVILEGE_MODE_HEADER,
             description=(
                 "Select normal ACL-derived authorization or explicit "
-                "platform-administrator elevation. Omission preserves legacy behavior."
+                "platform-administrator elevation. When omitted, an administrator's API key "
+                "is elevated and a browser session is normal."
             ),
         ),
     ] = None,

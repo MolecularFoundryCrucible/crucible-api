@@ -30,6 +30,16 @@ def empty_hash(body):
     return body
 
 
+def checked_filename(value: str) -> str:
+    if not 1 <= len(value) <= 1024:
+        raise ValueError("Filename must be 1 to 1024 characters")
+    if any(ord(c) < 32 or ord(c) == 127 for c in value) or "\\" in value:
+        raise ValueError("Invalid filename")
+    if any(part in {"", ".", ".."} for part in value.split("/")):
+        raise ValueError("Filename must be a relative path without dot segments")
+    return value
+
+
 class MultipartInitiate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     filename: str = Field(min_length=1, max_length=1024)
@@ -40,11 +50,7 @@ class MultipartInitiate(BaseModel):
     @field_validator("filename")
     @classmethod
     def valid_filename(cls, value):
-        if any(ord(c) < 32 or ord(c) == 127 for c in value) or "\\" in value:
-            raise ValueError("Invalid filename")
-        if any(part in {"", ".", ".."} for part in value.split("/")):
-            raise ValueError("Filename must be a relative path without dot segments")
-        return value
+        return checked_filename(value)
 
 
 class MultipartReplace(BaseModel):

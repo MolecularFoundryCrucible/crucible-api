@@ -17,7 +17,8 @@ from app.models.users import (
     ServiceAccountRead,
 )
 from app.auth.api_keys import key_status, newest_key
-from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin, require_recent_authentication
+from app.auth.events import AuthEventType, record_event
+from app.utils.auth_utils import authorize_user, caller_row, find_or_add_api_access, forget_cached_keys, require_platform_admin, require_recent_authentication, require_recent_session
 from app.utils.permissions import AccessGroupType, PlatformRole, Principal, Role
 from app.utils.user_utils import assert_username_available, resolve_service_account_reference, sql_add_user_to_access_group
 
@@ -93,13 +94,14 @@ def get_service_account(
         return _service_account_admin_detail(session, user)
 
 
-@router.patch("/service_accounts/{service_account_ref}", response_model=ServiceAccountAdminDetail)
+@router.patch("/service_accounts/{service_account_ref}", response_model=ServiceAccountAdminDetail, responses={401: {"description": "Making a service account an administrator needs a recent sign-in (`insufficient_user_authentication`)"}, 403: {"description": "Not an administrator, or making a service account an administrator with an API key (`hub_session_required`)"}})
 def update_service_account_platform_role(
     service_account_ref: ServiceAccountRef,
     body: ServiceAccountPlatformRoleUpdate,
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
-    """Update a service account's platform role."""
+    """Update a service account's platform role. Making one an administrator needs a browser
+    session with a recent sign-in, not an API key. The change is recorded as `role_changed`."""
     require_platform_admin(auth_res)
     if auth_res.is_service_account:
         raise HTTPException(
@@ -109,11 +111,15 @@ def update_service_account_platform_role(
 
     with Session(get_engine()) as session:
         user = resolve_service_account_reference(session, service_account_ref)
-
-        user.platform_role = body.platform_role
-        session.add(user)
-        session.commit()
-        session.refresh(user)
+        if user.platform_role != body.platform_role:
+            if body.platform_role == PlatformRole.ADMIN.value:
+                require_recent_session(auth_res, "Making a service account an administrator needs a Hub session, not an API key")
+            user.platform_role = body.platform_role
+            session.add(user)
+            record_event(session, AuthEventType.ROLE_CHANGED, user=user, actor=caller_row(session, auth_res))
+            session.commit()
+            forget_cached_keys(session, user.id)
+            session.refresh(user)
         return _service_account_admin_detail(session, user)
 
 

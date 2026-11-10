@@ -11,7 +11,7 @@ from sqlalchemy import delete, update
 from sqlmodel import Session, select
 
 from app.config import get_settings
-from app.tables import DeviceAuthorization, LoginCode, LocalCredential, PasswordToken, User
+from app.tables import LocalCredential, PasswordToken, User
 
 Purpose = Literal["setup", "reset"]
 
@@ -131,11 +131,6 @@ def use_link(session: Session, token: str, password: str, *, now: datetime | Non
     credential.blocked_until = None
     credential.locked_at = None
     revoke_all_tokens(session, user.id, now=current)
-    session.execute(update(LoginCode).where(LoginCode.user_id == user.id, LoginCode.consumed_at == None)  # noqa: E711
-                    .values(consumed_at=current).execution_options(synchronize_session=False))
-    session.execute(update(DeviceAuthorization).where(
-        DeviceAuthorization.user_id == user.id, DeviceAuthorization.consumed_at == None, DeviceAuthorization.denied_at == None,  # noqa: E711
-    ).values(denied_at=current).execution_options(synchronize_session=False))
     record_event(session, AuthEventType.PASSWORD_SET if first else AuthEventType.PASSWORD_RESET, user=user)
     return user
 

@@ -49,12 +49,25 @@ def test_cursor_signing_key_setting_is_used(monkeypatch):
     from app.utils import cursor_utils
 
     monkeypatch.delenv("CRUCIBLE_CURSOR_SIGNING_KEYS", raising=False)
-    monkeypatch.setenv("CRUCIBLE_SECRET_KEY", "main-secret")
-    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEY", "cursor-secret")
-    assert cursor_utils._signing_keys() == ("v1", {"v1": b"cursor-secret"})
+    monkeypatch.setenv("CRUCIBLE_SECRET_KEY", "main-secret" * 3)
+    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEY", "cursor-secret" * 3)
+    assert cursor_utils._signing_keys() == ("v1", {"v1": b"cursor-secret" * 3})
     monkeypatch.delenv("CRUCIBLE_CURSOR_SIGNING_KEY")
     get_settings.cache_clear()
-    assert cursor_utils._signing_keys() == ("v1", {"v1": b"main-secret"})
+    assert cursor_utils._signing_keys() == ("v1", {"v1": b"main-secret" * 3})
+
+
+@pytest.mark.parametrize("name", ["CRUCIBLE_SECRET_KEY", "CRUCIBLE_CURSOR_SIGNING_KEY"])
+def test_signing_keys_shorter_than_32_characters_are_refused(monkeypatch, name):
+    from app.config import ConfigurationError, get_secret
+
+    monkeypatch.setenv(name, "x" * 31)
+    get_settings.cache_clear()
+    with pytest.raises(ConfigurationError, match=f"{name} must be at least 32 characters"):
+        get_secret(name)
+    monkeypatch.setenv(name, "x" * 32)
+    get_settings.cache_clear()
+    assert get_secret(name) == "x" * 32
 
 
 def test_import_needs_no_settings(tmp_path):

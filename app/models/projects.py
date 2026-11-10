@@ -54,6 +54,7 @@ class ProjectRead(SQLModel):
     project_lead_orcid: Optional[str] = None
     status: Optional[str] = None
     title: Optional[str] = None
+    proposal_sync: bool = False
     capabilities: Optional[ResourceCapabilities] = None
 
     @model_validator(mode="after")
@@ -104,6 +105,7 @@ class ProjectUpdate(SQLModel):
     organization: NonBlankStr | MISSING = MISSING
     status: Optional[str] = None
     title: Optional[str] = None
+    proposal_sync: bool | MISSING = Field(default=MISSING, description="Administrators only. Whether people named on a proposal with this project's `project_id` are added to it.")
 
     @field_validator("project_id")
     @classmethod

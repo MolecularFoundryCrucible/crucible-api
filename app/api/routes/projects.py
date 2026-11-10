@@ -78,7 +78,9 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
     """
     Create a new project. One of project_lead (ORCID, username, or email) or
     project_lead_orcid/_email/_username must be provided and must correspond
-    to an existing user. The resolved canonical user identifier is stored on the project.
+    to an existing person, never a service account. Only an administrator may name
+    someone else as the lead (403 otherwise), and only a project an administrator
+    creates has `proposal_sync` on.
     Returns 409 if a project with the given project_id already exists.
     """
     named_lead_fields = [P.project_lead, P.project_lead_orcid, P.project_lead_email, P.project_lead_username]
@@ -100,6 +102,10 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
             project_lead = resolve_user_by_identifier(session, P.project_lead)
         else:
             project_lead = resolve_user(session, orcid=P.project_lead_orcid, email=P.project_lead_email, username=P.project_lead_username)
+        if project_lead.is_service_account:
+            raise HTTPException(status_code=422, detail="A service account cannot lead a project")
+        if not auth_res.is_platform_admin and not auth_res.is_user(project_lead):
+            raise HTTPException(status_code=403, detail={"code": "lead_must_be_caller", "message": "Only an administrator can create a project led by someone else"})
 
         prop = Project(
             project_id=P.project_id,
@@ -109,12 +115,13 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
             project_lead_orcid=project_lead.unique_id,
             lead_user_id=project_lead.id,
             project_lead_email=project_lead.email,
+            proposal_sync=auth_res.is_platform_admin,
         )
         session.add(prop)
 
         # ag.users.append would insert a link row with no role, failing closed to viewer.
         # Group is keyed by the project's MFID (unique_id), not project_id, see
-        # docs/permission_system_plan.md, "Groups" / the MFID-named-groups rename.
+        # docs/permissions.md, "Groups".
         ag = sql_add_user_to_access_group(project_lead.unique_id, prop.unique_id,
                                           session, role=Role.OWNER,
                                           group_type=AccessGroupType.PROJECT)
@@ -274,7 +281,7 @@ def search_projects(
     '''
     Search projects by title or project_id across all projects, not just ones the
     caller is a member of. This is how a user discovers a project to request to
-    join via POST /access_groups/{group_name}/join. Returns results ordered by
+    join via POST /projects/{project_ref}/join_requests. Returns results ordered by
     match quality. Maximum 50 results.
 
     Note: ProjectRead has no lead/scientific_metadata fields, so this is safe to
@@ -351,6 +358,8 @@ def update_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depen
 
     project_id may be changed (renamed) here. Datasets, samples, and memberships
     link to the project by MFID, so a rename changes only the project row.
+    Only an administrator may set `proposal_sync` (403 otherwise); a rename by
+    anyone else turns it off.
     '''
     with Session(get_engine()) as session:
         project = resolve_project_reference(project_ref, session)
@@ -361,8 +370,12 @@ def update_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depen
         require_permission(session, auth_res, project.unique_id, Permission.EDIT)
 
         update_data = project_update.model_dump(exclude_unset=True)
+        if "proposal_sync" in update_data and not auth_res.is_platform_admin:
+            raise HTTPException(status_code=403, detail="Only an administrator can change proposal_sync")
 
         if update_data.get("project_id") and update_data["project_id"] != project.project_id:
+            if not auth_res.is_platform_admin:
+                update_data["proposal_sync"] = False
             existing = session.exec(
                 select(Project).where(
                     project_id_matches(update_data["project_id"]),

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Optional, List
 from pydantic import ConfigDict
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Column, CheckConstraint, UniqueConstraint, BigInteger, DateTime, ForeignKey, Integer, func, Index, text, Text, String
+from sqlalchemy import JSON, Boolean, Column, CheckConstraint, UniqueConstraint, BigInteger, DateTime, ForeignKey, Integer, false, func, Index, text, Text, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel, Relationship
 from mfid import mfid
@@ -218,7 +218,7 @@ class ResourceACL(SQLModel, table=True):
     # resource_role, shared with that column; declared as str so
     # SQLite-backed tests can still create the table. Converted with
     # Role.from_db on read. read/write stay until phase 5 — see
-    # docs/permission_system_plan.md.
+    # docs/permissions.md.
     permission: str
 
     accessgroup: "AccessGroup" = Relationship(back_populates="acl")
@@ -540,6 +540,7 @@ class Project(SQLModel, table=True):
     lead_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     project_lead_email: Optional[str] = None  # stored for old-API backward compat; not exposed in new response schemas
     last_activity_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
+    proposal_sync: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default=false()))
     resource: Optional["Resource"] = Relationship(
         sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Project.unique_id", "lazy": "noload"}
     )

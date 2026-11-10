@@ -55,6 +55,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Samples, projects and instruments record the API version that wrote them as datasets do (`v4.0.0` and the commit); before, they recorded the bare `API_VERSION` variable, or nothing when it was unset.
 - **Breaking:** `POST /datasets/{parent}/children/{child}` and `POST /samples/{parent}/children/{child}` return `parent_*_mfid`, `child_*_mfid` and `relationship_type` instead of internal integer ids; the keyword routes no longer return the integer `id`.
 - Routes no longer return database tables: the OpenAPI schemas `DatasetLink`, `SampleLink`, `Keyword`, `ResourceACL` and `IngestionRequest` become `DatasetLinkRead`, `SampleLinkRead`, `KeywordRead`, `ResourceAccessGroupRead` and `IngestionRequestRead` (ingestion fields unchanged).
 - **Breaking for Compose installations** (see Upgrading in `deploy/compose/README.md`): the server listens on this machine only unless `CRUCIBLE_BIND_ADDRESS` opens it.

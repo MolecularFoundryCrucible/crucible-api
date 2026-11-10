@@ -24,3 +24,8 @@ def git_commit() -> str | None:
 
 def branch_name() -> str | None:
     return os.getenv("BRANCH_NAME") or None
+
+
+def version_stamp() -> tuple[str, str | None]:
+    """The API version and commit that each record row is stamped with when it is written."""
+    return f"v{api_version()}", git_commit()

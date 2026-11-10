@@ -13,7 +13,6 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import and_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.build_info import api_version
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, feature_disabled_response
 from app.api.removed import REMOVED_RESPONSE, removed
@@ -90,7 +89,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.user_utils import owned_by, owner_fields, owner_unique_id, owners_of, resolve_create_owner
-from app.utils.sql_utils import is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
+from app.utils.sql_utils import record_resource, is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 
@@ -108,10 +107,6 @@ DATASET_PAGINATION = ResourcePaginationSpec(
 LARGE_THUMBNAIL_LOOKUP_WARNING_SIZE = int(
     os.environ.get("THUMBNAIL_LARGE_LOOKUP_WARNING_SIZE", "1000")
 )
-
-API_VERSION = f"v{api_version()}"
-
-API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 
 def _normalize_thumbnail_input(dsid: str, thumbnail_b64str: str) -> str:
@@ -226,20 +221,7 @@ def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
         session.add(ds)
         session.flush()
 
-        # get time
-        now = get_utc_datetime()
-        
-        # fetch resource
-        existing_ri = session.exec(select(Resource).where(Resource.mfid == ds.unique_id)).one_or_none()
-        ri = add_or_update(session, Resource, where=(Resource.mfid == ds.unique_id),
-                           mfid = ds.unique_id, resource_type = "dataset")
-
-        # populate resource table
-        if existing_ri is None:
-            ri.creation_time = now
-        ri.modification_time = now
-        ri.created_with_api_version = API_VERSION
-        ri.api_version_githash = API_VERSION_GITHASH
+        ri = record_resource(session, ds.unique_id, "dataset")
         set_public(session, ds.unique_id, bool(ds.public))
         
         session.flush()

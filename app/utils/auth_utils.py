@@ -383,7 +383,6 @@ GRANTABLE_ROLES = (Role.VIEWER, Role.CONTRIBUTOR, Role.EDITOR, Role.ADMIN)
 def entry_capabilities(principal: Principal, actor: Optional[Role], current: Optional[Role], *,
                        floor: Role, is_self: bool = False, fixed: bool = False) -> dict:
     """The capabilities object for one member or grant, decided by the same rule as require_grant."""
-    from app.utils.permissions import can_grant
 
     if fixed or current is Role.OWNER:
         return {"can_remove": False, "can_change_role": False, "assignable_roles": []}
@@ -411,7 +410,6 @@ def require_grant(session, principal: Principal, mfid: str, target: Role,
     manage grants, while `allow_peer` controls whether equal roles are within
     that authority.
     """
-    from app.utils.permissions import can_grant
 
     if principal.is_platform_admin:
         return
@@ -504,7 +502,6 @@ def member_affiliation_filter(principal: Principal, resource_model):
     """Resources the caller reaches through one of their own grants, not only because they are public."""
     from sqlalchemy import exists, false
     from app.tables import ResourceACL
-    from app.utils.permissions import PUBLIC_GROUP_NAME
 
     group_ids = [m.id for m in principal.groups if m.group_name != PUBLIC_GROUP_NAME and m.role >= Role.VIEWER]
     if not group_ids:
@@ -702,7 +699,6 @@ def require_self_or_platform_admin(principal: Principal, user) -> None:
 
 def caller_row(session, principal: Principal, *, for_update: bool = False):
     """The caller's own User row, found by internal key."""
-    from app.tables import User
 
     if principal.internal_user_id is None:
         return None

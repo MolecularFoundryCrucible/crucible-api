@@ -2,7 +2,9 @@
 import logging
 import urllib.parse
 from app.config import get_secret, get_settings, load_env_file
+from app.build_info import version_stamp
 from app.general_utils import get_utc_datetime
+from app.tables import AccessGroup, AssociatedFile, Dataset, DatasetKeywordLink, DeletionRequest, Keyword, Resource, ResourceACL, User
 
 logger = logging.getLogger(__name__)
 from fastapi import HTTPException
@@ -58,6 +60,20 @@ def add_or_update(session, cls, where, **kwargs):
     return obj
 
 
+def record_resource(session, mfid: str, resource_type: str, now=None) -> Resource:
+    """Create or refresh the shared row every dataset, sample, project and instrument has, stamped
+    with the API version writing it. Creation time is set once; modification time on every write."""
+    now = now or get_utc_datetime()
+    resource = session.exec(select(Resource).where(Resource.mfid == mfid)).first()
+    if resource is None:
+        resource = Resource(mfid=mfid, resource_type=resource_type, creation_time=now)
+    resource.resource_type = resource_type
+    resource.modification_time = now
+    resource.created_with_api_version, resource.api_version_githash = version_stamp()
+    session.add(resource)
+    return resource
+
+
 def assert_mfid_available(session, mfid: str, resource_type: str) -> None:
     """Raise 409 if a client-supplied mfid already names any resource in the
     shared idtype table -- same-type or cross-type. Checked against the
@@ -69,7 +85,6 @@ def assert_mfid_available(session, mfid: str, resource_type: str) -> None:
     resource_type is the kind being created now (e.g. "dataset"), used only
     to phrase the same-type message the way callers already expect.
     """
-    from app.tables import Resource
     existing = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
     if existing is None:
         return
@@ -90,7 +105,6 @@ def touch_resource_modification_time(session, mfid):
     No-op (returns None) if no Resource row exists for mfid, so callers don't
     need to guard against not-yet-created or already-deleted resources.
     """
-    from app.tables import Resource
     resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
     if resource is not None:
         resource.modification_time = get_utc_datetime()
@@ -101,8 +115,6 @@ def touch_resource_modification_time(session, mfid):
 def sql_create_resource_acl(ag, mfid, read, write, session, permission):
     """Create an ACL entry. `permission` is the granted role; read/write are
     the pre-role columns, kept in step until they are dropped in phase 5."""
-    from app.tables import ResourceACL
-    from sqlmodel import select
     if ag is None:
         raise ValueError(f"Access group not found: cannot create ACL for resource '{mfid}'")
     acl = session.exec(
@@ -136,12 +148,9 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_mfid=Non
     No requestor row either. The creator reaches the resource through the
     project group; a row per creator per resource expresses nothing.
     '''
-    from app.tables import AccessGroup
     from app.utils.permissions import AccessGroupType, Role
-    from sqlmodel import select
 
     if owner_id:
-        from app.tables import User
         from app.utils.user_utils import identity_group_of
 
         owner = session.exec(select(User).where(User.unique_id == owner_id)).one_or_none()
@@ -173,9 +182,7 @@ def set_public(session, mfid: str, is_public: bool):
     "public" means. The only writer of public state, called when a record is created and by
     PUT and DELETE /resources/{mfid}/access/public."""
     from sqlalchemy import update
-    from app.tables import AccessGroup, Dataset, Resource, ResourceACL
     from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, Role
-    from sqlmodel import select
 
     pub = session.exec(
         select(AccessGroup).where(
@@ -221,7 +228,6 @@ def set_public(session, mfid: str, is_public: bool):
 
 def get_active_deletion_request(session, resource_id: str):
     """Return the active (pending or approved) DeletionRequest for a resource, or None."""
-    from app.tables import DeletionRequest
     return session.exec(
         select(DeletionRequest)
         .where(DeletionRequest.resource_id == resource_id)
@@ -245,7 +251,6 @@ def assert_not_pending_deletion(session, mfid: str) -> None:
 def assert_parent_accepts_assignment(session, parent_mfid: str) -> None:
     """Refuse a parent pending deletion and share-lock its resource row until commit, so a
     deletion request on the parent cannot pass its blocker check while this assignment is in flight."""
-    from app.tables import Resource
     session.exec(select(Resource.mfid).where(Resource.mfid == parent_mfid).with_for_update(read=True)).first()
     assert_not_pending_deletion(session, parent_mfid)
 
@@ -271,7 +276,6 @@ def select_readable(resource_model, mfid, *columns, principal):
 
 def select_readable_file(file_mfid, principal):
     """Select (AssociatedFile, Dataset) for `file_mfid` if `principal` can read its dataset."""
-    from app.tables import AssociatedFile, Dataset
     from app.utils.auth_utils import permission_filter
     from app.utils.permissions import Permission
     return (
@@ -288,7 +292,6 @@ def deletion_filter_for(resource_model):
     (pending or approved) deletion request. Apply with .where(deletion_filter_for(Model)).
     """
     from sqlalchemy import exists
-    from app.tables import DeletionRequest
     return ~exists().where(
         DeletionRequest.resource_id == resource_model.unique_id,
         DeletionRequest.status.in_(["pending", "approved"])
@@ -310,7 +313,6 @@ def public_grant_exists(mfid_column):
     """SQL expression for whether a record is public: an ACL entry for the virtual public group.
     Every response and filter reads this, never a `public` column."""
     from sqlalchemy import exists
-    from app.tables import AccessGroup, ResourceACL
     from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType
 
     return exists().where(
@@ -331,7 +333,6 @@ def is_public(session, mfid: str) -> bool:
 
 
 def generate_kw_query(session, base_query, keyword_filter):
-    from app.tables import Dataset, DatasetKeywordLink, Keyword
 
     keywords = session.exec(
         select(Keyword).where(Keyword.keyword.ilike(f"%{keyword_filter}%"))

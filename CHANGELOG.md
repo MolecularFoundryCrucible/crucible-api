@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `GET /account/auth-events` shows people their own sign-in history, in the same shape as the administrators' route.
 - `sign_in_methods` is now also filled for the person themselves, on `GET /account/profile` and `GET /users/{user_ref}`, so a client can tell whether they have a password before offering to set, change or remove one. No migration.
 - The sign-in history now records each checked wrong password (`sign_in_failed`) and the lock it causes (`locked`), without client addresses; attempts refused by the limits are not recorded. Administrators read a person's history, newest first in cursor pages, with `GET /users/{user_ref}/auth-events`, waiting accounts included. No migration.
 - Server commands: `python -m app.cli admin create` also prints a one-time `password_link` when passwords are on; `auth revoke-passwords [--commit]` removes every password after a breach, cancelling password links and ending those people's sessions; `auth rewrite-issuer --from URL --to URL [--commit]` moves logins to a provider's new issuer address, refusing an unlisted issuer or any collision. Both are dry runs without `--commit`. No migration.

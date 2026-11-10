@@ -1,11 +1,13 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlmodel import Session
+from sqlalchemy import func
+from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import UserRef
 from app.auth.sessions import ActiveSession, active_sessions, end_session, end_sessions
+from app.models.core_models import AuthEvent, User
 from app.models.identities import AuthEventRead, SessionRead
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, caller_row, require_human_admin_safeguard, require_platform_admin, require_recent_hub_session
@@ -118,36 +120,43 @@ def end_all_user_sessions(user_ref: UserRef, auth_res: Annotated[Principal, Depe
     return Response(status_code=204)
 
 
+def _history(session: Session, principal: Principal, user_id: int, limit: int, cursor: str | None) -> PaginatedResponse[AuthEventRead]:
+    digest = filter_fingerprint({"user_id": user_id, "kind": "auth_events"})
+    query = select(AuthEvent, User.unique_id).join(User, User.id == AuthEvent.actor_user_id, isouter=True).where(AuthEvent.user_id == user_id)
+    if cursor is not None:
+        try:
+            decoded = validate_cursor(cursor, kind="auth_event", sort="id", direction="desc", filters=digest, user_id=principal.user_id)
+            if decoded is None:
+                raise CursorError("Invalid cursor")
+            last_id = int(decoded.unique_id)
+        except (CursorError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Invalid cursor") from exc
+        query = query.where(AuthEvent.id < last_id)
+    rows = session.exec(query.order_by(AuthEvent.id.desc()).limit(limit + 1)).all()
+    total = session.exec(select(func.count()).select_from(AuthEvent).where(AuthEvent.user_id == user_id)).one()
+    page = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit:
+        last = page[-1][0]
+        next_cursor = new_cursor(kind="auth_event", sort="id", direction="desc", primary=last.id, unique_id=str(last.id), filters=digest, user_id=principal.user_id)
+    items = [AuthEventRead(id=event.id, at=event.at, event=event.event, actor_unique_id=actor if event.actor_user_id != event.user_id else None, issuer=event.issuer, client_id=event.client_id) for event, actor in page]
+    return PaginatedResponse[AuthEventRead](total=total, limit=limit, items=items, next_cursor=next_cursor)
+
+
+@router.get("/account/auth-events", response_model=PaginatedResponse[AuthEventRead], responses={422: {"description": "Invalid cursor"}})
+def list_account_auth_events(auth_res: Annotated[Principal, Depends(authorize_user)], limit: int = _LIMIT, cursor: str | None = _CURSOR):
+    """Your sign-in history, newest first: sign-ins, failed passwords and locks, password and login
+    changes, keys and sessions ended, so you can spot activity that was not yours. Never an address.
+    Kept CRUCIBLE_AUTH_EVENT_RETENTION_DAYS."""
+    with Session(get_engine()) as session:
+        return _history(session, auth_res, _caller(session, auth_res).id, limit, cursor)
+
+
 @router.get("/users/{user_ref}/auth-events", response_model=PaginatedResponse[AuthEventRead], responses={403: {"description": "Not a platform administrator"}, 422: {"description": "Invalid cursor"}})
 def list_user_auth_events(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)], limit: int = _LIMIT, cursor: str | None = _CURSOR):
-    """A person's sign-in history, newest first: sign-ins, failed passwords and locks, password and
-    login changes, keys, approval, disabling and sessions ended. Kept CRUCIBLE_AUTH_EVENT_RETENTION_DAYS.
-    Platform administrators only; waiting accounts included."""
-    from sqlalchemy import func
-    from sqlmodel import select
-
-    from app.models.core_models import AuthEvent, User
-
+    """A person's sign-in history, as GET /account/auth-events shows their own. Platform administrators
+    only; waiting accounts included."""
     require_platform_admin(auth_res)
     with Session(get_engine()) as session:
         user = person_by_reference(session, user_ref, include_pending=True) or resolve_user_by_identifier(session, user_ref)
-        digest = filter_fingerprint({"user_id": user.id, "kind": "auth_events"})
-        query = select(AuthEvent, User.unique_id).join(User, User.id == AuthEvent.actor_user_id, isouter=True).where(AuthEvent.user_id == user.id)
-        if cursor is not None:
-            try:
-                decoded = validate_cursor(cursor, kind="auth_event", sort="id", direction="desc", filters=digest, user_id=auth_res.user_id)
-                if decoded is None:
-                    raise CursorError("Invalid cursor")
-                last_id = int(decoded.unique_id)
-            except (CursorError, ValueError) as exc:
-                raise HTTPException(status_code=422, detail="Invalid cursor") from exc
-            query = query.where(AuthEvent.id < last_id)
-        rows = session.exec(query.order_by(AuthEvent.id.desc()).limit(limit + 1)).all()
-        total = session.exec(select(func.count()).select_from(AuthEvent).where(AuthEvent.user_id == user.id)).one()
-        page = rows[:limit]
-        next_cursor = None
-        if len(rows) > limit:
-            last = page[-1][0]
-            next_cursor = new_cursor(kind="auth_event", sort="id", direction="desc", primary=last.id, unique_id=str(last.id), filters=digest, user_id=auth_res.user_id)
-        items = [AuthEventRead(id=event.id, at=event.at, event=event.event, actor_unique_id=actor if event.actor_user_id != event.user_id else None, issuer=event.issuer, client_id=event.client_id) for event, actor in page]
-        return PaginatedResponse[AuthEventRead](total=total, limit=limit, items=items, next_cursor=next_cursor)
+        return _history(session, auth_res, user.id, limit, cursor)

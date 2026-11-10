@@ -22,10 +22,6 @@ class AccountInfo(BaseModel):
     user_info: Optional[UserRead] = None
 
 
-class ApiKeyRead(BaseModel):
-    api_key: str
-
-
 class ApiKeyVerify(BaseModel):
     valid: bool
     created_at: str
@@ -53,10 +49,6 @@ class MessageResponse(BaseModel):
 
 class DetailResponse(BaseModel):
     detail: str
-
-
-class LegacyApiKeyRead(BaseModel):
-    crucible_apikey: str
 
 
 class DownloadLinkRead(BaseModel):

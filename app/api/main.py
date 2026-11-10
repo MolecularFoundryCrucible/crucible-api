@@ -12,7 +12,6 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.auth.browser_login import login_session_middleware
 from app.api.routes import multipart
 from app.build_info import api_version
 from app.api.errors import register_error_handlers
@@ -54,7 +53,6 @@ app = FastAPI(
 )
 
 register_error_handlers(app)
-app.add_middleware(login_session_middleware)
 
 
 HUB_AUTH_HEADERS = {

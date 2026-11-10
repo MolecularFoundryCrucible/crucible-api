@@ -10,6 +10,8 @@ ROUTES = (
     ("GET", "/users/by-username/ada", "GET /users/{user_ref}"),
     ("GET", "/users/0tmnyhfztdwc1000w2kspzsnh0/datasets", "GET /datasets?accessible_to_user="),
     ("GET", "/users/0tmnyhfztdwc1000w2kspzsnh0/samples", "GET /samples?accessible_to_user="),
+    *((method, path, "POST /account/apikeys") for method, path in (
+        ("GET", "/auth/login"), ("GET", "/auth/callback"), ("GET", "/auth/apikey"), ("POST", "/auth/apikey/regenerate"), ("GET", "/login"), ("GET", "/auth"), ("GET", "/user_apikey"))),
 )
 
 

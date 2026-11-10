@@ -14,7 +14,7 @@ def test_every_success_response_documents_its_content():
 
 def test_redirect_and_plain_text_routes_are_not_documented_as_json():
     paths = app.openapi()["paths"]
-    for path, status in (("/auth/login", "302"), ("/login", "302"), ("/auth/callback", "307"), ("/auth", "307")):
+    for path in ("/auth/login", "/login", "/auth/callback", "/auth"):
         responses = paths[path]["get"]["responses"]
-        assert status in responses and "200" not in responses, path
+        assert "410" in responses and "200" not in responses, path
     assert list(paths["/metrics"]["get"]["responses"]["200"]["content"]) == ["text/plain"]

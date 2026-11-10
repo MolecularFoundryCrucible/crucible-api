@@ -1,10 +1,9 @@
 import os
-import urllib.parse
 from functools import lru_cache
 
 import yaml
 
-from app.config import ConfigurationError, get_secret, get_settings
+from app.config import ConfigurationError, get_settings
 from app.utils.sql_utils import setup_engine as _setup_engine
 
 
@@ -40,21 +39,6 @@ def get_api_path():
 def get_api_root_path():
     api_path = get_api_path().strip("/")
     return f"/{api_path}" if api_path else ""
-
-
-def get_orcid_client_id():
-    client_id = get_settings().api.orcid_client_id or get_api_config().get("orcid_client_id")
-    if not client_id:
-        raise ConfigurationError("ORCID_CLIENT_ID is not set")
-    return client_id
-
-
-def get_orcid_client_secret():
-    return get_secret("ORCID_CLIENT_SECRET")
-
-
-def get_redirect_uri():
-    return urllib.parse.quote_plus(f"{get_api_url()}/auth")
 
 
 def get_trgm_search_threshold() -> float:

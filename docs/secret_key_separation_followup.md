@@ -6,7 +6,7 @@ Status: proposed 2026-10-26, not scheduled. Security-sensitive; changes signatur
 
 `CRUCIBLE_SECRET_KEY` does three jobs:
 
-1. Signs the legacy ORCID browser session cookie (`encode_token` and `decode_token` in `app/utils/auth_utils.py`). A valid cookie can be exchanged for the user's API key at `GET /auth/apikey`.
+1. Until 4.0.0 it signed the ORCID browser session cookie of the page that handed out an API key. That page and its cookie were removed in 4.0.0, so this job is gone.
 2. Signs pagination cursors when neither `CRUCIBLE_CURSOR_SIGNING_KEY` nor `CRUCIBLE_CURSOR_SIGNING_KEYS` is set (`_signing_keys` in `app/utils/cursor_utils.py`), which is the case on staging and production.
 3. Computes the principal and filter fingerprints inside every cursor (`_digest` in `app/utils/cursor_utils.py`), always with this key, even when separate cursor keys are configured.
 

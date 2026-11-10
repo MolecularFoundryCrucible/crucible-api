@@ -5,12 +5,14 @@ relationship_type describes the child relative to the parent, so a link
 links created before typing existed, and callers who do not care, leave it
 unset.
 """
-from sqlmodel import Session, select
+from sqlmodel import Session, SQLModel, select
 
 from app.models.core_models import (
     AccessGroup,
     Dataset,
+    DatasetKeywordLink,
     DatasetLink,
+    Keyword,
     Project,
     Resource,
     ResourceACL,
@@ -92,7 +94,7 @@ def test_dataset_link_stores_relationship_type(client, db_engine, auth_as):
                            params={"relationship_type": "is_part_of"})
 
     assert response.status_code == 200, response.text
-    assert response.json()["relationship_type"] == "is_part_of"
+    assert response.json() == {"parent_dataset_mfid": "ds_parent", "child_dataset_mfid": "ds_child", "relationship_type": "is_part_of"}
     assert _dataset_link(db_engine).relationship_type == "is_part_of"
 
 
@@ -104,7 +106,7 @@ def test_sample_link_stores_relationship_type(client, db_engine, auth_as):
                            params={"relationship_type": "is_derived_from"})
 
     assert response.status_code == 200, response.text
-    assert response.json()["relationship_type"] == "is_derived_from"
+    assert response.json() == {"parent_sample_mfid": "samp_parent", "child_sample_mfid": "samp_child", "relationship_type": "is_derived_from"}
     assert _sample_link(db_engine).relationship_type == "is_derived_from"
 
 
@@ -144,6 +146,7 @@ def test_relink_without_relationship_type_preserves_existing(client, db_engine, 
     response = client.post("/datasets/ds_parent/children/ds_child")
 
     assert response.status_code == 200, response.text
+    assert response.json() == {"parent_dataset_mfid": "ds_parent", "child_dataset_mfid": "ds_child", "relationship_type": "is_part_of"}
     assert _dataset_link(db_engine).relationship_type == "is_part_of"
 
 
@@ -270,3 +273,16 @@ def test_unknown_filter_value_is_rejected(client, db_engine, auth_as):
                           params={"relationship_type": "is_a_friend_of"})
 
     assert response.status_code == 422, response.text
+
+
+def test_keyword_routes_return_the_keyword_and_its_count_only(client, db_engine, auth_as):
+    SQLModel.metadata.create_all(db_engine, tables=[Keyword.__table__, DatasetKeywordLink.__table__])
+    _, group_id = _setup(db_engine)
+    _authorize(auth_as, group_id)
+
+    added = client.post("/datasets/ds_parent/keywords", params={"keyword": "perovskite"})
+
+    assert added.status_code == 200, added.text
+    assert added.json() == {"keyword": "perovskite", "num_datasets": 1}
+    assert client.get("/datasets/ds_parent/keywords").json() == [{"keyword": "perovskite", "num_datasets": 1}]
+    assert client.get("/keywords").json() == [{"keyword": "perovskite", "num_datasets": 1}]

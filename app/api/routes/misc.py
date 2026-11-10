@@ -14,6 +14,7 @@ from app.api.dependencies import get_engine
 from app.build_info import api_version, branch_name, git_commit
 from app.config import get_settings
 from app.models.core_models import Keyword
+from app.models.datasets import KeywordRead
 from app.models.health import LivenessResponse, ReadinessResponse
 
 router = APIRouter(tags=["misc"])
@@ -131,7 +132,7 @@ def health():
     return readiness()
 
 
-@router.get("/keywords", response_model=List[Keyword])
+@router.get("/keywords", response_model=List[KeywordRead])
 def list_all_keywords():
     '''
     Returns a list of all keywords in the database.
@@ -142,7 +143,7 @@ def list_all_keywords():
     return keywords
 
 
-@router.get("/keywords/{keyword}", response_model=List[Keyword])
+@router.get("/keywords/{keyword}", response_model=List[KeywordRead])
 def read_keyword(keyword: str, permissive: bool = True):
     '''
     Returns a list of all keyword entries that match the provided keyword.

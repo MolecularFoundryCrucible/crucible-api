@@ -18,11 +18,9 @@ from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, feature_disabled_response
 from app.general_utils import get_utc_datetime
 from app.models.core_models import (
-    INGESTION_CLASS_PATTERN,
     AccessGroup,
     AssociatedFile,
     Dataset,
-    IngestionRequest,
     DatasetKeywordLink,
     DatasetLink,
     DatasetSampleLink,
@@ -40,13 +38,15 @@ from app.models.core_models import (
 from app.models.response_schemas import DatasetSampleLinkResponse, MessageResponse
 from app.models.facets import FacetResponse
 from app.models.datasets import (
+    KeywordRead,
     AssociatedFileCreate, AssociatedFileRead,
     DatasetCreate, DatasetInstrumentAssign, DatasetInstrumentRead,
     DatasetRead, DatasetResponse, DatasetUpdate, file_etag,
     ThumbnailCreate, ThumbnailPreviewRead, ThumbnailRead, ThumbnailUpdate,
 )
 from app.models.instrument import InstrumentReferenceRead
-from app.models.links import LinkedResource
+from app.models.ingestion import INGESTION_CLASS_PATTERN, IngestionRequestRead
+from app.models.links import DatasetLinkRead, LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
     UNIQUE_ID_FILTER_DEPRECATION, DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, ResourceSearchQuery)
@@ -852,7 +852,7 @@ def read_dataset(
         )
 
 
-@router.post("/datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}", response_model=DatasetLink)
+@router.post("/datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}", response_model=DatasetLinkRead)
 def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_dataset_id: ChildDatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                               relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
     '''
@@ -886,7 +886,7 @@ def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_datase
         ).one_or_none()
         if link is not None:
             if relationship_type is None or link.relationship_type == relationship_type:
-                return link
+                return DatasetLinkRead(parent_dataset_mfid=parent_dataset_id, child_dataset_mfid=child_dataset_id, relationship_type=link.relationship_type)
             require_permission(session, auth_res, parent_dataset_id, Permission.EDIT)
             require_permission(session, auth_res, child_dataset_id, Permission.EDIT)
             link.relationship_type = relationship_type
@@ -903,8 +903,7 @@ def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_datase
         touch_resource_modification_time(session, child_dataset_id)
 
         session.commit()
-        session.refresh(link)
-        return link
+        return DatasetLinkRead(parent_dataset_mfid=parent_dataset_id, child_dataset_mfid=child_dataset_id, relationship_type=link.relationship_type)
 
 
 @router.delete("/datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}", response_model=MessageResponse)
@@ -1440,7 +1439,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": dsid})
 
 
-@router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True, responses={501: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`) or file storage is not configured (`storage_not_configured`)"}, 503: {"description": "The request could not be queued (`ingestion_unavailable`); it is recorded as failed"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", response_model=IngestionRequestRead, deprecated = True, responses={501: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`) or file storage is not configured (`storage_not_configured`)"}, 503: {"description": "The request could not be queued (`ingestion_unavailable`); it is recorded as failed"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def create_ds_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
@@ -1457,7 +1456,7 @@ def create_ds_file_ingestion_request(
     return create_file_ingestion_request(auth_res, file_id, ingestion_class, status)
 
 
-@router.get("/datasets/{dataset_mfid}/keywords", response_model=List[Keyword])
+@router.get("/datasets/{dataset_mfid}/keywords", response_model=List[KeywordRead])
 def list_keywords_for_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid):
 
 
@@ -1474,7 +1473,7 @@ def list_keywords_for_dataset(auth_res: Annotated[Principal, Depends(authorize_u
         return ds_keywords
 
 
-@router.post("/datasets/{dataset_mfid}/keywords", response_model=Keyword)
+@router.post("/datasets/{dataset_mfid}/keywords", response_model=KeywordRead)
 def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, keyword: str):
     '''
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object.

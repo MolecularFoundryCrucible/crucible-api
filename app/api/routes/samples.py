@@ -17,7 +17,7 @@ from app.models.core_models import (
 )
 from app.models.datasets import DatasetRead
 from app.models.facets import FacetResponse
-from app.models.links import LinkedResource
+from app.models.links import LinkedResource, SampleLinkRead
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
     UNIQUE_ID_FILTER_DEPRECATION, ResourceSearchQuery, SampleDetailQuery, SampleFacetQuery, SampleListQuery)
@@ -71,7 +71,7 @@ SAMPLE_PAGINATION = ResourcePaginationSpec(
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
-@router.post("/samples/{parent_sample_mfid}/children/{child_sample_mfid}", response_model=SampleLink)
+@router.post("/samples/{parent_sample_mfid}/children/{child_sample_mfid}", response_model=SampleLinkRead)
 def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id: ChildSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                              relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
     '''
@@ -105,7 +105,7 @@ def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id
         ).one_or_none()
         if link is not None:
             if relationship_type is None or link.relationship_type == relationship_type:
-                return link
+                return SampleLinkRead(parent_sample_mfid=parent_sample_id, child_sample_mfid=child_sample_id, relationship_type=link.relationship_type)
             require_permission(session, auth_res, parent_sample_id, Permission.EDIT)
             require_permission(session, auth_res, child_sample_id, Permission.EDIT)
             link.relationship_type = relationship_type
@@ -122,8 +122,7 @@ def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id
         touch_resource_modification_time(session, child_sample_id)
 
         session.commit()
-        session.refresh(link)
-        return link
+        return SampleLinkRead(parent_sample_mfid=parent_sample_id, child_sample_mfid=child_sample_id, relationship_type=link.relationship_type)
 
 
 @router.delete("/samples/{parent_sample_mfid}/children/{child_sample_mfid}", response_model=MessageResponse)

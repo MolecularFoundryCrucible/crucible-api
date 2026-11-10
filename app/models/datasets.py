@@ -348,3 +348,8 @@ class DatasetResponse(DatasetRead):
     owner: Optional[UserPublicRead] = None
     capabilities: Optional[ResourceCapabilities] = None
     project_relation: Optional[ProjectRelation] = None
+
+
+class KeywordRead(SQLModel):
+    keyword: str
+    num_datasets: Optional[int] = None

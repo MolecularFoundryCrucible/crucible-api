@@ -5,11 +5,8 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import (
-    Dataset,
-    IngestionRequest,
-    IngestionRequestUpdate,
-)
+from app.models.core_models import Dataset, IngestionRequest
+from app.models.ingestion import IngestionRequestRead, IngestionRequestUpdate
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
@@ -34,7 +31,7 @@ def _get_ir_with_access(session: Session, request_id: int, principal: Principal,
     return ir
 
 
-@router.get("/ingestion_requests", response_model=PaginatedResponse[IngestionRequest])
+@router.get("/ingestion_requests", response_model=PaginatedResponse[IngestionRequestRead])
 def list_ingestion_requests(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_mfid: Optional[str] = None,
@@ -79,7 +76,7 @@ def list_ingestion_requests(
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.get("/ingestion_requests/{request_id}", response_model=IngestionRequest)
+@router.get("/ingestion_requests/{request_id}", response_model=IngestionRequestRead)
 def get_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     request_id: int,
@@ -89,7 +86,7 @@ def get_ingestion_request(
         return _get_ir_with_access(session, request_id, auth_res, Permission.READ)
 
 
-@router.patch("/ingestion_requests/{request_id}", response_model=IngestionRequest)
+@router.patch("/ingestion_requests/{request_id}", response_model=IngestionRequestRead)
 def patch_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     request_id: int,

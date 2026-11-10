@@ -11,7 +11,6 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.models.core_models import (
-    INGESTION_CLASS_PATTERN,
     AssociatedFile,
     Dataset,
     IngestionRequest,
@@ -21,6 +20,7 @@ from app.general_utils import get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_readable_file, touch_resource_modification_time
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
+from app.models.ingestion import INGESTION_CLASS_PATTERN, IngestionRequestRead
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import DownloadLinkRead, MessageResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
@@ -178,7 +178,7 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
 
 
 # ingestion
-@router.post("/files/{file_id}/ingest", response_model=IngestionRequest, responses={501: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`) or file storage is not configured (`storage_not_configured`)"}, 503: {"description": "The request could not be queued (`ingestion_unavailable`); it is recorded as failed"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.post("/files/{file_id}/ingest", response_model=IngestionRequestRead, responses={501: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`) or file storage is not configured (`storage_not_configured`)"}, 503: {"description": "The request could not be queued (`ingestion_unavailable`); it is recorded as failed"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def create_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,

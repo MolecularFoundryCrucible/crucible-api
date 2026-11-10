@@ -15,3 +15,15 @@ class LinkedResource(SQLModel):
     name: Optional[str] = None
     direction: Literal["source", "target", "undirected"]
     relationship_type: Optional[str] = None
+
+
+class DatasetLinkRead(SQLModel):
+    parent_dataset_mfid: str
+    child_dataset_mfid: str
+    relationship_type: Optional[str] = None
+
+
+class SampleLinkRead(SQLModel):
+    parent_sample_mfid: str
+    child_sample_mfid: str
+    relationship_type: Optional[str] = None

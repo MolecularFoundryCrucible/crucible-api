@@ -20,7 +20,7 @@ from app.models.core_models import (
     ScientificMetadataBinary, User, UserAccessGroupLink,
 )
 from app.models.ai import ChunkHit, ChunkSearchRequest, ResourceEmbeddingRead
-from app.models.access import AccessGrantRead, AccessGrantWrite
+from app.models.access import AccessGrantRead, AccessGrantWrite, ResourceAccessGroupRead
 from app.models.access_groups import AccessGroupRead
 from app.models.datasets import DatasetResponse, ScientificMetadataBinaryRead
 from app.models.deletion import DeletionRequestCapabilities, DeletionRequestRead
@@ -732,7 +732,7 @@ def read_resource_acl(mfid: str, auth_res: Annotated[Principal, Depends(authoriz
 
 @router.post(
     "/resources/{mfid}/access_groups",
-    response_model=ResourceACL,
+    response_model=ResourceAccessGroupRead,
     deprecated=True,
 )
 def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, auth_res: Annotated[Principal, Depends(authorize_user)]):

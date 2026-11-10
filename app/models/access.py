@@ -58,3 +58,12 @@ class AccessGrantRead(SQLModel):
 class AccessGrantWrite(SQLModel):
     """Body for PUT /resources/{mfid}/access/{kind}/{principal}."""
     permission: AccessPermission
+
+
+class ResourceAccessGroupRead(SQLModel):
+    """The reply of the deprecated POST /resources/{mfid}/access_groups."""
+    mfid: str
+    accessgroup_id: Optional[int] = None
+    read: bool
+    write: bool
+    permission: str

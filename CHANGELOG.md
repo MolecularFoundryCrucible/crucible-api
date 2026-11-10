@@ -55,6 +55,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- **Breaking:** `POST /datasets/{parent}/children/{child}` and `POST /samples/{parent}/children/{child}` return `parent_*_mfid`, `child_*_mfid` and `relationship_type` instead of internal integer ids; the keyword routes no longer return the integer `id`.
+- Routes no longer return database tables: the OpenAPI schemas `DatasetLink`, `SampleLink`, `Keyword`, `ResourceACL` and `IngestionRequest` become `DatasetLinkRead`, `SampleLinkRead`, `KeywordRead`, `ResourceAccessGroupRead` and `IngestionRequestRead` (ingestion fields unchanged).
 - **Breaking for Compose installations** (see Upgrading in `deploy/compose/README.md`): the server listens on this machine only unless `CRUCIBLE_BIND_ADDRESS` opens it.
 - **Breaking for Compose installations:** Caddy refuses plain HTTP under any name but `localhost` (421); `CRUCIBLE_HTTP_HOSTS` names an address behind a proxy that provides HTTPS.
 - **Breaking for Compose installations:** passwords are on by default and need the new secret `CRUCIBLE_AUTH_PEPPER`; with a provider also listed, sign-in offers the choice.

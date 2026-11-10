@@ -12,6 +12,7 @@ FastAPI and SQLModel service for the Molecular Foundry's scientific records. The
 ## Layout
 
 - `app/api/routes/` routes, `app/services/` logic, `app/models/` tables and schemas, `app/cli/` server commands.
+- Routes never take or return a database table class: give each its own request or response model (`tests/test_api_schema_has_no_tables.py` checks the OpenAPI schema).
 - `app/config.py` settings, read once through `get_settings()`; `tests/conftest.py` clears the caches between tests.
 - `app/storage/` storage adapters behind `ObjectStore`: `GoogleStore` (`STORAGE_BACKEND=gcs`) and `S3Store` (`s3`). Clients see the same routes on both; provider differences stay in the adapters.
 - `migrations/versions/` Alembic revisions; `migrations/data/` one-off audits and backfills.

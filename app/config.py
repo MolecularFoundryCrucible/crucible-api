@@ -204,8 +204,7 @@ class ApiSettings(SettingsGroup):
 
     public_url: str | None = None
     path: str | None = None
-    conf_file: str | None = None
-    trgm_search_threshold: float | None = Field(None, validation_alias="TRGM_SEARCH_THRESHOLD")
+    trgm_search_threshold: float = Field(0.3, validation_alias="TRGM_SEARCH_THRESHOLD")
     orcid_issuer: str = Field("https://orcid.org", validation_alias="ORCID_ISSUER")
     max_body_mib: int = Field(10, ge=1, le=1024, description="Largest request body the API accepts, in MiB; files go to storage through signed URLs, not through the API.")
     max_thumbnail_body_mib: int = Field(20, ge=1, le=1024, description="Largest body for creating or replacing a thumbnail, sent as base64 JSON, in MiB.")

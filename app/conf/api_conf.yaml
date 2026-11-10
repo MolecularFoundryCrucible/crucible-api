@@ -1,3 +1,0 @@
-hostname: "crucible.lbl.gov"
-api_path: "api/v3"
-trgm_search_threshold: 0.3

@@ -21,7 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      API_CONF_FILE: app/conf/api_conf_local.yaml
+      API_PUBLIC_URL: https://127.0.0.1:7777
+      API_PATH: testapi
       CRUCIBLE_SECRET_KEY: ci-only
       PGDB_PW: ci-only
       DB_USERNAME: ci

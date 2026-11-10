@@ -26,7 +26,7 @@ Split routes by sub-resource (for example datasets: files, thumbnails, keywords,
 
 ## Configuration
 
-- `app/conf/*.yaml` (`API_CONF_FILE`) is a fallback for settings that environment variables already cover; `gcs_config_name` in it is read nowhere. It can go once the Foundry deployment sets `ORCID_CLIENT_ID` and `TRGM_SEARCH_THRESHOLD` directly.
+- Done in 4.0.0: `app/conf/*.yaml` and `API_CONF_FILE` are removed; `API_PUBLIC_URL` and `API_PATH` replace them.
 - The Secret Manager `NAME_VERSION` form stays while the Foundry uses it; mounted files (`NAME` in the secrets directory) are the portable form.
 - The image runs as root under `/root`. A non-root user needs the deploy repository's CronJob command and paths changed at the same time.
 - The `uv` version is pinned twice: the Dockerfile and `.github/workflows/*.yml`.

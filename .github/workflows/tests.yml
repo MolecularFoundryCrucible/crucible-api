@@ -70,7 +70,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      API_CONF_FILE: app/conf/api_conf_local.yaml
+      API_PUBLIC_URL: https://127.0.0.1:7777
+      API_PATH: testapi
       CRUCIBLE_SECRET_KEY: ci-only
       PGDB_PW: ci-only
       DB_USERNAME: ci
@@ -106,7 +107,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      API_CONF_FILE: app/conf/api_conf_local.yaml
+      API_PUBLIC_URL: https://127.0.0.1:7777
+      API_PATH: testapi
       CRUCIBLE_SECRET_KEY: ci-only
       CRUCIBLE_BROWSER_TESTS: "1"
     steps:
@@ -127,7 +129,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      API_CONF_FILE: app/conf/api_conf_local.yaml
+      API_PUBLIC_URL: https://127.0.0.1:7777
+      API_PATH: testapi
       CRUCIBLE_SECRET_KEY: ci-only
       PGDB_PW: ci-only
       DB_USERNAME: ci
@@ -184,7 +187,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      API_CONF_FILE: app/conf/api_conf_local.yaml
+      API_PUBLIC_URL: https://127.0.0.1:7777
+      API_PATH: testapi
       CRUCIBLE_SECRET_KEY: ci-only
       PGDB_PW: ci-only
       DB_USERNAME: ci

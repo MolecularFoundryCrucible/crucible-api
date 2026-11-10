@@ -22,7 +22,7 @@ DB_CONF_FILE=.env.local uv run python -m app.cli db upgrade
 DB_CONF_FILE=.env.local uv run uvicorn app.api.main:app --reload --port 7777
 ```
 
-`DB_CONF_FILE` names the environment file. `API_CONF_FILE` in it selects the YAML configuration; the local one serves the API under `/testapi`.
+`DB_CONF_FILE` names the environment file. `API_PUBLIC_URL` and `API_PATH` in it give the address clients use; the example serves the API under `/testapi`.
 
 ```bash
 uv run pytest -q                           # PostgreSQL and S3 tests skip unless configured

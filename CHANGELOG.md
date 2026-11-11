@@ -6,140 +6,97 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [4.0.0a1] - 2026-11-11
+
+Pre-release of 4.0.0 for testing; the final release keeps this list.
+
+The API signs users in itself: it is an OAuth 2.0 authorization server with several identity providers, passwords, device sign-in and named API keys, and it no longer depends on the Hub or on ORCID to do so. All routes remain under `/api/v3`. Operators and client authors: follow [Upgrading from 3.3.1 to 4.0.0](docs/upgrading/3.3-to-4.0.md). Database migrations `7c1e4a9d2f60` to `c41d7e9a52b6`.
+
+### Breaking changes for operators
+
+- Sign-in settings: `CRUCIBLE_AUTH_PROVIDERS` with `OIDC_{KEY}_CLIENT_SECRET` replaces `HUB_AUTH_ORCID_*`, `ORCID_CLIENT_ID` and `ORCID_CLIENT_SECRET`; `CRUCIBLE_AUTH_CLIENTS` with `OAUTH_{KEY}_CLIENT_SECRET` replaces `HUB_AUTH_*`, and setting both stops the server.
+- `API_PUBLIC_URL` and `API_PATH` replace the YAML settings files in the image and `API_CONF_FILE`.
+- `CRUCIBLE_SECRET_KEY`, the cursor signing keys and every client secret must be at least 32 characters; the server refuses to start otherwise.
+- Identity providers return to `<API>/oauth/callback/{key}`; `"legacy_callback": true` keeps `<API>/auth/hub/callback` for an ORCID application registered earlier.
+- After the migration, run `python -m app.cli identity backfill` and `python -m app.cli owners backfill` once, then set `CRUCIBLE_AUTH_IDENTITY_LOOKUP=true`.
+- Uploads need `MULTIPART_UPLOAD_ENABLED=true`; `LEGACY_UPLOAD_TOKEN_DOWNSCOPE` is no longer read.
+- The image runs as an unprivileged user (uid 10001) with its code in `/app`; a read-only root filesystem needs `/tmp` and `/dev/shm` writable.
+- Request bodies are limited to 10 MiB (`API_MAX_BODY_MIB`) and 20 MiB for thumbnails (`API_MAX_THUMBNAIL_BODY_MIB`), returning 413 `body_too_large`; thumbnail sources to 14 MiB.
+- Compose bundle: reachable only from the local host unless `CRUCIBLE_BIND_ADDRESS` is set; plain HTTP is refused for any name but `localhost`; passwords are enabled by default and need the new secret `CRUCIBLE_AUTH_PEPPER`; ORCID sign-in moved to `compose.orcid.yaml`; Docker Engine 28 is required.
+
+### Breaking changes for clients
+
+- Removed, returning 410 `route_removed` with the replacement named: the browser pages that issued a single API key (`/auth/login`, `/auth/callback`, `/auth/apikey`, `/auth/apikey/regenerate`, `/login`, `/auth`, `/user_apikey`).
+- Removed: the single-key routes `GET /account/apikey`, `POST /account/apikey/regenerate`, `POST /users/{user_ref}/apikey` and `POST /users/{user_ref}/apikey/regenerate`; use `/account/apikeys`.
+- Removed: the resumable and token upload routes `POST /datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart` and `/upload/complete`; use `/upload/multipart`.
+- Removed: `POST /datasets/{dataset_mfid}/files/{file_id}/ingest`, `GET /datasets/{dataset_mfid}/samples`, `GET /users/by-username/{username}`, `GET /users/{user_ref}/datasets` and `GET /users/{user_ref}/samples`.
+- `POST /datasets/{parent}/children/{child}` and `POST /samples/{parent}/children/{child}` return MFIDs and `relationship_type` instead of internal ids; the keyword routes no longer return `id`.
+- Five OpenAPI schemas are renamed: `DatasetLinkRead`, `SampleLinkRead`, `KeywordRead`, `ResourceAccessGroupRead`, `IngestionRequestRead`.
+- `GET /keywords` and `GET /keywords/{keyword}` require authentication.
+- `POST /projects`: only an administrator may name another user as the lead (403 `lead_must_be_caller`), and a service account cannot be a lead (422).
+- `PATCH /datasets/{id}` and `PATCH /samples/{id}` refuse `public` (422); use `PUT` or `DELETE /resources/{mfid}/access/public`.
+- `PATCH /ingestion_requests/{id}` changes only `status`, `time_completed` and `ingestion_githash`; `ingestion_class` must be 1 to 128 letters, digits, dots, hyphens or underscores.
+- Changes to human administrators (their platform role, their profile, their keys) and promoting a service account to administrator need a browser session with a recent sign-in; an API key gets 403 `hub_session_required`.
+- Starting an upload on a server with uploads disabled returns 501 `feature_disabled` instead of 503.
+- `POST /users/resolve` and `POST /datasets/first_thumbnails` accept at most 1000 entries per list.
+- `POST /users` no longer creates an API key.
+
 ### Added
 
-- `RESERVED_PROJECT_ID_PATTERN` reserves project identifiers that match a regular expression: only an administrator may create or rename a project with one (403 `project_id_reserved`), and proposal sync adds people only to matching projects. Unset by default.
-- The project is released under the BSD 3-Clause License (`LICENSE`).
-- `python -m app.cli owners backfill [--unmatched FILE] [--commit]` fills dataset and sample `owner_user_id` from `owner_orcid` on a database upgraded from 3.x; run it once after upgrading, or the owner filters and owner fields miss those records.
-- Dataset `capabilities` include `can_delete_files`: whether `DELETE /files/{file_id}` would be accepted for a file of the dataset. It is false on other record types.
-- `GET /features` lists the optional features of a deployment (`uploads`, `ingestion`, `printing`, `proposal_sync`, `passwords`) and whether each is enabled, so clients can hide what would return 501 `feature_disabled`.
-- `python -m app.cli identity backfill --issuer URL [--commit]` records a login for each person whose identifier is an ORCID; it replaces the script `migrations/data/20261103_backfill_user_identity.py`, which is not in the image and now forwards to it.
-- `python -m app.cli db sequences [--commit]` reports id sequences that are behind their tables, which makes inserts fail with a 500 after rows are loaded with their own ids, and moves them up.
-- `GET /account/auth-events` shows people their own sign-in history, in the same shape as the administrators' route.
-- `sign_in_methods` is now also filled for the person themselves, on `GET /account/profile` and `GET /users/{user_ref}`, so a client can tell whether they have a password before offering to set, change or remove one. No migration.
-- The sign-in history now records each checked wrong password (`sign_in_failed`) and the lock it causes (`locked`), without client addresses; attempts refused by the limits are not recorded. Administrators read a person's history, newest first in cursor pages, with `GET /users/{user_ref}/auth-events`, waiting accounts included. No migration.
-- Server commands: `python -m app.cli admin create` also prints a one-time `password_link` when passwords are on; `auth revoke-passwords [--commit]` removes every password after a breach, cancelling password links and ending those people's sessions; `auth rewrite-issuer --from URL --to URL [--commit]` moves logins to a provider's new issuer address, refusing an unlisted issuer or any collision. Both are dry runs without `--commit`. No migration.
-- Registration with a password (`CRUCIBLE_AUTH_PASSWORD_REGISTRATION`: `closed` by default, or `approval`; `open` refused at startup): `/oauth/register` takes names, a required but unverified email, a username and a password, creates an account that waits for an administrator's approval, and signs nobody in. A username or email in use gets one shared answer; every submission counts against the per-address limit. Adds the `email-validator` dependency (syntax only, no DNS). Administrators can now open a waiting account with `GET /users/{user_ref}` and its logins, see how each one signs in (`sign_in_methods`, on that route and `GET /users?pending=true`), and use `python -m app.cli admin pending`, `admin approve USER` and `admin reject USER` on the server. With passwords on, `GET /auth/methods` lists a `password` entry (`kind: password`), which carries `registration_url` while registration is open; every entry gains that field, null otherwise. No migration.
-- `POST /account/password` sets a first password or changes yours, from a browser session with a recent sign-in, answering 204: changing needs the current password and ends your other sessions; errors on `current_password` and `new_password` come as FastAPI field errors (`current_password_invalid` counts against the account's attempt limit), and an account without a username gets 409 `username_required` (set it first with `PATCH /account/profile`). `DELETE /users/{user_ref}/password` lets administrators remove a person's password after a compromise, ending their sessions; any human administrator's needs a browser session with a recent sign-in. API keys are never touched. With passwords off, `POST /account/password` and `POST /users/{user_ref}/password-link` answer 501 `feature_disabled` (`feature: passwords`) like other optional features, instead of 409 `passwords_off`. No migration.
-- Password links: `POST /users/{user_ref}/password-link` (administrators; for any human administrator, yourself included, a browser session with a recent sign-in) returns a one-time link to set or reset a password at `/oauth/password-link`, valid `CRUCIBLE_AUTH_PASSWORD_LINK_HOURS` (24 by default, 1 to 168). Using it ends the person's sessions and signs nobody in; a new link, a password change, disabling the account or changing its logins cancels it. `python -m app.cli admin password-link USER` prints one from the server. Needs migration `a7df9dd039cf`.
-- Sessions approved with a device code are recorded as such and refused, with 403 `browser_sign_in_required`, wherever a recent sign-in is needed: creating keys, ending sessions, changing logins or administrators. The device approval page shows the network address that asked. Needs migration `1226f8497119`.
-- Signed-in sessions: `GET /account/sessions` lists yours, `DELETE /account/sessions/{id}` and `DELETE /account/sessions` (all but this one) end them with a recent sign-in; administrators use `/users/{user_ref}/sessions`; `auth end-sessions --user|--all` ends them from the server. No migration.
-- Device sign-in (RFC 8628) for public clients on machines without a browser: `POST /oauth/device_authorization`, polling at `/oauth/token`, and the browser pages at `/oauth/device` (enter the code, sign in afresh, approve or deny). Codes last 10 minutes, are stored as hashes, and wrong codes count against the per-address limit. Needs migration `6a97d683a96c`.
-- Public clients in `CRUCIBLE_AUTH_CLIENTS` (`type: public`), such as the nano-crucible command line: no secret, PKCE required, loopback redirects on any port (RFC 8252), a confirmation page before the code is sent, and sessions of 14 days idle and 90 days at most. The Compose Hub overlay now registers the Hub and nano-crucible in the client list instead of `HUB_AUTH_*`, with the same secret file. No migration.
-- Password sign-in (`CRUCIBLE_AUTH_PASSWORD_ENABLED`, off by default): a password choice on the sign-in page and the form at `/oauth/password`, within the attempt limits, with one answer for every failure, a known-browser cookie, a strict nonce CSP checked in headless Chromium and Firefox, and https required. An account with a password cannot clear its username (409 `username_required`). No migration.
-- Password attempt limits, not yet used by any route: per account (delays for unknown browsers, refused at 90; 10 for known browsers and sessions, then the password is disabled; 100 in all) and per client address, counted atomically before hashing; signed device cookies; a per-worker cap on simultaneous checks. The common-password list now carries the SecLists and Pwdb-Public MIT notices. Needs migration `dc8e5f55644f`.
-- Password storage, not yet used by any route: Argon2id through `pwdlib` 0.3.1 in a new `local_credential` table, a pepper (`CRUCIBLE_AUTH_PEPPER`, rotatable), the OWASP parameter floor enforced at startup, and the NIST rules (`CRUCIBLE_AUTH_PASSWORD_MIN_LENGTH`, 15 by default, 12 at the lowest; a shipped common-password list). `CRUCIBLE_AUTH_PASSWORD_ENABLED` stays off. Needs migration `daa047f48e3b`.
-- `GET /oauth/authorize`, the standard authorization endpoint, checked by Authlib, and the metadata at `/.well-known/oauth-authorization-server` under the API (RFC 8414). Every answer back to a client now carries `iss` (RFC 9207), including the Hub's.
-- `POST /oauth/token` and `POST /oauth/revoke`: standard OAuth 2.0 token and revocation routes (RFC 6749, RFC 7009) on Authlib's server classes, with PKCE (S256) required, rotating refresh tokens and HTTP Basic client authentication. The Hub's `/auth/hub/token`, `/refresh` and `/revoke` now run through the same server, with unchanged responses.
-- `CRUCIBLE_AUTH_CLIENTS` lists the programs that sign people in through the API, each with its own secret (`OAUTH_{KEY}_CLIENT_SECRET`, at least 32 characters) and exact redirect addresses. Without it, `HUB_AUTH_*` registers the Hub alone as before; setting both stops the server at startup. `HUB_AUTH_CLIENT_SECRET` must now also be at least 32 characters: check yours before upgrading. Codes, sessions and links stay with the client that started them, and removing a client ends its sessions at once.
-- Several API keys per person: `POST /account/apikeys` (name, optional expiry up to a year; Hub session with a recent sign-in) returns a `crucible_` key once, `GET /account/apikeys` lists keys by name and last four characters, newest first, in cursor pages (`items`, `next_cursor`, `total`), and `PATCH /account/apikeys/{id}` renames one, and `DELETE /account/apikeys/{id}` revokes one. Keys from the older routes are named "Default key" and marked `older_routes`. Administrators get `GET` and `DELETE /users/{user_ref}/apikeys`; revoking another human administrator's key needs a Hub session with a recent sign-in. Keys are checked by their hash; older keys keep working.
-- API keys are also stored as SHA-256 hashes in a new `api_key` table, beside the plain one; after deploying, run `migrations/data/20261106_backfill_api_keys.py --commit` once to copy existing keys. Nothing changes for clients yet.
-- `python -m app.cli auth cleanup`, and an hourly `auth-cleanup` service in the Compose bundle, remove expired sign-in records, sign-in history older than `CRUCIBLE_AUTH_EVENT_RETENTION_DAYS` (default 365) and accounts left waiting 30 days. The Foundry's existing Hub cleanup job also removes the old history.
-- A short list of reserved usernames (`admin`, `root`, `support`, `api` and similar, plus lookalikes) cannot be chosen for yourself; administrators can still set one, existing holders keep theirs, and generated usernames avoid them.
-- Each provider's `registration` now applies at first sign-in: `closed` refuses someone new, `approval` creates an account that waits and gets no session or key, and `open` one that works at once. A waiting account sees a waiting page only after a valid sign-in.
-- `GET /users?pending=true`, `POST /users/{user_ref}/approve` and `POST /users/{user_ref}/reject` for administrators; rejecting deletes the waiting account, and waiting accounts left 30 days are removed by the cleanup job. Waiting accounts are hidden from every other lookup.
-- `GET /users/{user_ref}/identities` lists a person's logins, for themselves or administrators. Administrators remove a person's login, never the last, with `DELETE /users/{user_ref}/identities/{id}`, from a Hub session with a recent sign-in. Logins are added only by the person, through linking. `python -m app.cli identity move` moves a login off an empty duplicate account and switches that account off.
-- Linking another sign-in method: `POST /account/identities/{provider}/link` (Hub session, recent sign-in) returns a one-time start address; after the provider asks the person to sign in again, the Hub names the login with `POST /auth/hub/link/preview` and adds it with `POST /auth/hub/link/confirm`. `GET /account/identities` lists your logins and `DELETE /account/identities/{id}` removes one, never the last, ending your other Hub sessions. Linking needs `CRUCIBLE_AUTH_IDENTITY_LOOKUP` on.
-- User objects in responses include `orcid` and `orcid_verified`, the person's linked ORCID and whether it was confirmed by signing in; both are null without one.
-- `POST /users/{user_ref}/disable` and `/enable` switch an account off and on; a disabled account cannot sign in, and its API keys and Hub sessions stop working.
-- `auth_event` table for sign-in history.
-- `CRUCIBLE_AUTH_IDENTITY_LOOKUP`, off by default: turn it on after the `user_identity` backfill, so ORCID sign-in finds people through that table.
-- Hub sign-in supports several OIDC providers, each with its own callback, a Hub-styled choice page, `GET /auth/methods`, and PKCE when advertised; providers other than ORCID sign in only people already linked.
-- `GET /auth/hub/login` accepts `provider` and `required_user`, and `POST /auth/hub/token` and `POST /auth/hub/refresh` return `auth_time`.
-- `user_identity` table and backfill script (`migrations/data/20261103_backfill_user_identity.py`), recording how each person signs in; sign-in still looks people up as before.
-
-### Fixed
-
-- JSON request bodies over 64 KiB are checked for unstorable characters in the threadpool, so parsing a large body no longer stalls every other request on the worker.
-- The device approval page and the start of linking a login no longer read the database or secrets on the event loop, where a busy connection pool could stall every request on that worker.
-- Deleting a key from `apitoken` (older pods during a rollout, a rollback, or by hand) now also revokes its hashed copy, so a revoked key cannot keep working. Needs migration `2b0ab3a4520a`.
-- Editing a dataset no longer re-publishes or un-publishes it.
-- Provider discovery works for issuers with a trailing slash, such as Authentik's.
-- `GET /auth/apikey`, `POST /auth/apikey/regenerate` and `POST /users` return 409, and `admin create` refuses cleanly, when an ORCID is already linked to another user, instead of failing with a 500.
-- Simultaneous first sign-ins through `/auth/apikey` or the Hub no longer fail, and simultaneous `POST /users` requests get a 409.
-- Simultaneous API key requests no longer leave one user with several keys, which broke their key routes.
-- `POST /users` checks for duplicates before calling the proposal service.
-- Browser ORCID sign-in recovers without a restart after a bad discovery document, and refreshes discovery every 12 hours.
-- `GET /auth/login` and `GET /auth/callback` return 502 instead of 500 when the ORCID client secret is missing.
+- OAuth 2.0 authorization server: `GET /oauth/authorize`, `POST /oauth/token`, `POST /oauth/revoke` and metadata at `/.well-known/oauth-authorization-server`, with PKCE, rotating refresh tokens and `iss` on every answer.
+- Client registry `CRUCIBLE_AUTH_CLIENTS`: confidential clients with a secret, and public clients such as the nano-crucible command line (PKCE, loopback redirects, a confirmation page).
+- Several OpenID Connect identity providers (`CRUCIBLE_AUTH_PROVIDERS`), each with a registration mode (`closed`, `approval`, `open`); `GET /auth/methods` lists the sign-in methods.
+- Device sign-in (RFC 8628): `POST /oauth/device_authorization` and the approval pages at `/oauth/device`.
+- Password sign-in (`CRUCIBLE_AUTH_PASSWORD_ENABLED`): Argon2id with a pepper, attempt limits per account and per address, one-time password links, `POST /account/password`, `DELETE /users/{user_ref}/password`, and registration that waits for approval (`CRUCIBLE_AUTH_PASSWORD_REGISTRATION`).
+- Linked identities: a user links, lists and removes sign-in methods (`/account/identities`, `/oauth/link/*`); administrators use `/users/{user_ref}/identities`. User objects include `orcid`, `orcid_verified` and `sign_in_methods`.
+- Named API keys: `POST`, `GET`, `PATCH` and `DELETE /account/apikeys`, stored as hashes; administrators list and revoke with `/users/{user_ref}/apikeys`.
+- Sessions: `GET` and `DELETE /account/sessions`; administrators use `/users/{user_ref}/sessions`.
+- Sign-in history: `GET /account/auth-events` and, for administrators, `GET /users/{user_ref}/auth-events`.
+- Accounts: `GET /users?pending=true`, `POST /users/{user_ref}/approve` and `/reject` for waiting accounts; `POST /users/{user_ref}/disable` and `/enable`; reserved usernames; every new user gets a username.
+- `GET /features` lists the optional features of a deployment and whether each is enabled.
+- Dataset `capabilities` include `can_delete_files`.
+- Projects have `proposal_sync`, and `RESERVED_PROJECT_ID_PATTERN` reserves a project naming scheme for administrators (403 `project_id_reserved`); proposal sync adds users only to such projects.
+- Server commands: `db sequences`, `identity backfill`, `identity move`, `owners backfill`, `admin password-link`, `admin set-role`, `admin pending`, `admin approve`, `admin reject`, `auth cleanup`, `auth end-sessions`, `auth revoke-passwords` and `auth rewrite-issuer`.
+- Compose bundle: an hourly `auth-cleanup` service, files in `deploy/compose/local/` to adjust certificates and trusted proxies, and the nano-crucible client registered by default.
+- The project is released under the BSD 3-Clause License.
 
 ### Changed
 
-- `affiliation` can be combined with an exact owner filter (`owner_id`) on lists, facets and search, as an intersection; the combination returned 422 before.
-- Compose bundle: `CRUCIBLE_AUTH_IDENTITY_LOOKUP` is on by default, so people on a new installation can link another way to sign in; an installation upgraded from 3.x with ORCID users runs `python -m app.cli identity backfill` right after upgrading.
-- Providers send the browser back to `<API>/oauth/callback/{key}`; register that address with each provider. `legacy_callback: true` keeps `<API>/auth/hub/callback` for an ORCID application registered before 4.0.0, and the bundle's `ORCID_LEGACY_CALLBACK=true` selects it.
-- The Hub's `/auth/hub/login`, `/token`, `/refresh`, `/revoke` and `/callback` are deprecated wrappers around `/oauth/authorize`, `/oauth/token`, `/oauth/revoke` and the provider callback; they go once Hub 1.8.0 is deployed.
-- `POST /oauth/token` also returns `refresh_expires_in` (seconds until the session ends) and `user_unique_id`.
-- Samples, projects and instruments record the API version that wrote them as datasets do (`v4.0.0` and the commit); before, they recorded the bare `API_VERSION` variable, or nothing when it was unset.
-- **Breaking:** `POST /datasets/{parent}/children/{child}` and `POST /samples/{parent}/children/{child}` return `parent_*_mfid`, `child_*_mfid` and `relationship_type` instead of internal integer ids; the keyword routes no longer return the integer `id`.
-- Routes no longer return database tables: the OpenAPI schemas `DatasetLink`, `SampleLink`, `Keyword`, `ResourceACL` and `IngestionRequest` become `DatasetLinkRead`, `SampleLinkRead`, `KeywordRead`, `ResourceAccessGroupRead` and `IngestionRequestRead` (ingestion fields unchanged).
-- **Breaking for Compose installations** (see Upgrading in `deploy/compose/README.md`): the server listens on this machine only unless `CRUCIBLE_BIND_ADDRESS` opens it.
-- **Breaking for Compose installations:** Caddy refuses plain HTTP under any name but `localhost` (421); `CRUCIBLE_HTTP_HOSTS` names an address behind a proxy that provides HTTPS.
-- **Breaking for Compose installations:** passwords are on by default and need the new secret `CRUCIBLE_AUTH_PEPPER`; with a provider also listed, sign-in offers the choice.
-- **Breaking for Compose installations:** ORCID sign-in moved from `compose.hub.yaml` to `compose.orcid.yaml`, so the Hub works with passwords alone.
-- Compose bundle: the nano-crucible client is registered without the Hub overlay, and Docker Engine 28 is required.
-- Compose bundle: files in `deploy/compose/local/` adjust how Caddy gets its certificate (an institution's ACME service, certificate files, a DNS challenge) or name a trusted proxy, without editing the Caddyfile.
-- The API logs a warning at startup when its public address is plain HTTP on anything but localhost.
-- The bundle smoke test (`scripts/selfhost_smoke.py --password-link`) sets the administrator's password through the one-time link and signs in as the nano-crucible command line does.
-- Refresh tokens get a 30-second grace: the token just before the newest can be used again in that time and gets a new pair, so concurrent refreshes and retries no longer end the session. Any older token still ends it.
-- Linking moved to `/oauth/link/start`, `/oauth/link/preview` and `/oauth/link/confirm`; the `/auth/hub/link/*` paths are gone (no client used them). Sign-in and link events record the client they came through. Needs migration `4a3a4e216223`.
-- Linking a login: only the session that started the link can preview or confirm it, that session needs a sign-in within 10 minutes when confirming (401 `insufficient_user_authentication`), the one-time start address works for 2 minutes, and a person can start at most 5 links in 10 minutes (429 `too_many_links`). Needs migration `15eb11ce75fd`.
-- An API key can no longer edit another human administrator through `PATCH /users/{user_ref}` or revoke all their keys; that needs a Hub session with a recent sign-in. People editing themselves are unaffected.
-- Migrations commit one by one and wait at most `ALEMBIC_LOCK_TIMEOUT` (5s by default) for a table lock, so a deploy no longer blocks reads behind a long transaction; rerun the upgrade if one times out.
-- `POST /users` no longer creates an API key that no response returned.
-- `POST /account/apikey/regenerate` and `POST /users/{user_ref}/apikey/regenerate` are deprecated and replace only the key the older key routes show; keys created under `/account/apikeys` stay. `api_key_status` and `/account/verify` describe a working key before an expired one.
-- Dataset and sample `owner_orcid` and `owner` are read from the owner's user record: records that store an owner only by internal reference now show it, and those whose stored owner matches no user show none.
-- The `owner_id` filters on datasets, samples, instruments and facets accept a unique_id, linked ORCID, username or email, matched exactly.
-- Instrument `owner_orcid` can be null: instruments whose stored owner matches no user show no owner, and the `owner` and `owner_id` filters match only people.
-- `PATCH /datasets/{id}` and `PATCH /samples/{id}` refuse `public` with a 422; use `PUT` or `DELETE /resources/{mfid}/access/public`, which need admin rights.
-- The `public` value in responses and stored records is read from the public access grant.
-- Publishing or unpublishing a dataset or sample now updates its stored record.
-- Wherever the API takes a person, an ORCID also finds someone through their linked login, not only when it is their `unique_id`.
-- `POST /account/sync-projects` uses the person's linked ORCID, returns 502 when the proposal service cannot be reached, skips projects pending deletion, and `orcid` in its response can be null.
-- Every newly created person gets a username, generated from their name when none is given; existing people are unchanged.
-- Browser and Hub sign-in share one resolver, which records `user_identity.verified_at`, `last_used_at` and sign-in events.
-- Generated usernames keep accented and non-Latin names readable, such as `jose_garcia` and `li_ming`.
-- Hub sign-in requires an explicit `CRUCIBLE_AUTH_PROVIDERS` list and `OIDC_{KEY}_CLIENT_SECRET`, replacing `HUB_AUTH_ORCID_CLIENT_ID`, `HUB_AUTH_ORCID_ISSUER` and `HUB_AUTH_ORCID_CLIENT_SECRET`; set them before upgrading.
-- Hub sign-in reads ORCID's addresses from its discovery document.
-- Hub sign-in failures after a valid request redirect to the Hub with `state` and a standard OAuth `error`, instead of a 400 or 503 page.
-- `settings check` warns when the ORCID provider's issuer and `ORCID_ISSUER` differ.
+- `affiliation` combines with an exact owner filter as an intersection; the combination returned 422 before.
+- The `owner_id` filters accept a unique_id, linked ORCID, username or email; wherever the API takes a user, an ORCID also finds a user through a linked identity.
+- Dataset and sample owners are read from the owner's user record; a stored owner that matches no user is shown as none, and instrument `owner_orcid` can be null.
+- `public` in responses and stored records is read from the public access grant, and publishing updates the stored record.
+- `POST /account/sync-projects` uses the user's linked ORCID, returns 502 when the proposal service is unreachable, and skips projects pending deletion.
+- Samples, projects and instruments record the API version that wrote them, as datasets do.
+- Generated usernames keep accented and non-Latin names readable.
+- Migrations commit one by one and wait at most `ALEMBIC_LOCK_TIMEOUT` (5 s) for a table lock.
+- The `/auth/hub/*` routes are deprecated wrappers around the `/oauth/*` routes, kept for Hub releases before 1.8.0.
+- The API warns at startup when its public address is plain HTTP on anything but localhost.
+
+### Fixed
+
+- Editing a dataset no longer publishes or unpublishes it.
+- `POST /users` returns 409 for a duplicate or for an ORCID linked to another user, also under simultaneous requests, and checks before calling the proposal service.
+- Provider discovery works for issuers with a trailing slash.
+- Large JSON bodies, the device approval page and the start of linking no longer block other requests on the same worker.
 
 ### Removed
 
-- **Breaking:** the resumable and token upload routes are gone: `POST /datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart` and `/upload/complete` answer 410 `route_removed`; upload through `/upload/multipart` (nano-crucible 3.3.0 or newer), which needs `MULTIPART_UPLOAD_ENABLED=true`: while it is off, starting an upload answers 501 `feature_disabled` (feature `uploads`) instead of 503 with `Retry-After`. `LEGACY_UPLOAD_TOKEN_DOWNSCOPE` is no longer read (`settings check` reports it), and the server no longer hands out storage tokens.
-- **Breaking for operators:** the YAML settings files in the image (`app/conf/*.yaml`) and `API_CONF_FILE` are gone; set `API_PUBLIC_URL` and `API_PATH` (and `TRGM_SEARCH_THRESHOLD` if not 0.3). `settings check` reports `API_CONF_FILE` as retired. The Compose bundle never used them.
-- **Breaking:** the browser pages that signed in with ORCID and handed out a single API key are gone: `GET /auth/login`, `/auth/callback`, `/auth/apikey`, `POST /auth/apikey/regenerate` and the aliases `/login`, `/auth`, `/user_apikey` answer 410 `route_removed`. Create named keys with `POST /account/apikeys` (the Hub's Security page), or sign in from nano-crucible 4.0.
-- **Breaking for operators:** `ORCID_CLIENT_ID` and `ORCID_CLIENT_SECRET` are no longer read (`settings check` reports them); ORCID sign-in uses the provider entry in `CRUCIBLE_AUTH_PROVIDERS` with `OIDC_ORCID_CLIENT_SECRET`. The ORCID application no longer needs the `<API>/auth` redirect, and the `crucible_login_session` cookie is gone.
-- **Breaking:** five deprecated routes that no released client calls answer 410 `route_removed` and name their replacement: `POST /datasets/{dataset_mfid}/files/{file_id}/ingest`, `GET /datasets/{dataset_mfid}/samples`, `GET /users/by-username/{username}`, `GET /users/{user_ref}/datasets` and `GET /users/{user_ref}/samples`.
-- `GET /account/apikey`, `POST /account/apikey/regenerate`, `POST /users/{user_ref}/apikey` and `POST /users/{user_ref}/apikey/regenerate` now answer 410 Gone (`route_removed`, naming the replacement): keys cannot be read back, and an API key can no longer renew itself or read someone else's. Use `POST`, `GET` and `DELETE /account/apikeys`, and for administrators `GET` and `DELETE /users/{user_ref}/apikeys`. Hub releases before the next one and nano-crucible 2.1 to 3.3 (`crucible account api-key`) call some of them, so deploy with the client releases.
+- The `crucible_login_session` cookie and the `<API>/auth` ORCID redirect, with the browser key pages.
+- The one-off data scripts in `migrations/data/`; data steps for upgraded installations are server commands.
 
 ### Security
 
-- **Breaking for operators:** `CRUCIBLE_SECRET_KEY`, `CRUCIBLE_CURSOR_SIGNING_KEY` and every secret in `CRUCIBLE_CURSOR_SIGNING_KEYS` must be at least 32 characters; the server refuses to start with a shorter one.
-- **Breaking:** `GET /keywords` and `GET /keywords/{keyword}` need sign-in.
-- **Breaking:** `POST /projects` lets only an administrator name someone else as the lead (403 `lead_must_be_caller`) and never a service account (422). Projects have `proposal_sync`: proposal sync adds people only to projects that have it, which are those an administrator created or set it on with `PATCH /projects/{project_ref}`; a rename by anyone else turns it off. Existing projects keep it on. Needs migration `c41d7e9a52b6`.
-- `PATCH /service_accounts/{service_account_ref}` needs a browser session with a recent sign-in to make a service account an administrator (API keys get 403 `hub_session_required`); every role change is recorded as `role_changed` and takes effect on the account's keys at once.
-- Ending all of a person's sessions (sign out everywhere, a password change, reset or removal, disabling the account, the `auth` server commands) also cancels their sign-ins that were approved but not finished: codes not yet exchanged and devices that have not collected their tokens.
-- A device approval is accepted only from the person who signed in for it, recorded on the server; the signed form no longer decides who that is.
-- A malformed `POST /account/password` is answered without repeating the submitted values.
-- `POST /users/resolve` and `POST /datasets/first_thumbnails` take at most 1000 entries per list (422 above). Renaming a stored file follows the filename rules of an upload. `%` and `_` in a user search are matched as text. MFID and ORCID checks no longer accept a trailing newline.
-- Compose bundle: `/api/v3/metrics` is no longer served to the outside (404); scrape `api:8000/metrics` inside the Compose network.
-- From the review against the spec: the 30-second refresh grace now applies only to a token its holder used, so a copied token can no longer keep renewing itself beside the owner's (new column `hubrefreshtoken.retired_at`, migration `208288a60073`); a password now counts as a way to sign in when unlinking a login; approving and rejecting waiting accounts from a session needs a recent sign-in; the older ORCID browser flow registers nobody new when no ORCID provider is listed (closed, not open); the bundle's Caddy limits the API's sign-in forms (`/oauth/password`, `/oauth/password-link`, `/oauth/register`, `/oauth/device`) to 8 KB.
-- Removed four finished data scripts from May and June 2026 (storage paths, file MFIDs, usernames, personal access groups) that wrote to the database without a `--commit` flag; they remain in git history.
-- `ingestion_class` on the ingest routes must be 1 to 128 letters, digits, dots, hyphens or underscores (422 otherwise), and `PATCH /ingestion_requests/{id}` now changes only `status`, `time_completed` and `ingestion_githash`, ignoring other fields, so a caller can no longer rewrite the stored file location or ingestor.
-- The per-address attempt limit now slows guessing for at most a minute instead of up to 15, and a browser that already signed in to the account skips it, so one person behind a shared address can no longer lock everyone there out of passwords, device codes and password links.
-- API keys can no longer reach the server log: the database engine hides statement parameters, the activity update no longer matches the plain key table by key value, and its failures log only the error class.
-- The Compose guide warns that plain HTTP sends API keys unencrypted to the whole network, and its backup and upgrade commands now encrypt the database dump with age, since it holds every API key.
-- Request bodies are limited before anything reads them: 10 MiB in general (`API_MAX_BODY_MIB`) and 20 MiB for creating or replacing a thumbnail (`API_MAX_THUMBNAIL_BODY_MIB`), answering 413 `body_too_large`; the accepted thumbnail source drops from 50 to 14 MiB (`THUMBNAIL_MAX_SOURCE_BYTES`), and the bundle's Caddy applies the same limits.
-- The API image runs as an unprivileged user (uid 10001) with its code in `/app`, owned by root and compiled at build time, so the API cannot change its own files; it needs only `/tmp` writable and puts gunicorn heartbeats in `/dev/shm`. The bundle's API containers now have a read-only root filesystem. `/root/.venv` and `/root/scripts` remain as links until deployments call `/app` directly.
-- Authlib 1.9.5, with its four security releases since 1.9.1 (GHSA-f3fg-34g9-v7jx, GHSA-gp2m-377p-m4j3, GHSA-9qr6-8289-9j56, GHSA-f7j6-p4qx-gq99). None affects the sign-in code in use; the upgrade comes before building on Authlib's server parts.
-- Hub sign-in uses one browser cookie per sign-in, so parallel tabs no longer break each other and an unmatched callback no longer cancels a sign-in in progress, and refuses provider responses whose RFC 9207 `iss` names another issuer.
-- Changing whether a human is a platform administrator, and reading or regenerating a human administrator's API key, need a Hub session with a recent sign-in; API keys get 403 `hub_session_required`. `python -m app.cli admin set-role` changes roles from inside the pod.
-- `GET /auth/apikey`, `GET /user_apikey` and `POST /auth/apikey/regenerate` send `Cache-Control: no-store`.
-- `GET /auth/callback` and Hub sign-in refuse ID tokens that list any audience other than Crucible.
-- `GET /auth/callback` refuses token responses with no valid ID token.
-- Authlib minimum raised to 1.9.1.
-- `GET /auth/callback` ends the sign-in when ORCID reports an error, so its `state` cannot be used again.
-- The older browser ORCID sign-in (`/login`, `/auth`, `/user_apikey`) now uses Authlib's OIDC client, which checks `state` and `nonce` and verifies ORCID's ID token.
+- A device approval is accepted only from the user who signed in for it.
+- Ending all of a user's sessions also cancels sign-ins that were approved but not finished.
+- The refresh grace applies only to a token its holder used, so a copied token cannot keep renewing itself.
+- Sessions approved with a device code cannot create keys, end sessions or change sign-in methods (403 `browser_sign_in_required`).
+- Sign-in refuses ID tokens that list another audience or issuer, and uses one browser cookie per sign-in.
+- The per-address attempt limit delays for at most a minute, so one user behind a shared address cannot lock out the others.
+- API keys cannot reach the server log.
+- Renaming a stored file follows the upload filename rules; `%` and `_` in a user search match as text; MFID and ORCID checks reject a trailing newline; a malformed `POST /account/password` is answered without repeating the submitted values.
+- Compose bundle: `/api/v3/metrics` is not served to the outside, containers have a read-only root filesystem, and the guide encrypts database backups.
+- Dependencies: Authlib 1.9.5 and `pyasn1` 0.6.5 with their security fixes.
 
 ## [3.3.1] - 2026-11-02
 

@@ -28,6 +28,10 @@ The tag is the user's. Your part ends with a merged release pull request and a l
 - Publishing the GitHub release attaches the OpenAPI document (`crucible-api.json`) that clients pin.
 - Production changes only through the deploy repository, following the upgrade guide.
 
+## Pre-releases
+
+A pre-release such as `4.0.0a1` is a version in `pyproject.toml` on `main`, not a tag: the release build and the deployment gates accept only `vX.Y.Z`. Staging runs every `main` build, so the pre-release is tested there, and its image is the `main` build of that commit. The changelog section carries the pre-release version until the final release renames it.
+
 ## Never
 
 Tag, push to `main`, or deploy.

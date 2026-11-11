@@ -9,6 +9,5 @@
 docs
 tests
 openapi
-migrations/data
 deploy
 **/*.dump

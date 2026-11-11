@@ -36,7 +36,7 @@ def upgrade() -> None:
         if duplicate is not None:
             raise RuntimeError(
                 f"{table}.{column} contains values differing only by case: {duplicate.folded!r}. "
-                "Run migrations/data/20261005_audit_case_insensitive_slugs.py and resolve them first."
+                "Rename one of each pair, then run the upgrade again."
             )
 
     with op.get_context().autocommit_block():

@@ -35,7 +35,3 @@ The [OpenAPI document](https://crucible.lbl.gov/api/v3/docs) served by each depl
 | [Storage locations and downloads](storage_download_design.md) | Permitted storage locations and signed download links |
 | [File replacement](file_replace_design.md) | Replacing the content of a stored file and restoring a previous version |
 | [Remote file records](remote_file_records.md) | Cataloging files held outside the API's storage |
-
-## Known limitations and planned work
-
-[Known limitations and planned work](open_items.md) tracks known limitations, unscheduled work, and deprecated behavior retained for older clients.

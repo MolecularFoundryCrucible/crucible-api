@@ -27,14 +27,6 @@ class _Inspector:
         return [{"name": name} for name in self.indexes]
 
 
-def test_additive_sql_uses_final_acl_column_and_index_names():
-    sql = (ROOT / "migrations/data/20260806_add_permission_roles.sql").read_text()
-    assert "ADD COLUMN IF NOT EXISTS permission resource_role" in sql
-    assert "ix_resourceacl_group_mfid_permission" in sql
-    assert "ALTER TABLE resourceacl\n    ADD COLUMN IF NOT EXISTS role resource_role" not in sql
-    assert "resourceacl.role already exists" in sql
-
-
 def test_rename_revision_is_noop_for_unified_production_schema(monkeypatch):
     revision = _load_revision()
     calls = []

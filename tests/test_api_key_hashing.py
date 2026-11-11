@@ -1,7 +1,5 @@
 import hashlib
-import importlib.util
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 from sqlmodel import Session, select
@@ -59,46 +57,6 @@ def test_revoked_key_is_gone_from_both_tables(client, auth_as, db_engine, ada):
     assert [row.revoked_at is not None for row in keys(db_engine)] == [True]
 
 
-def backfill():
-    path = Path(__file__).resolve().parents[1] / "migrations/data/20261106_backfill_api_keys.py"
-    spec = importlib.util.spec_from_file_location("backfill_api_keys", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_backfill_copies_every_key_with_its_life_unchanged(db_engine, ada, capsys):
-    used = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    with Session(db_engine) as session:
-        session.add_all([
-            ApiToken(token="a" * 64, user_id=ada, user_unique_id=ADA, access_group_id=ADA, token_created="2026-01-15", last_used_at=used),
-            ApiToken(token="b" * 64, user_id=ada, user_unique_id=ADA, access_group_id=ADA, token_created="2025-03-01T10:00:00+00:00"),
-            ApiToken(token="c" * 64, user_unique_id="nobody", access_group_id="g", token_created="2026-01-01"),
-        ])
-        session.commit()
-    script = backfill()
-    assert script.main([]) == 0
-    assert keys(db_engine) == []
-    assert "would copy: 2" in capsys.readouterr().out
-    assert script.main(["--commit"]) == 0
-    rows = {row.key_hash: row for row in keys(db_engine)}
-    first, second = rows[hashlib.sha256(b"a" * 64).hexdigest()], rows[hashlib.sha256(b"b" * 64).hexdigest()]
-    assert (first.expires_at.date().isoformat(), first.last_used_at.replace(tzinfo=timezone.utc)) == ("2027-01-15", used)
-    assert second.expires_at.date().isoformat() == "2026-03-01"
-    assert len(rows) == 2
-    assert script.main(["--commit"]) == 0
-    assert "copied: 0, already copied: 2, no owner (skipped): 1" in capsys.readouterr().out.splitlines()[-1]
-
-
-def test_backfill_reports_an_unreadable_date(db_engine, ada, capsys):
-    with Session(db_engine) as session:
-        session.add(ApiToken(token="d" * 64, user_id=ada, user_unique_id=ADA, access_group_id=ADA, token_created="last tuesday"))
-        session.commit()
-    assert backfill().main(["--commit"]) == 1
-    assert "unreadable token_created" in capsys.readouterr().err
-    assert keys(db_engine) == []
-
-
 def test_rejected_waiting_account_takes_its_hashed_keys_with_it(db_engine, ada):
     from app.auth.api_keys import store_key
     from app.auth.registration import reject_pending_user
@@ -111,20 +69,6 @@ def test_rejected_waiting_account_takes_its_hashed_keys_with_it(db_engine, ada):
         reject_pending_user(session, session.get(User, ada), actor=None)
         session.commit()
     assert keys(db_engine) == []
-
-
-def test_backfill_names_copies_and_earlier_unnamed_rows(db_engine, ada, capsys):
-    from app.auth.api_keys import store_key
-
-    with Session(db_engine) as session:
-        session.add(ApiToken(token="d" * 64, user_id=ada, user_unique_id=ADA, access_group_id=ADA, token_created="2026-06-01"))
-        store_key(session, ada, "e" * 64)
-        session.commit()
-    script = backfill()
-    assert script.main([]) == 0 and {row.name for row in keys(db_engine)} == {None}
-    assert script.main(["--commit"]) == 0
-    assert [row.name for row in keys(db_engine)] == ["Default key", "Default key"]
-    assert "unnamed given a name: 1" in capsys.readouterr().out.splitlines()[-1]
 
 
 def test_a_service_account_key_authenticates_through_its_hash(client, auth_as, db_engine, ada):

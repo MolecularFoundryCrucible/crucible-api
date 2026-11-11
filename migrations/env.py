@@ -1,11 +1,10 @@
 """Alembic environment. Connects through the API's own DB config (get_engine(),
 DB_CONF_FILE) instead of alembic.ini's sqlalchemy.url, so there is one place
-that knows how to reach a database — the same one every migrations/data
-script and the app itself use.
+that knows how to reach a database, the same one the app itself uses.
 
-Prod and staging share a Cloud SQL instance, differing only by database name
-(see migrations/data/apply_sql.py). The same guard applies here: refuse to
-run against production unless explicitly told to. ALEMBIC_PRODUCTION_DATABASE
+A deployment's production and staging databases may share a server and differ
+only by database name, so this refuses to run against production unless
+explicitly told to. ALEMBIC_PRODUCTION_DATABASE
 names the guarded database ("crucible" by default); an empty value turns the
 guard off for installations without a separate production database.
 

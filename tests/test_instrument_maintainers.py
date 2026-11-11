@@ -1,6 +1,4 @@
 """Instrument record maintainers, their visibility, and the maintainer affiliation filter."""
-import importlib.util
-from pathlib import Path
 
 from sqlmodel import Session, select
 
@@ -209,31 +207,3 @@ class TestMaintainerAffiliation:
         for user_id in (EDITOR, ADMIN):
             _as(auth_as, db_engine, user_id)
             assert client.get(f"/datasets/{dsid}").status_code == 403
-
-
-def _load_cleanup_script():
-    path = Path(__file__).parents[1] / "migrations/data/20261005_remove_instrument_group_record_grants.py"
-    spec = importlib.util.spec_from_file_location(path.stem, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_cleanup_removes_only_the_operator_group_grant_on_its_own_record(client, db_engine, auth_as):
-    mfid = _setup(client, db_engine, auth_as)
-    dsid = client.post("/datasets", json={"dataset_name": "raw", "instrument_id": "xrd-1"}).json()["unique_id"]
-    module = _load_cleanup_script()
-    with Session(db_engine) as session:
-        group = session.exec(select(AccessGroup).where(AccessGroup.group_name == mfid)).one()
-        session.add(ResourceACL(mfid=mfid, accessgroup_id=group.id, read=True, write=True, permission="editor"))
-        session.commit()
-        group_id = group.id
-
-        assert [row.unique_id for row in module.find_self_grants(session)] == [mfid]
-        assert module.delete_self_grants(session) == 1
-        session.commit()
-
-        assert module.find_self_grants(session) == []
-        assert session.exec(select(ResourceACL).where(
-            ResourceACL.mfid == dsid, ResourceACL.accessgroup_id == group_id)).one().permission == "contributor"
-        assert len(session.exec(select(ResourceACL).where(ResourceACL.mfid == mfid)).all()) == 3

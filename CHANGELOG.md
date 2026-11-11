@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `RESERVED_PROJECT_ID_PATTERN` reserves project identifiers that match a regular expression: only an administrator may create or rename a project with one (403 `project_id_reserved`), and proposal sync adds people only to matching projects. Unset by default.
 - The project is released under the BSD 3-Clause License (`LICENSE`).
 - `python -m app.cli owners backfill [--unmatched FILE] [--commit]` fills dataset and sample `owner_user_id` from `owner_orcid` on a database upgraded from 3.x; run it once after upgrading, or the owner filters and owner fields miss those records.
 - Dataset `capabilities` include `can_delete_files`: whether `DELETE /files/{file_id}` would be accepted for a file of the dataset. It is false on other record types.

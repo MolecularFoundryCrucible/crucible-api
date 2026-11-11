@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import and_, func
 from sqlmodel import select
+from app.config import get_settings
 from app.tables import AccessGroup, Project, User, UserAccessGroupLink
 from app.models.projects import ProjectReferenceRead
 from app.general_utils import is_valid_mfid
@@ -23,6 +24,12 @@ RESERVED_PROJECT_IDS = frozenset({"admin", "read_only", "public"})
 
 def project_id_matches(project_id: str):
     return func.lower(Project.project_id) == project_id.lower()
+
+
+def project_id_is_reserved(project_id: str) -> bool:
+    """Whether RESERVED_PROJECT_ID_PATTERN keeps this project_id for administrators."""
+    pattern = get_settings().api.reserved_project_id_pattern
+    return pattern is not None and re.fullmatch(pattern, project_id, re.IGNORECASE) is not None
 
 
 def validate_project_id(project_id: str) -> str:

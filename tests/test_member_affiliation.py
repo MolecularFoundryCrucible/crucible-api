@@ -1,7 +1,7 @@
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
-from app.tables import AccessGroup, Dataset, Resource, ResourceACL, Sample
+from app.tables import AccessGroup, Dataset, Resource, ResourceACL, Sample, User
 from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, PlatformRole, Role
 
 ME = "0000-0007-0000-0001"
@@ -71,3 +71,28 @@ def test_member_applies_to_facets(client, auth_as, records):
 def test_projects_keep_owner_only_affiliation(client, auth_as, records):
     _as_me(auth_as, records)
     assert client.get("/projects", params={"affiliation": "member"}).status_code == 422
+
+
+BOB = "0000-0007-0000-0003"
+
+
+@pytest.mark.parametrize("path, model, prefix", [("/datasets", Dataset, ""), ("/samples", Sample, "s-")])
+def test_affiliation_narrows_an_exact_owner_filter(client, auth_as, db_engine, records, path, model, prefix):
+    with Session(db_engine) as session:
+        me, bob = User(unique_id=ME, first_name="A", last_name="Me"), User(unique_id=BOB, first_name="B", last_name="Ob")
+        session.add_all([me, bob])
+        session.flush()
+        for mfid, owner in (("private-mine", me), ("private-project", bob), ("public-only", bob)):
+            row = session.exec(select(model).where(model.unique_id == f"{prefix}{mfid}")).one()
+            row.owner_user_id = owner.id
+            session.add(row)
+        session.commit()
+    _as_me(auth_as, records)
+    assert _mfids(client, path, {"owner_id": BOB}) == [f"{prefix}private-project", f"{prefix}public-only"]
+    assert _mfids(client, path, {"affiliation": "member", "owner_id": BOB}) == [f"{prefix}private-project"]
+    assert _mfids(client, path, {"affiliation": "member", "owner_id": ME}) == [f"{prefix}private-mine"]
+    assert _mfids(client, path, {"affiliation": "owner", "owner_id": BOB}) == []
+    facets = client.get(f"{path}/facets", params={"field": "owner", "affiliation": "member", "owner_id": BOB})
+    assert facets.status_code == 200, facets.text
+    assert [(item["value"], item["count"]) for item in facets.json()["items"]] == [(BOB, 1)]
+

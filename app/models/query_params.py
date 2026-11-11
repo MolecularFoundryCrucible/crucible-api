@@ -450,8 +450,6 @@ class DatasetListQuery(ResourceCollectionQuery):
         owner_orcid = self.__dict__.get("owner_orcid")
         if self.owner_id is not None and owner_orcid is not None and self.owner_id != owner_orcid:
             raise ValueError("owner_id and owner_orcid must identify the same owner")
-        if self.affiliation and (self.owner_id is not None or owner_orcid is not None):
-            raise ValueError("affiliation cannot be combined with an exact owner filter")
         if self.session_name_is_null is True and self.session_name is not None:
             raise ValueError("session_name_is_null=true cannot be combined with session_name")
         if self.measurement_is_null is True and self.measurement is not None:
@@ -499,8 +497,6 @@ class SampleListQuery(ResourceCollectionQuery):
         owner_orcid = self.__dict__.get("owner_orcid")
         if self.owner_id is not None and owner_orcid is not None and self.owner_id != owner_orcid:
             raise ValueError("owner_id and owner_orcid must identify the same owner")
-        if self.affiliation and (self.owner_id is not None or owner_orcid is not None):
-            raise ValueError("affiliation cannot be combined with an exact owner filter")
         if self.sample_type_is_null is True and self.sample_type is not None:
             raise ValueError("sample_type_is_null=true cannot be combined with sample_type")
         if self.owner_id_is_null is True and (self.owner_id is not None or owner_orcid is not None):
@@ -600,8 +596,6 @@ class DatasetFacetQuery(ResourceFacetQuery):
 
     @model_validator(mode="after")
     def validate_facet_filters(self):
-        if self.affiliation and self.owner_id is not None:
-            raise ValueError("affiliation cannot be combined with owner_id")
         if self.session_name_is_null is True and self.session_name is not None:
             raise ValueError("session_name_is_null=true cannot be combined with session_name")
         if self.measurement_is_null is True and self.measurement is not None:
@@ -628,8 +622,6 @@ class SampleFacetQuery(ResourceFacetQuery):
 
     @model_validator(mode="after")
     def validate_facet_filters(self):
-        if self.affiliation and self.owner_id is not None:
-            raise ValueError("affiliation cannot be combined with owner_id")
         if self.sample_type_is_null is True and self.sample_type is not None:
             raise ValueError("sample_type_is_null=true cannot be combined with sample_type")
         if self.owner_id_is_null is True and self.owner_id is not None:
@@ -829,8 +821,6 @@ class InstrumentListQuery(StrictQueryModel):
         owner = self.__dict__.get("owner")
         if self.owner_id is not None and owner is not None and self.owner_id != owner:
             raise ValueError("owner_id and owner must identify the same owner")
-        if self.affiliation and (self.owner_id is not None or owner is not None):
-            raise ValueError("affiliation cannot be combined with an exact owner filter")
         if self.include_members and self.instrument_id is None:
             raise ValueError("include_members requires an exact instrument_id filter")
         return self
@@ -1011,8 +1001,6 @@ class ResourceSearchQuery(SearchQuery):
     def validate_project_scope(self):
         if self.project_scope is not None and self.project_id is None and self.project_mfid is None:
             raise ValueError("project_scope requires project_id or project_mfid")
-        if self.affiliation and self.owner_id is not None:
-            raise ValueError("affiliation cannot be combined with owner_id")
         return self
 
 
@@ -1034,8 +1022,3 @@ class InstrumentSearchQuery(SearchQuery):
     )
     include_owner: bool = False
 
-    @model_validator(mode="after")
-    def validate_affiliation(self):
-        if self.affiliation and self.owner_id is not None:
-            raise ValueError("affiliation cannot be combined with owner_id")
-        return self

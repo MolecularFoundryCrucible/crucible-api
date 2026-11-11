@@ -429,8 +429,6 @@ def test_query_parameter_conflicts_and_time_validation_return_422(client, db_eng
     cases = [
         {"direction": "asc"},
         {"sort": "name", "cursor": "dataset-alice"},
-        {"affiliation": "owner", "owner_orcid": ALICE},
-        {"affiliation": "owner", "owner_id": ALICE},
         {"owner_id": ALICE, "owner_orcid": BOB},
         {"owner_id": ""},
         {"creation_time_gte": "2026-02-01T00:00:00+00:00", "creation_time_lte": "2026-01-01T00:00:00+00:00"},

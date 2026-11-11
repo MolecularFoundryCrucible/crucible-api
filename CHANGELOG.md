@@ -63,6 +63,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `affiliation` can be combined with an exact owner filter (`owner_id`) on lists, facets and search, as an intersection; the combination returned 422 before.
 - Compose bundle: `CRUCIBLE_AUTH_IDENTITY_LOOKUP` is on by default, so people on a new installation can link another way to sign in; an installation upgraded from 3.x with ORCID users runs `python -m app.cli identity backfill` right after upgrading.
 - Providers send the browser back to `<API>/oauth/callback/{key}`; register that address with each provider. `legacy_callback: true` keeps `<API>/auth/hub/callback` for an ORCID application registered before 4.0.0, and the bundle's `ORCID_LEGACY_CALLBACK=true` selects it.
 - The Hub's `/auth/hub/login`, `/token`, `/refresh`, `/revoke` and `/callback` are deprecated wrappers around `/oauth/authorize`, `/oauth/token`, `/oauth/revoke` and the provider callback; they go once Hub 1.8.0 is deployed.

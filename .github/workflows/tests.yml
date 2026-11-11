@@ -308,7 +308,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: MolecularFoundryCrucible/crucible-hub
-          ref: f41e0cfb2b9d981f33acd82899576ac2e5b6e631 # v1.7.1
+          ref: d31f86d20ef142c1bfc772c54b18f81fe1fec53a # v1.8.0-alpha.1
           path: hub
           persist-credentials: false
       - name: Start the API with Hub sign-in, over HTTPS with Caddy's local CA
@@ -348,15 +348,15 @@ jobs:
           chmod 444 secrets/hub_*
           cp example.env .env
           sed -i "s#^HUB_PUBLIC_ORIGIN=.*#HUB_PUBLIC_ORIGIN=$SITE#; s#^HUB_AUTH_PUBLIC_API_URL=.*#HUB_AUTH_PUBLIC_API_URL=$SITE/api/v3#" .env
-          echo "HUB_IMAGE=ghcr.io/molecularfoundrycrucible/crucible-hub:1.7.1@sha256:4694703a29a978d84253b24550bc329fb249f67b0ceaa56daf48ac06b495b0d8" >> .env
+          echo "HUB_IMAGE=ghcr.io/molecularfoundrycrucible/crucible-hub:1.8.0-alpha.1@sha256:4f908f7716f474f1fc86b064844cc8c2f45d4b294b2958558099b27305f0f420" >> .env
           docker compose pull hub hub-setup
           docker compose up -d --wait
-          test "$(docker inspect "$(docker compose ps -q hub)" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "1.7.1"
+          test "$(docker inspect "$(docker compose ps -q hub)" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "1.8.0-alpha.1"
       - name: The Hub answers through the front door, and sign-in through the API offers ORCID and a password
         run: |
           curl -fsS --cacert "$CA" "$SITE/hub/health" | grep -q '"sessions":"ok"'
           login=$(curl -sS --cacert "$CA" -o /dev/null -w '%{redirect_url}' "$SITE/hub/auth/login")
-          case "$login" in "$SITE/api/v3/auth/hub/login?"*) ;; *) echo "Hub login went to $login"; exit 1;; esac
+          case "$login" in "$SITE/api/v3/oauth/authorize?"*) ;; *) echo "Hub login went to $login"; exit 1;; esac
           test "$(curl -sS --cacert "$CA" -o "$RUNNER_TEMP/chooser.html" -w '%{http_code}' "$login")" = 200
           grep -q 'provider=orcid' "$RUNNER_TEMP/chooser.html"
           grep -q 'provider=password' "$RUNNER_TEMP/chooser.html"
@@ -368,13 +368,13 @@ jobs:
         run: |
           docker compose exec -T -e SITE hub node -e "
           const secret = require('fs').readFileSync('/run/secrets/HUB_AUTH_CLIENT_SECRET', 'utf8').trim();
-          const body = JSON.stringify({code: 'c'.repeat(32), code_verifier: 'v'.repeat(43), redirect_uri: process.env.SITE + '/hub/auth/callback'});
-          const call = pw => fetch('http://api:8000/auth/hub/token', {method: 'POST', body, headers: {'Content-Type': 'application/json', Authorization: 'Basic ' + Buffer.from('crucible-hub:' + pw).toString('base64')}})
-            .then(async r => [r.status, (await r.json()).detail]);
+          const body = () => new URLSearchParams({grant_type: 'authorization_code', code: 'c'.repeat(32), code_verifier: 'v'.repeat(43), redirect_uri: process.env.SITE + '/hub/auth/callback'});
+          const call = pw => fetch('http://api:8000/oauth/token', {method: 'POST', body: body(), headers: {Authorization: 'Basic ' + Buffer.from('crucible-hub:' + pw).toString('base64')}})
+            .then(async r => [r.status, (await r.json()).error]);
           (async () => {
             const [right, wrong] = [await call(secret), await call('wrong')];
             console.log('right secret', right, 'wrong secret', wrong);
-            const ok = right[0] === 401 && right[1] === 'Invalid or expired sign-in code' && wrong[0] === 401 && wrong[1] === 'Invalid client credentials';
+            const ok = right[0] === 400 && right[1] === 'invalid_grant' && wrong[0] === 401 && wrong[1] === 'invalid_client';
             process.exit(ok ? 0 : 1);
           })();"
       - name: Neither project can reach the other's database, the Hub cannot reach the store, and containers hold no extra capabilities

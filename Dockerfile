@@ -19,7 +19,7 @@ ENV API_VERSION=$api_version
 
 # files
 COPY app/ /app/app/
-COPY alembic.ini /app/alembic.ini
+COPY alembic.ini LICENSE /app/
 COPY migrations/ /app/migrations/
 COPY scripts/cleanup_hub_auth.py /app/scripts/cleanup_hub_auth.py
 

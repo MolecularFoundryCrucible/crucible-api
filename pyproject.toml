@@ -3,6 +3,7 @@ name = "crucible-api"
 version = "3.3.1"
 description = "Crucible API: scientific records service for the Molecular Foundry"
 readme = "README.md"
+license = "BSD-3-Clause"
 requires-python = ">=3.11"
 dependencies = [
     "cachetools>=7.2.8",

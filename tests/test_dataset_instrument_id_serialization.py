@@ -57,6 +57,7 @@ def test_get_resource_resolves_instrument_id_slug(client, db_engine, auth_as):
         "can_change_status": False,
         "can_transfer": True,
         "can_delete": False,
+        "can_delete_files": False,
         "can_request_deletion": True,
         "max_grant_role": "admin",
     }
@@ -85,6 +86,7 @@ def test_get_sample_resolves_instrument_id_slug(client, db_engine, auth_as):
         "can_change_status": False,
         "can_transfer": True,
         "can_delete": False,
+        "can_delete_files": False,
         "can_request_deletion": True,
         "max_grant_role": "admin",
     }
@@ -101,8 +103,8 @@ def test_get_sample_resolves_instrument_id_slug(client, db_engine, auth_as):
     assert dataset.json()["instrument"]["instrument_id"] == "xrd-1"
     assert dataset.json()["instrument"]["instrument_name"] == "xrd-1"
     assert dataset.json()["project"] is None
-    assert dataset.json()["capabilities"] == body["capabilities"]
-    assert generic_dataset.json()["capabilities"] == body["capabilities"]
+    assert dataset.json()["capabilities"] == {**body["capabilities"], "can_delete_files": True}
+    assert generic_dataset.json()["capabilities"] == dataset.json()["capabilities"]
 
 
 def test_list_samples_resolves_instrument_id_slug(client, db_engine, auth_as):

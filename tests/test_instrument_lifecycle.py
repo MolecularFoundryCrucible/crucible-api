@@ -56,6 +56,7 @@ class TestCreateInstrument:
             "can_change_status": True,
             "can_transfer": True,
             "can_delete": True,
+            "can_delete_files": False,
             "can_request_deletion": True,
             "max_grant_role": "admin",
         }
@@ -176,6 +177,7 @@ class TestServiceAccountBinding:
             "can_change_status": False,
             "can_transfer": False,
             "can_delete": False,
+            "can_delete_files": False,
             "can_request_deletion": False,
             "max_grant_role": None,
         }

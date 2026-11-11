@@ -305,7 +305,8 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                           acl_rows: Optional[Sequence[tuple[int, Role]]] = None,
                           can_delete: bool | Callable[[], bool] = False,
                           request_deletion_with: Optional[Permission] = None,
-                          deletion_requested: Optional[bool] = None) -> ResourceCapabilities:
+                          deletion_requested: Optional[bool] = None,
+                          holds_files: bool = False) -> ResourceCapabilities:
     if acl_rows is None:
         acl_rows = fetch_acl_rows(session, mfid)
     actor_role = effective_role(principal, acl_rows)
@@ -333,11 +334,13 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
         may_request_deletion = may_delete
     else:
         may_request_deletion = _has_resource_permission(principal, acl_rows, request_deletion_with)
-    if may_request_deletion:
+    may_delete_files = holds_files and _has_resource_permission(principal, acl_rows, Permission.DELETE)
+    if may_request_deletion or may_delete_files:
         if deletion_requested is None:
             from app.utils.sql_utils import get_active_deletion_request
             deletion_requested = get_active_deletion_request(session, mfid) is not None
-        may_request_deletion = not deletion_requested
+        may_request_deletion = may_request_deletion and not deletion_requested
+        may_delete_files = may_delete_files and not deletion_requested
 
     from app.services.resource_access import record_role
 
@@ -354,6 +357,7 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
         can_transfer=_has_resource_permission(
             principal, acl_rows, Permission.TRANSFER),
         can_delete=may_delete,
+        can_delete_files=may_delete_files,
         can_request_deletion=may_request_deletion,
         max_grant_role=max_grant_role,
     )

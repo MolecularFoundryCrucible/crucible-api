@@ -70,6 +70,7 @@ def test_canonical_get_uses_project_mfid(client, db_engine, auth_as):
         "can_change_status": False,
         "can_transfer": False,
         "can_delete": False,
+        "can_delete_files": False,
         "can_request_deletion": False,
         "max_grant_role": None,
     }
@@ -141,6 +142,7 @@ def test_project_update_accepts_canonical_mfid(client, db_engine, auth_as):
         "can_change_status": True,
         "can_transfer": False,
         "can_delete": False,
+        "can_delete_files": False,
         "can_request_deletion": False,
         "max_grant_role": "editor",
     }

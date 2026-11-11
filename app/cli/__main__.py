@@ -1,7 +1,7 @@
 import argparse
 import sys
 
-from app.cli import admin, auth, db, files, identity, settings, storage
+from app.cli import admin, auth, db, files, identity, owners, settings, storage
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -11,6 +11,7 @@ def build_parser() -> argparse.ArgumentParser:
     admin.register(groups)
     auth.register(groups)
     identity.register(groups)
+    owners.register(groups)
     settings.register(groups)
     storage.register(groups)
     files.register(groups)

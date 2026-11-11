@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- The project is released under the BSD 3-Clause License (`LICENSE`).
+- `python -m app.cli owners backfill [--unmatched FILE] [--commit]` fills dataset and sample `owner_user_id` from `owner_orcid` on a database upgraded from 3.x; run it once after upgrading, or the owner filters and owner fields miss those records.
+- Dataset `capabilities` include `can_delete_files`: whether `DELETE /files/{file_id}` would be accepted for a file of the dataset. It is false on other record types.
 - `GET /features` lists the optional features of a deployment (`uploads`, `ingestion`, `printing`, `proposal_sync`, `passwords`) and whether each is enabled, so clients can hide what would return 501 `feature_disabled`.
 - `python -m app.cli identity backfill --issuer URL [--commit]` records a login for each person whose identifier is an ORCID; it replaces the script `migrations/data/20261103_backfill_user_identity.py`, which is not in the image and now forwards to it.
 - `python -m app.cli db sequences [--commit]` reports id sequences that are behind their tables, which makes inserts fail with a 500 after rows are loaded with their own ids, and moves them up.

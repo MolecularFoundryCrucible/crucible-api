@@ -168,6 +168,7 @@ def load_dataset_detail(
             acl_rows=acl_rows,
             request_deletion_with=Permission.CREATE,
             deletion_requested=deletion_request is not None,
+            holds_files=True,
         ),
     })
 

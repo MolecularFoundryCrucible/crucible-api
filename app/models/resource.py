@@ -15,6 +15,7 @@ class ResourceCapabilities(SQLModel):
     can_change_status: bool
     can_transfer: bool
     can_delete: bool = False
+    can_delete_files: bool = Field(default=False, description="Datasets only. `DELETE /files/{file_id}` would be accepted for a file of this dataset: the caller may delete on the dataset and it is not pending deletion.")
     can_request_deletion: bool = Field(default=False, description="POST /resources/{mfid}/delete would be accepted: contributor for datasets and samples, the same as can_delete for projects and instruments, and no deletion request already active.")
     max_grant_role: Optional[Literal["viewer", "contributor", "editor", "admin"]] = None
 

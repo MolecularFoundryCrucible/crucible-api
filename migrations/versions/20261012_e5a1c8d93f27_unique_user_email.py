@@ -19,7 +19,7 @@ def upgrade():
     if duplicate is not None:
         raise RuntimeError(
             "user.email contains addresses shared by more than one user. "
-            "Run migrations/data/20261012_audit_user_emails.py and resolve them first."
+            "Resolve the duplicates, then run the upgrade again."
         )
     with op.get_context().autocommit_block():
         op.create_index(

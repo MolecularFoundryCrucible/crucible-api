@@ -187,5 +187,5 @@ cython_debug/
 
 /openapi/
 
-# Data exports from migrations/data scripts
+# Data exports
 /*.csv

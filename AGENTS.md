@@ -1,6 +1,6 @@
 # Crucible API
 
-FastAPI and SQLModel service on PostgreSQL that stores scientific records and decides who may see them. The Foundry runs it on GKE from the mf-crucible-deploy repository; other labs run it with `deploy/compose/`.
+FastAPI and SQLModel service on PostgreSQL that stores scientific records and decides who may see them.
 
 ## Rules
 
@@ -24,9 +24,9 @@ FastAPI and SQLModel service on PostgreSQL that stores scientific records and de
 | `app/storage/` | Storage adapters (`gcs`, `s3`) behind one interface |
 | `app/cli/` | Server commands: `python -m app.cli --help` |
 | `app/config.py` | Settings, read through `get_settings()` |
-| `migrations/` | Alembic revisions and one-time data scripts |
+| `migrations/` | Alembic revisions and the schema baseline |
 | `deploy/compose/` | The self-hosting bundle and its guide |
-| `docs/` | Contracts, guides and open items: start at `docs/README.md` |
+| `docs/` | Reference pages and guides: start at `docs/README.md` |
 
 ## Skills
 

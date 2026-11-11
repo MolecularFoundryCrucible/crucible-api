@@ -7,7 +7,7 @@ The Molecular Foundry runs it at [crucible.lbl.gov](https://crucible.lbl.gov/api
 ## Features
 
 - **Data model**: datasets, samples, projects and instruments with persistent identifiers (MFIDs), free-form scientific metadata, and links between records that form a provenance graph.
-- **Access control**: role-based permissions granted through projects and access groups, with an explicit elevated mode for administrators.
+- **Access control**: role-based permissions granted through projects and access groups, with an explicit elevated mode for platform administrators.
 - **Authentication**: OAuth 2.0 authorization code flow with PKCE and device authorization, backed by OpenID Connect providers such as ORCID or by local passwords, plus named API keys for scripts and instruments.
 - **File storage**: multipart uploads and downloads through signed URLs on S3-compatible object storage, with versioned file replacement.
 - **Search**: filtering, sorting and pagination on list endpoints, with trigram and full-text search over names and metadata.
@@ -18,7 +18,7 @@ The Molecular Foundry runs it at [crucible.lbl.gov](https://crucible.lbl.gov/api
 
 ### API usage
 
-- [Interactive API reference](https://crucible.lbl.gov/api/v3/docs) of the Molecular Foundry deployment. Every deployment serves its own under `/docs`, and each [release](https://github.com/MolecularFoundryCrucible/crucible-api/releases) includes the OpenAPI document.
+- [Interactive API reference](https://crucible.lbl.gov/api/v3/docs) of the Molecular Foundry deployment.
 - [nano-crucible](https://github.com/MolecularFoundryCrucible/nano-crucible), the Python client and command-line interface.
 - [Authentication](docs/sign_in.md) and [permissions](docs/permissions.md).
 
@@ -61,3 +61,7 @@ Changes are submitted as pull requests against `main`. Run the test suite before
 - [Crucible Hub](https://github.com/MolecularFoundryCrucible/crucible-hub): web interface.
 - [nano-crucible](https://github.com/MolecularFoundryCrucible/nano-crucible): Python client and command-line interface.
 - [crucible-ingestion](https://github.com/MolecularFoundryCrucible/crucible-ingestion): ingestion of instrument data.
+
+## License
+
+BSD 3-Clause. See [LICENSE](LICENSE).

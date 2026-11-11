@@ -1,6 +1,6 @@
 ---
 name: change-database-schema
-description: Add or change a database table or column, write the Alembic migration for it, or add a one-time data change. Use for any edit to app/tables.py or anything under migrations/.
+description: Add or change a database table or column, write the Alembic migration for it, or add a data change that upgraded installations must run. Use for any edit to app/tables.py or anything under migrations/.
 ---
 
 # Change the database schema
@@ -22,8 +22,8 @@ A migration runs before the new code and while the old code still serves.
 
 ## 3. Data changes
 
-- A step every upgraded installation must run is a server command in `app/cli/` (the image does not contain `migrations/data/`). It reports by default and writes only with `--commit`.
-- A one-time fix for one deployment is a dated script in `migrations/data/`, with the same dry-run default and `--yes-this-is-production` for the production database.
+- A step every upgraded installation must run is a server command in `app/cli/`, with its logic in `app/services/` or `app/auth/`. It reports by default and writes only with `--commit`.
+- A one-time fix for one deployment does not go in this repository; it belongs with that deployment's configuration.
 - After loading rows that carry their own ids, run `python -m app.cli db sequences`.
 
 ## 4. Check and record

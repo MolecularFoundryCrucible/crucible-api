@@ -11,7 +11,7 @@ This page specifies how a dataset's file records catalog files that are not stor
 | `access_note` | Nullable text | How to obtain the file when there is no self-service path, for example "request via NERSC allocation X" or "contact the PI for a Globus share". |
 | `sha256_hash`, `size` | Required | Required for every backend; supplied by the client. |
 
-File records belong to datasets only ([open items](open_items.md#files-on-samples-and-instruments)). The `file_id` path parameter of `/files/{file_id}` and the `mfid` field of `AssociatedFileRead` hold the file's MFID.
+File records belong to datasets only. The `file_id` path parameter of `/files/{file_id}` and the `mfid` field of `AssociatedFileRead` hold the file's MFID.
 
 ## Identity and filenames
 
@@ -22,7 +22,7 @@ A file's identity in its dataset is its `filename`:
 - For catalog-only records the database enforces both rules: check constraints on the path and a partial unique index on `(dataset_id, filename)`, which also resolves two concurrent requests with the same name.
 - `PATCH /files/{file_id}` cannot change a catalog-only filename (409 `filename_immutable`) and cannot move a record between stored and catalog-only (409 `storage_backend_class_change`). A stored file can be renamed under the upload filename rules (422 otherwise) to a filename not used in the dataset (409 `filename_exists` otherwise).
 
-The path rules and the unique index do not apply to stored records created through `POST /datasets/{dataset_mfid}/files`; records from before 4.0.0 include absolute paths and names that start with `./` ([open items](open_items.md#duplicate-file-names-on-gcs-records)). A client that writes stored files to disk by name validates the name itself.
+The path rules and the unique index do not apply to stored records created through `POST /datasets/{dataset_mfid}/files`; records from before 4.0.0 include absolute paths and names that start with `./`. A client that writes stored files to disk by name validates the name itself.
 
 ## Behavior of catalog-only records
 

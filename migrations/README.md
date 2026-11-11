@@ -1,6 +1,6 @@
 # Database migrations
 
-Schema changes are Alembic revisions in `migrations/versions/`. One-time data corrections are scripts in `migrations/data/`. Commands read the database settings from the environment, or from the file named by `DB_CONF_FILE`.
+Schema changes are Alembic revisions in `migrations/versions/`. Commands read the database settings from the environment, or from the file named by `DB_CONF_FILE`.
 
 ## Applying migrations
 
@@ -47,17 +47,9 @@ Add tables and columns; do not drop or rename anything the previous release stil
 
 ## Data changes
 
-- A step that every upgraded installation must run is a server command (`python -m app.cli ...`), because the image does not contain `migrations/data/`.
-- A one-time correction for a single deployment is a dated script in `migrations/data/`, run from a checkout.
+A data change that every upgraded installation must run is a server command (`python -m app.cli ...`), shipped in the image. It reports the planned changes by default and writes only with `--commit`. Examples: `identity backfill` and `owners backfill`, both run once after upgrading from 3.x.
 
-Both report the planned changes and write only with `--commit`. On the production database they also require `--yes-this-is-production`.
-
-```bash
-DB_CONF_FILE=.env.prod uv run python migrations/data/<script>.py --yes-this-is-production            # report
-DB_CONF_FILE=.env.prod uv run python migrations/data/<script>.py --yes-this-is-production --commit   # write
-```
-
-The scripts in `migrations/data/` are a record of work already performed. Do not rerun an old script without reviewing it first.
+A one-time correction for a single deployment does not belong in this repository; keep it with that deployment's configuration.
 
 ## Sequences after partial data loads
 

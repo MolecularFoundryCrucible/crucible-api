@@ -1,6 +1,4 @@
 import csv
-import importlib.util
-from pathlib import Path
 
 from sqlmodel import Session, select
 
@@ -66,15 +64,13 @@ def test_owner_facet_groups_by_the_current_unique_id(client, db_engine, auth_as)
     assert client.get("/datasets/facets", params={"field": "owner", "owner_id": "ada"}).json()["items"][0]["count"] == 1
 
 
-def _fill_script():
-    path = Path(__file__).resolve().parents[1] / "migrations/data/20261105_fill_owner_user_id.py"
-    spec = importlib.util.spec_from_file_location("fill_owner_user_id", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def _backfill(*arguments):
+    from app.cli.__main__ import main
+
+    return main(["owners", "backfill", *arguments])
 
 
-def test_fill_script_sets_matching_owners_and_lists_the_rest(db_engine, use_engine, tmp_path, capsys):
+def test_the_owner_backfill_sets_matching_owners_and_lists_the_rest(db_engine, use_engine, tmp_path, capsys):
     use_engine(db_engine)
     with Session(db_engine) as session:
         user = User(unique_id=OLD, first_name="Ada", last_name="L", email=None, username="ada")
@@ -90,15 +86,14 @@ def test_fill_script_sets_matching_owners_and_lists_the_rest(db_engine, use_engi
         ])
         session.commit()
         user_id = user.id
-    script = _fill_script()
     report = tmp_path / "unmatched.csv"
 
-    assert script.main(["--unmatched", str(report)]) == 0
+    assert _backfill("--unmatched", str(report)) == 0
     assert "dataset: dry run, would fill: 1, owner names no user: 1" in capsys.readouterr().out
     with Session(db_engine) as session:
         assert session.exec(select(Dataset.owner_user_id).where(Dataset.unique_id == "ds-unfilled")).one() is None
 
-    assert script.main(["--unmatched", str(report), "--commit"]) == 0
+    assert _backfill("--unmatched", str(report), "--commit") == 0
     with Session(db_engine) as session:
         owners = dict(session.exec(select(Dataset.unique_id, Dataset.owner_user_id)).all())
         assert owners == {"ds-unfilled": user_id, "ds-ghost": None, "ds-done": user_id, "ds-none": None}
@@ -106,5 +101,13 @@ def test_fill_script_sets_matching_owners_and_lists_the_rest(db_engine, use_engi
     with open(report) as handle:
         assert list(csv.reader(handle))[1:] == [["dataset", "ds-ghost", "ghost"], ["instrument", "in-free", "Foundry"]]
 
-    assert script.main(["--unmatched", str(report), "--commit"]) == 0
+    assert _backfill("--unmatched", str(report), "--commit") == 0
     assert "dataset: filled: 0, owner names no user: 1" in capsys.readouterr().out.splitlines()[-4]
+
+
+def test_the_owner_backfill_writes_no_file_unless_asked(db_engine, use_engine, tmp_path, capsys, monkeypatch):
+    use_engine(db_engine)
+    monkeypatch.chdir(tmp_path)
+    assert _backfill() == 0
+    assert "wrote" not in capsys.readouterr().out and list(tmp_path.iterdir()) == []
+

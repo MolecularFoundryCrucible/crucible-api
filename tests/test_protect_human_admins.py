@@ -59,7 +59,9 @@ def test_api_key_cannot_change_a_humans_admin_status(client, auth_as, people):
 def test_api_key_still_manages_ordinary_users_and_service_accounts(client, auth_as, people):
     as_key(auth_as, client)
     assert client.delete(f"/users/{PERSON}/apikey").status_code == 204
-    assert client.patch(f"/service_accounts/{ROBOT}", json={"platform_role": "admin"}).status_code == 200
+    assert client.patch(f"/service_accounts/{ROBOT}", json={"platform_role": "none"}).status_code == 200
+    refused = client.patch(f"/service_accounts/{ROBOT}", json={"platform_role": "admin"})
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "hub_session_required"
     assert client.patch(f"/users/{PERSON}", json={"username": "renamed", "email": "renamed@example.com"}).status_code == 200
     assert client.patch("/account/profile", json={"username": "myself"}).status_code == 200
 

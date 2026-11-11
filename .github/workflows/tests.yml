@@ -72,7 +72,7 @@ jobs:
     env:
       API_PUBLIC_URL: https://127.0.0.1:7777
       API_PATH: testapi
-      CRUCIBLE_SECRET_KEY: ci-only
+      CRUCIBLE_SECRET_KEY: ci-only-secret-key-of-32-characters
       PGDB_PW: ci-only
       DB_USERNAME: ci
       DB_SERVER: localhost
@@ -109,7 +109,7 @@ jobs:
     env:
       API_PUBLIC_URL: https://127.0.0.1:7777
       API_PATH: testapi
-      CRUCIBLE_SECRET_KEY: ci-only
+      CRUCIBLE_SECRET_KEY: ci-only-secret-key-of-32-characters
       CRUCIBLE_BROWSER_TESTS: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -131,7 +131,7 @@ jobs:
     env:
       API_PUBLIC_URL: https://127.0.0.1:7777
       API_PATH: testapi
-      CRUCIBLE_SECRET_KEY: ci-only
+      CRUCIBLE_SECRET_KEY: ci-only-secret-key-of-32-characters
       PGDB_PW: ci-only
       DB_USERNAME: ci
       DB_SERVER: localhost
@@ -189,7 +189,7 @@ jobs:
     env:
       API_PUBLIC_URL: https://127.0.0.1:7777
       API_PATH: testapi
-      CRUCIBLE_SECRET_KEY: ci-only
+      CRUCIBLE_SECRET_KEY: ci-only-secret-key-of-32-characters
       PGDB_PW: ci-only
       DB_USERNAME: ci
       DB_SERVER: localhost
@@ -266,9 +266,11 @@ jobs:
         run: |
           test "$(docker compose port proxy 80)" = "127.0.0.1:8080"
           test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: labbox:8080' http://localhost:8080/api/v3/health/ready)" = 421
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/v3/metrics)" = 404
+          docker compose exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/metrics')"
       - name: Storage check inside the API container
         run: docker compose exec -T api python -m app.cli storage check
-      - name: People are found by their recorded logins, and the upgrade backfill named in the install guide runs
+      - name: People are found by their recorded logins, and the upgrade backfill named in the upgrade guide runs
         run: |
           docker compose exec -T api python -c "from app.config import get_settings; assert get_settings().auth.identity_lookup"
           docker compose run --rm -T api python -m app.cli identity backfill --issuer https://orcid.org

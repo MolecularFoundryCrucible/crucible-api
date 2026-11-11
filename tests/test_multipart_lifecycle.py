@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 import google_crc32c
 import pytest
-from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
 import app.api.routes.gcs_storage as gcs_storage
@@ -358,7 +357,10 @@ def test_expiry_and_disabled_initiation(flow, monkeypatch):
     client, engine, storage = flow
     identifier = start(flow)
     monkeypatch.setenv("MULTIPART_UPLOAD_ENABLED", "false")
-    assert client.post(BASE + "/initiate", json={"filename": "other", "size": 1}).status_code == 503
+    refused = client.post(BASE + "/initiate", json={"filename": "other", "size": 1})
+    assert refused.status_code == 501 and "Retry-After" not in refused.headers
+    assert refused.json()["detail"] == {"code": "feature_disabled", "feature": "uploads", "message": "File uploads are not enabled on this server (MULTIPART_UPLOAD_ENABLED)"}
+    assert client.post("/files/0tmnyhfztdwc1000w2kspzsnh2/upload/multipart/initiate", json={"size": 1}).json()["detail"]["feature"] == "uploads"
     assert client.get(BASE + f"/{identifier}").status_code == 200
     expire(engine, identifier)
     assert client.post(BASE + f"/{identifier}/parts", json={"parts": [{"part_number": 1, "crc32c": CRC}]}).status_code == 410
@@ -671,23 +673,13 @@ def test_cleanup_protection_requires_server_recorded_generation(flow, generation
     assert bool(storage.objects) == (generation is not None)
 
 
-def test_unverified_multipart_hash_does_not_dedupe_legacy_paths(use_engine, flow, monkeypatch):
+def test_unverified_multipart_hash_does_not_dedupe_registered_files(flow):
     client, engine, _ = flow
     publish(flow)
     publish(flow, filename="copy.bin")
     response = client.post("/datasets/ds/files", json={"filename": "legacy.bin", "size": len(DATA), "sha256_hash": SHA})
     assert response.status_code == 200, response.text
     assert response.json()["filename"] == "legacy.bin"
-    use_engine(engine)
-    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
-    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA})
-    assert response.status_code == 200, response.text
-    assert response.json()["existing_file"] is None
-    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA), "sha256_hash": SHA})
-    assert response.status_code == 200, response.text
-    assert response.json()["existing_file"]["filename"] == "legacy.bin"
-    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "other.bin", "size": len(DATA), "sha256_hash": SHA})
-    assert response.json()["existing_file"] is None
 
 
 def test_dataset_hard_deleted_during_completion_returns_409_and_removes_the_object(flow):
@@ -742,14 +734,10 @@ def test_file_record_filenames_are_unique_within_a_dataset(flow):
     assert sorted(f["filename"] for f in client.get("/datasets/ds/files").json()) == ["alias.bin", "data.bin"]
 
 
-def test_legacy_paths_respect_multipart_filename_reservation(use_engine, flow, monkeypatch):
+def test_file_registration_respects_multipart_filename_reservation(flow):
     client, engine, _ = flow
     start(flow)
     response = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": "1" * 64})
-    assert response.status_code == 409
-    use_engine(engine)
-    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda: ("token", "2030-01-01T00:00:00+00:00"))
-    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "data.bin", "size": len(DATA)})
     assert response.status_code == 409
 
 
@@ -1336,53 +1324,6 @@ def test_new_files_touch_the_dataset(flow):
     age_dataset(engine)
     publish(flow)
     assert dataset_touched(engine)
-
-
-def test_legacy_completion_touches_the_dataset(use_engine, flow, monkeypatch):
-    client, engine, _ = flow
-    use_engine(engine)
-    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
-    upload_id = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)}).json()["upload_id"]
-    age_dataset(engine)
-    blob = SimpleNamespace(size=len(DATA), reload=lambda: None)
-    gcs = MagicMock()
-    gcs.bucket.return_value.blob.return_value = blob
-    monkeypatch.setattr("app.api.routes.gcs_storage.server_client", lambda: gcs)
-    response = client.post("/datasets/ds/upload/complete", json={"upload_id": upload_id, "sha256_hash": SHA})
-    assert response.status_code == 200, response.text
-    assert dataset_touched(engine)
-
-
-LEAKY = "https://storage.googleapis.com/mf-storage-prod/x signer@mf-crucible.iam.gserviceaccount.com"
-
-
-@pytest.mark.parametrize("failure, status", [(NotFound("gone"), 422), (RuntimeError(LEAKY), 503)])
-def test_legacy_completion_storage_errors_stay_server_side(use_engine, flow, monkeypatch, failure, status):
-    client, engine, _ = flow
-    use_engine(engine)
-    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
-    upload_id = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)}).json()["upload_id"]
-
-    def reload():
-        raise failure
-    gcs = MagicMock()
-    gcs.bucket.return_value.blob.return_value = SimpleNamespace(size=len(DATA), reload=reload)
-    monkeypatch.setattr("app.api.routes.gcs_storage.server_client", lambda: gcs)
-    response = client.post("/datasets/ds/upload/complete", json={"upload_id": upload_id, "sha256_hash": SHA})
-    assert response.status_code == status
-    assert "googleapis" not in response.text and "iam" not in response.text and "gone" not in response.text
-
-
-def test_legacy_initiate_token_errors_stay_server_side(use_engine, flow, monkeypatch):
-    client, engine, _ = flow
-    use_engine(engine)
-
-    def mint(dsid):
-        raise RuntimeError(LEAKY)
-    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", mint)
-    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)})
-    assert response.status_code == 503
-    assert "googleapis" not in response.text and "iam" not in response.text
 
 
 EMPTY_SHA = hashlib.sha256(b"").hexdigest()

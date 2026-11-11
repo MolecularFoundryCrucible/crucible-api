@@ -19,7 +19,7 @@ from sqlmodel import Session
 from app.api.dependencies import get_api_root_path, get_engine
 from app.api.routes.browser_sign_in import _browser_headers, _templates
 from app.auth.clients import client_by_id
-from app.auth.devices import INTERNAL_CLIENT_ID, decide, device_by_hash, pending_device
+from app.auth.devices import INTERNAL_CLIENT_ID, decide, device_by_hash, pending_device, record_signed_in
 from app.auth.throttle import begin_code_attempt, client_address, give_back
 from app.config import get_secret
 from app.tables import User
@@ -131,11 +131,11 @@ async def device_signed_in(
     if auth_time is None or datetime.now(timezone.utc) - auth_time > FRESH_SIGN_IN:
         return _done(request, "Sign-in failed", "Approving a device needs a sign-in just now. Start again on your device.", 400)
     device = await run_in_threadpool(device_by_hash, engine, started["d"])
-    if device is None:
+    if device is None or not await run_in_threadpool(lambda: record_signed_in(engine, device.device_hash, user_id=user_id, auth_time=auth_time)):
         return _done(request, "Code expired", "The code expired or was already used. Start again on your device.", 400)
     person = await run_in_threadpool(_person_name, engine, user_id)
     client = client_by_id(device.client_id)
-    token = _serializer("decision").dumps({"d": device.device_hash, "u": user_id, "t": auth_time.isoformat(), "n": browser["n"]})
+    token = _serializer("decision").dumps({"d": device.device_hash, "u": user_id, "n": browser["n"]})
     return _page(request, "device_confirm.html", {
         "client_name": client.display_name if client else device.client_id, "person": person, "asked_at": device.created_at.strftime("%H:%M UTC"),
         "user_code": started.get("c", ""), "token": token, "requested_from": device.requested_from,
@@ -153,7 +153,7 @@ async def device_decided(request: Request, decision_token: str = Form(max_length
     if browser is None or not isinstance(decided, dict) or not secrets.compare_digest(str(decided.get("n", "")), browser["n"]):
         return _done(request, "Not recorded", "This decision did not come from this browser. Start again on your device.", 400)
     approve = decision == "approve"
-    recorded = await run_in_threadpool(lambda: decide(engine, decided["d"], user_id=decided["u"], auth_time=datetime.fromisoformat(decided["t"]), approve=approve))
+    recorded = await run_in_threadpool(lambda: decide(engine, decided["d"], user_id=decided["u"], approve=approve))
     if not recorded:
         return _done(request, "Code expired", "The code expired or was already decided. Start again on your device.", 400)
     if approve:

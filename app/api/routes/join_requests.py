@@ -414,7 +414,7 @@ def get_join_request(request_id: int, auth_res: Annotated[Principal, Depends(aut
 
 
 @router.patch("/join_requests/{request_id}", response_model=JoinRequestRead,
-              responses={403: {"description": "Not allowed to review, or the role is not below yours"},
+              responses={403: {"description": "Not allowed to review, or the role is above yours"},
                          409: {"description": "`join_request_closed`, or the project is gone or pending deletion"}})
 def review_join_request(request_id: int, body: JoinRequestReview, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Approve or reject a pending request. Requires editor or above in the project (or platform administrator). Approval adds the requester at `role` (default contributor), at most your own role.'''

@@ -23,7 +23,7 @@ jobs:
     env:
       API_PUBLIC_URL: https://127.0.0.1:7777
       API_PATH: testapi
-      CRUCIBLE_SECRET_KEY: ci-only
+      CRUCIBLE_SECRET_KEY: ci-only-secret-key-of-32-characters
       PGDB_PW: ci-only
       DB_USERNAME: ci
       DB_SERVER: localhost

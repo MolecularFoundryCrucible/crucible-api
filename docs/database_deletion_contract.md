@@ -1,82 +1,92 @@
-# Database deletion contract
+# Deletion
 
-Status: Current API v3 contract. Storage-object deletion remains deferred.
+This page describes how datasets, samples, projects and instruments are deleted, through a reviewed deletion request or by direct deletion, and how records pending deletion behave. Deletion is permanent and removes database records only.
 
-## Scope
-
-Crucible currently deletes database records only. Dataset objects in GCS are intentionally left in place. Storage cleanup remains deferred and must not be represented as completed by the API.
-
-Datasets, samples, projects, and instruments support both deletion paths. A project or instrument may only be deleted when it is empty: no datasets or samples assigned to it.
-
-## Approval workflow
-
-The reviewed workflow uses:
+## Routes
 
 ```http
-POST  /resources/{resource_mfid}/delete
-PATCH /deletion_requests/{request_id}?status=approved
-PATCH /deletion_requests/{request_id}?status=rejected
+POST   /resources/{mfid}/delete?reason=...
+GET    /deletion_requests
+GET    /deletion_requests/{request_id}
+PATCH  /deletion_requests/{request_id}?status=approved|rejected[&reviewer_notes=...]
+DELETE /resources/{mfid}?force=true[&confirm=true]
+GET    /deletion_audit
+GET    /deletion_audit/{audit_id}
 ```
 
-Contributor or above may create a request for a dataset or sample. Admin on the resource may create a request for a project or instrument. Admin, owner, or platform admin may review it.
+Deletion applies to datasets, samples, projects and instruments; any other resource type returns 400.
 
-While a dataset or sample has a pending or approved request:
+## Permissions
 
-- Exact lookups still work: its detail (which carries `deletion_request`), its files, file detail and download link, and its ingestion requests and postprocessing runs by id. Reviewers can inspect what they are approving, and data can still be retrieved.
-- Searches, lists, facets, filters, and traversals hide it: `GET /datasets`, `GET /files`, `GET /ingestion_requests`, `GET /postprocessing_runs`, filters such as `sample_mfid` or `dataset_mfid` naming it (404), and its parents, children, and linked samples or datasets (404).
-- Writes return 409 `{"detail": {"code": "pending_deletion", "status": ..., "message": ...}}`: adding files or thumbnails, every upload path (a multipart upload completing after the request was made fails with `dataset_pending_deletion`), editing or deleting files, starting ingestion or postprocessing, and creating links. Status updates on existing ingestion requests and postprocessing runs are still accepted so in-flight work can finish.
+| Action | Requirement |
+|---|---|
+| Request deletion of a dataset or sample | `contributor` on the record, or platform contributor or administrator |
+| Request deletion of a project or instrument | `admin` on the record (`Permission.DELETE`), or platform administrator |
+| Approve or reject a request | `admin` on the record (`Permission.DELETE`), or platform administrator |
+| Delete directly | `owner` on the record (`Permission.HARD_DELETE`), or platform administrator |
+| Read `GET /deletion_audit` with `scope=all` | Platform administrator |
+| Read `GET /deletion_audit` with `scope=submitted` | Any human user, for their own requests |
 
-Route code uses the shared helpers in `app/utils/sql_utils.py`: `select_readable` and `select_readable_file` for exact lookups, `select_active` and `deletion_filter_for` for filters, traversals, and lists, and `assert_not_pending_deletion` for writes.
+Resource administrators can approve requests but cannot delete directly. A record without an owner can be deleted directly only by a platform administrator. Service accounts without platform-administrator authority cannot review requests, and no service account can read the deletion audit. `scope` defaults to `all`.
 
-Creating a request for a project or instrument that still has assigned datasets or samples returns 409. The response body carries a structured detail of the form `{"detail": "...", "blocking": {"datasets": 12, "samples": 3}}`.
+## Deletion requests
 
-Approval permanently removes the resource's database records. Audit creation and database deletion occur in one transaction. Before approving, the project or instrument row is locked and the emptiness check is repeated inside the transaction, so data assigned after the request was created still blocks approval with 409. Rejection stays allowed regardless of blockers and restores the resource to normal filtered reads.
+`POST /resources/{mfid}/delete` creates a `pending` request. A second request while one is `pending` or `approved` returns 409. A project or instrument must be empty: a project with assigned datasets or samples, or an instrument with assigned datasets, returns 409 with the counts:
 
-Project and instrument deletion requests, including their review snapshots, carry a `preview` object describing what the deletion removes or why it is blocked.
-
-## Direct forced deletion
-
-The direct path is a separate owner-level escape hatch:
-
-```http
-DELETE /resources/{resource_mfid}?force=true[&confirm=true]
+```json
+{"detail": {"detail": "Cannot delete project '...': it still has assigned datasets or samples.",
+            "blocking": {"datasets": 12, "samples": 3}}}
 ```
 
-The `force=true` query parameter is required. An approved deletion request is neither required nor accepted as a substitute for the explicit flag.
+Requests for projects and instruments, and their review responses, carry a `preview` object (see [Direct deletion](#direct-deletion)).
 
-Direct forced deletion requires either effective owner permission on the resource or platform-admin authority. Resource admins can approve the reviewed workflow but cannot bypass it.
+Approval deletes the record and writes the audit row in one transaction. For a project or instrument, the row is locked and the emptiness check repeated inside that transaction, so a dataset or sample assigned after the request still blocks approval with 409. Rejection is always allowed and returns the record to normal reads. Reviewing a rejected request, or approving an approved one, returns 409.
+## Direct deletion
 
-If a resource has no effective owner, only a platform administrator can force-delete it.
+`DELETE /resources/{mfid}` requires `force=true`; an approved request does not replace it. Datasets and samples are deleted immediately and the response is `{"detail": "Resource ... permanently deleted"}`.
 
-Datasets and samples delete immediately. Projects and instruments are preview-first: without `confirm=true` the endpoint returns a preview and deletes nothing; with `confirm=true` it executes. Execution locks the project or instrument row and repeats the emptiness check, returning 409 with the blocking counts if datasets or samples were assigned after the preview.
+Projects and instruments are previewed first. Without `confirm=true` the route returns a preview and deletes nothing; with `confirm=true` it locks the row, repeats the emptiness check and deletes. A project or instrument that is not empty returns 409 with the blocking counts, with or without `confirm`.
 
-The preview and executed response both use the `DeletionPreviewRead` model: `resource_id`, `resource_type`, a `deleted` flag, `blocking` counts, `memberships_removed` (project group members), `service_accounts_unbound` (instrument operator group members), `join_requests_removed`, and `removed_grants`, a list of `{resource_mfid, resource_type, permission}` for grants the deleted access group holds on resources other than the deleted resource itself.
+The preview and the result of a confirmed deletion use `DeletionPreviewRead`: `resource_id`, `resource_mfid`, `resource_type`, `deleted`, `blocking`, `memberships_removed` (project group members), `service_accounts_unbound` (instrument operator group members), `join_requests_removed`, and `removed_grants`, a list of `{resource_mfid, resource_type, permission}` for grants that the deleted access group holds on other records.
 
-## Pending state
+## Records pending deletion
 
-While a project or instrument has a pending or approved deletion request:
+A record with a `pending` or `approved` request is pending deletion.
 
-- It is hidden from `GET /projects`, `GET /projects/search`, `GET /instruments`, and `GET /instruments/search`. The singleton lookups `GET /projects/{ref}` and `GET /instruments/{mfid}` remain reachable and carry a `deletion_request` field, mirroring dataset and sample detail reads.
-- New assignments are rejected with 409: `POST /datasets` and `POST /samples` targeting the project or instrument, `PUT /datasets/{dataset_mfid}/instrument`, `POST /resources/{mfid}/project`, and `POST /projects/{project_ref}/users/{user_ref}`.
+For a dataset or sample:
 
-Rejecting the request removes the pending state and assignments are possible again.
+- Exact lookups work: its detail (which carries `deletion_request`), its files, file detail and download link, and its ingestion requests and postprocessing runs by ID.
+- Lists, searches, facets, filters and traversals exclude it: `GET /datasets`, `GET /samples`, `GET /files`, `GET /ingestion_requests`, `GET /postprocessing_runs`, the graph routes, and parent, child and linked-record routes. A filter such as `sample_mfid` or `dataset_mfid` naming it, or a traversal starting from it, returns 404.
+- Writes return 409 `{"detail": {"code": "pending_deletion", "status": ..., "message": ...}}`: adding files or thumbnails, starting an upload, editing or deleting files, starting ingestion or postprocessing, and creating links. A multipart upload completed after the request returns 409 with `dataset_pending_deletion`. Status updates on existing ingestion requests and postprocessing runs are accepted so that running work can finish.
 
-## Permission mapping
+For a project or instrument:
 
-`Permission.DELETE` is mapped to admin and governs review of deletion requests and requesting deletion of a project or instrument. `Permission.HARD_DELETE` is mapped to owner and governs direct forced deletion. A separate permission name keeps the stronger bypass distinct from ordinary deletion administration.
+- It is excluded from `GET /projects`, `GET /projects/search`, `GET /instruments` and `GET /instruments/search`. `GET /projects/{project_ref}` and `GET /instruments/{instrument_ref}` still return it, with `deletion_request`.
+- New assignments return 409 `pending_deletion`: `POST /datasets` and `POST /samples` naming it, `PUT /datasets/{dataset_mfid}/instrument`, `POST /resources/{mfid}/project`, `POST /projects/{project_ref}/users/{user_ref}`, and `POST /users` with the project in its project list.
 
-## Database behavior
+Creating or rejecting a request advances the record's `modification_time`.
 
-Related database rows are deleted with bounded set-based statements rather than loading and deleting every related row individually. The deletion transaction includes the durable audit record and removal of the resource, entity, ACL, active deletion requests, metadata, links, file records, ingestion requests, thumbnails, and active upload sessions as applicable.
+## What is deleted
 
-Deleting a project additionally removes its project access group, the group's grants on any resource, user memberships in the group (UserAccessGroupLink), legacy UserProjectLink rows, and all join requests for the group. Owners of other resources keep their own grants.
+Every deletion removes the record's resource row, access grants, deletion requests, scientific metadata, embeddings and recent-resource entries, and in addition:
 
-Deleting an instrument additionally removes its operator access group, the group's grants on any resource, and the service-account bindings (UserAccessGroupLink) in the group. The service-account User rows survive.
+| Type | Also removed |
+|---|---|
+| Dataset | File records, ingestion requests, postprocessing runs, upload sessions, keyword links, thumbnails, sample links, parent and child links |
+| Sample | Dataset links, parent and child links |
+| Project | The project access group, its grants on any record, its memberships and its join requests |
+| Instrument | The operator access group, its grants on any record and its service-account bindings; the service-account users remain |
 
-## Audit and slug reuse
+Owners of other records keep their own grants.
 
-Every project and instrument deletion writes a `DeletionAuditLog` row on both the approval and forced paths, with resource type, name (project slug or instrument name), requester, reviewer, times, and `project_id`/`project_mfid` filled with the project itself for projects and null for instruments. A final GCS record write with operation `delete`, including the removed-grants summary and counts, is scheduled best-effort.
+## Stored objects
 
-After deletion the `project_id` or `instrument_id` slug is free to reuse. MFIDs are never reused, and the audit row keeps the deleted slug.
+Deletion does not delete stored files on either storage backend: file objects remain in the bucket after their records are removed. A multipart upload completed after its dataset was deleted returns 409 `dataset_deleted`, and its assembled object is removed. The `python -m app.cli storage cleanup` command, run hourly when `STORAGE_CLEANUP_ENABLED=true`, removes only abandoned uploads and replaced file versions past their retention period.
 
-GCS deletion of stored bytes is not invoked. The existing database audit records that Crucible removed its catalog records, not that stored bytes were destroyed.
+When `RECORD_BUCKET` is set, deleting a project or instrument schedules a best-effort final `record.json` write with operation `delete`, the counts and the removed grants.
+
+## Audit and identifier reuse
+
+Every deletion, on both paths, writes a `DeletionAuditLog` row with the resource type and name, requester, reviewer, times, and the project's `project_id` and `project_mfid` (for a project, the project itself; null for an instrument). Direct deletions record the caller as requester and reviewer with the reason `direct forced deletion`.
+
+After deletion the `project_id` or `instrument_id` slug can be reused; the audit row keeps the deleted slug. MFIDs are never reused.

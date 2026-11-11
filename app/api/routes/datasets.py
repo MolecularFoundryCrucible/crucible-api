@@ -1083,10 +1083,10 @@ def read_thumbnails(auth_res: Annotated[Principal, Depends(authorize_user)], dsi
 )
 def get_first_thumbnails(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    dataset_ids: List[str] = Body(...),
+    dataset_ids: List[str] = Body(..., max_length=1000),
 ):
     '''
-    Given a list of dataset unique_ids, returns a dict mapping each unique_id
+    Given a list of at most 1000 dataset unique_ids, returns a dict mapping each unique_id
     to its first (lowest-id) thumbnail. Datasets with no thumbnail or that the
     caller cannot access are omitted from the response.
 

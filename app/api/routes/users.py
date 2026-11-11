@@ -224,23 +224,22 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
 
     if params.first_name is not None:
         if params.permissive:
-            search_cmd = search_cmd.where(User.first_name.ilike(f"%{params.first_name.lower()}%"))
+            search_cmd = search_cmd.where(User.first_name.icontains(params.first_name, autoescape=True))
         else:
             search_cmd = search_cmd.where(User.first_name == params.first_name)
     if params.last_name is not None:
         if params.permissive:
-            search_cmd = search_cmd.where(User.last_name.ilike(f"%{params.last_name.lower()}%"))
+            search_cmd = search_cmd.where(User.last_name.icontains(params.last_name, autoescape=True))
         else:
             search_cmd = search_cmd.where(User.last_name == params.last_name)
 
     if params.q is not None:
-        needle = f"%{params.q.lower()}%"
         fields = params.search_fields or [
             field for field in UserSearchField
             if is_admin or field is not UserSearchField.EMAIL
         ]
         search_cmd = search_cmd.where(or_(*(
-            _USER_SEARCH_COLUMNS[field].ilike(needle) for field in dict.fromkeys(fields)
+            _USER_SEARCH_COLUMNS[field].icontains(params.q, autoescape=True) for field in dict.fromkeys(fields)
         )))
 
     if params.is_service_account is not None:
@@ -336,9 +335,9 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
 def resolve_users(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     response: Response,
-    orcids: Optional[List[str]] = Body(default=None),
-    usernames: Optional[List[str]] = Body(default=None),
-    emails: Optional[List[str]] = Body(default=None),
+    orcids: Optional[List[str]] = Body(default=None, max_length=1000),
+    usernames: Optional[List[str]] = Body(default=None, max_length=1000),
+    emails: Optional[List[str]] = Body(default=None, max_length=1000),
 ):
     '''
     Batch-resolve users by any mix of ORCIDs, usernames, or emails.

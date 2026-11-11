@@ -9,7 +9,7 @@ from google.protobuf.message import DecodeError
 from google.protobuf.struct_pb2 import ListValue
 from pydantic import BaseModel, ConfigDict
 
-from app.config import get_settings, optional_secret
+from app.config import MIN_CLIENT_SECRET_LENGTH, get_settings, optional_secret
 from app.utils.auth_utils import get_secret_key
 
 
@@ -47,6 +47,8 @@ def _signing_keys() -> tuple[str, dict[str, bytes]]:
             for key_id, secret in values.items()
         ):
             raise RuntimeError("CRUCIBLE_CURSOR_SIGNING_KEYS must map non-empty key IDs to non-empty secrets")
+        if any(len(secret) < MIN_CLIENT_SECRET_LENGTH for secret in values.values()):
+            raise RuntimeError(f"Every secret in CRUCIBLE_CURSOR_SIGNING_KEYS must be at least {MIN_CLIENT_SECRET_LENGTH} characters")
         keys = {key_id: secret.encode("utf-8") for key_id, secret in values.items()}
     else:
         keys = {"v1": (optional_secret("CRUCIBLE_CURSOR_SIGNING_KEY") or get_secret_key()).encode("utf-8")}

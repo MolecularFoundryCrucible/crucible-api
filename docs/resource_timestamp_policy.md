@@ -1,21 +1,16 @@
-# Resource timestamp policy
+# Timestamps
 
-`idtype.creation_time` and `idtype.modification_time` are API-owned nullable PostgreSQL `TIMESTAMPTZ` lifecycle fields.
+This page describes the `creation_time` and `modification_time` of projects, samples, datasets and instruments.
 
-## Write behavior
+## Lifecycle times
 
-- Public create and update models do not accept either lifecycle field.
-- The database generates both values when a resource is created.
-- Creation time is immutable after insertion.
-- The database advances modification time whenever the resource row is updated.
-- API responses serialize non-null values in canonical UTC `Z` form.
+Both fields are PostgreSQL `TIMESTAMPTZ` columns of the resource table (`idtype`), set by the database.
 
-Legacy rows may retain null lifecycle values. The completed migration preserved unknown creation times as null and used creation time for a missing modification time only when creation time was known.
+- Create and update requests do not accept either field.
+- A database trigger sets both on creation, rejects changes to `creation_time`, and advances `modification_time` on every update of the resource row.
+- The API updates that row on edits to the record and on changes to its files, thumbnails, keywords, links, access grants, visibility, owner, project, instrument, status or members, and when a deletion request is created or rejected.
+- Responses serialize values in UTC with a `Z` suffix. Both fields are nullable; older records may have null values.
 
 ## Dataset timestamp
 
-`dataset.timestamp` is producer-supplied scientific metadata. It remains unconstrained text, may use a domain-specific format or timezone, and is not normalized or used to repair lifecycle fields.
-
-## History
-
-The production conversion and enforcement migration completed on 2026-09-15 at Alembic revision `3f2b6a9c1d84`. The migration record is in git history.
+`dataset.timestamp` is producer-supplied scientific metadata: unconstrained text in any format or timezone, never normalized or used for the lifecycle times.

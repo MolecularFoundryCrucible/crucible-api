@@ -168,6 +168,23 @@ def test_a_decision_from_another_browser_is_refused(client, db_engine):
     assert poll(client, body["device_code"]).json()["error"] == "authorization_pending"
 
 
+def test_a_decision_naming_someone_who_did_not_sign_in_is_refused(client, db_engine):
+    body = start_device(client).json()
+    entered = client.post("/oauth/device", data={"user_code": body["user_code"]}, follow_redirects=False)
+    authorize = client.get(entered.headers["location"].removeprefix(API_URL), follow_redirects=False)
+    state = parse_qs(urlparse(authorize.headers["location"]).query)["state"][0]
+    signed_in = client.post("/oauth/password", data={"username": "ada.lovelace", "password": RIGHT, "state": state}, follow_redirects=False)
+    confirm = client.get(signed_in.headers["location"].removeprefix(API_URL))
+    serializer = device_routes._serializer("decision")
+    genuine = serializer.loads(re.search(r'name="decision_token" value="([^"]+)"', confirm.text).group(1))
+    assert set(genuine) == {"d", "u", "n"}
+    forged = serializer.dumps({**genuine, "u": genuine["u"] + 1})
+    refused = client.post("/oauth/device/approve", data={"decision_token": forged, "decision": "approve"})
+    assert refused.status_code == 400
+    allow_polling(db_engine)
+    assert poll(client, body["device_code"]).json()["error"] == "authorization_pending"
+
+
 def test_a_callback_not_started_in_this_browser_is_refused(client):
     assert client.get("/oauth/device/callback", params={"state": "x", "code": "y" * 40, "iss": API_URL}).status_code == 400
 

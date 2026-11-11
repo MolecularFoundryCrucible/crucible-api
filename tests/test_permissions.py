@@ -4,7 +4,7 @@ No database, no HTTP, no fixtures — everything here builds a Principal
 directly, which is the payoff of keeping effective_role pure. Roughly 300
 assertions run in milliseconds.
 
-Design reference: docs/permission_system_plan.md
+Design reference: docs/permissions.md
 """
 import itertools
 

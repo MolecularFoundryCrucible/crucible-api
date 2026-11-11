@@ -74,6 +74,7 @@ def end_session(session: Session, user: User, session_id: str, *, actor: User | 
 def end_sessions(session: Session, user: User, *, actor: User | None, keep: str | None = None, now: datetime | None = None) -> int:
     """End all of this person's sessions but `keep`, in the caller's transaction, and say how many."""
     from app.auth.events import AuthEventType, record_event
+    from app.auth.tokens import cancel_pending_sign_ins
 
     current = _now(now)
     conditions = [TokenFamily.user_id == user.id, TokenFamily.revoked_at == None]  # noqa: E711
@@ -81,6 +82,7 @@ def end_sessions(session: Session, user: User, *, actor: User | None, keep: str 
         conditions.append(TokenFamily.id != keep)
     ended = session.execute(update(TokenFamily).where(*conditions).values(revoked_at=current)
                             .execution_options(synchronize_session=False).returning(TokenFamily.id)).all()
+    cancel_pending_sign_ins(session, current, [user.id])
     if ended:
         record_event(session, AuthEventType.SESSIONS_ENDED, user=user, actor=actor)
     return len(ended)
@@ -92,5 +94,7 @@ def end_everyones_sessions(engine, *, commit: bool, now: datetime | None = None)
     with Session(engine) as session, session.begin():
         if not commit:
             return len(session.exec(select(TokenFamily.id).where(TokenFamily.revoked_at == None)).all())  # noqa: E711
+        from app.auth.tokens import cancel_pending_sign_ins
+        cancel_pending_sign_ins(session, current)
         return len(session.execute(update(TokenFamily).where(TokenFamily.revoked_at == None).values(revoked_at=current)  # noqa: E711
                                    .execution_options(synchronize_session=False).returning(TokenFamily.id)).all())

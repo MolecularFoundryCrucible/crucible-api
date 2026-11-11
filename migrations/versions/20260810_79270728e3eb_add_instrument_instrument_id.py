@@ -2,8 +2,8 @@
 
 A validated, human-readable handle for instruments, separate from
 instrument_name (free-text display) and unique_id (MFID, used for the
-instrument's operator access group). See docs/permission_system_plan.md,
-"Identifiers" — "Instrument needs a handle."
+instrument's operator access group). See docs/permissions.md,
+"Instruments and service accounts".
 
 Nullable on existing rows until the backfill runs:
     DB_CONF_FILE=.env python migrations/data/<date>_backfill_instrument_id.py --commit

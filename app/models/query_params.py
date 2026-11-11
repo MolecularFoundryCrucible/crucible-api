@@ -430,10 +430,7 @@ class DatasetListQuery(ResourceCollectionQuery):
     )] = None
     instrument_name: Annotated[Optional[str], Field(
         deprecated=True,
-        description=(
-            "Deprecated display-name filter. Matches the registered instrument's current name, "
-            "or the stored label for datasets without a registered instrument. Use instrument_mfid."
-        ),
+        description="Deprecated display-name filter. Matches the registered instrument's current name. Use instrument_mfid.",
     )] = None
     timestamp: Optional[str] = None
     size: Optional[int] = None

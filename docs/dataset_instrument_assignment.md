@@ -1,26 +1,16 @@
 # Dataset instrument assignment
 
-## Creation
+This page covers how a dataset's instrument is set at creation, how it is changed afterwards, and how the instrument's name appears in dataset responses. The grants involved are described in [instrument access](instrument_access.md) and [Permissions](permissions.md#instruments-and-service-accounts).
 
-Set `instrument_mfid` when creating a dataset when the stable identifier is available. `instrument_id` remains supported for slug-based callers. A supplied slug and MFID must resolve to the same instrument.
+## Assignment at creation
 
-`instrument_name` is deprecated as a lookup key because instrument names are free-text display and need not be unique. It is consulted only when both `instrument_id` and `instrument_mfid` are omitted. An unregistered name returns 400, and a name matching more than one instrument returns 409.
+`POST /datasets` accepts `instrument_mfid`, `instrument_id` (the slug), or both; when both are given they must identify the same instrument (422 otherwise). An unknown instrument returns 404, and an instrument pending deletion returns 409 `pending_deletion`. The instrument's operator group receives `contributor` on the new dataset.
 
-## Display name
+Assignment requires no role on the instrument. When a service account creates a dataset for an instrument it is not bound to, the dataset is created and the server logs a warning.
 
-Dataset responses resolve `instrument_name` from the assigned instrument through `instrument_mfid`, matching `instrument_id` and the nested `instrument` reference. Renaming an instrument is reflected in every dataset response. Datasets without a registered instrument return their stored label.
+`instrument_name` is deprecated as a lookup key, because instrument names are free-text and need not be unique. It is consulted only when both `instrument_id` and `instrument_mfid` are omitted, and matches case-insensitively. An unregistered name returns 400, and a name matching more than one instrument returns 409.
 
-The `instrument_name` filter on `GET /datasets` is deprecated. It matches the same displayed value. Filter by `instrument_mfid` instead.
-
-## Generic update
-
-Generic `PATCH /datasets/{dataset_mfid}` no longer changes or clears the assigned instrument. The deprecated `instrument_id` and `instrument_name` fields remain in `DatasetUpdate` temporarily so existing clients may resubmit the current value without failing. For `instrument_name`, both the stored label and the instrument's current name are accepted. A different value or removal returns `409 Conflict`.
-
-Clients should stop presenting instrument assignment as editable dataset metadata and omit both fields from PATCH requests.
-
-## Assignment and reassignment
-
-Instrument assignment and reassignment use a dedicated atomic operation:
+## Reassignment
 
 ```http
 PUT /datasets/{dataset_mfid}/instrument
@@ -29,10 +19,20 @@ Content-Type: application/json
 {"instrument_id": "instrument-slug"}
 ```
 
-The body accepts `instrument_id`, `instrument_mfid`, or a matching pair. Conflicting identifiers return 422. `instrument_name` is derived from the resolved instrument and is not accepted.
+- The body takes `instrument_id`, `instrument_mfid`, or a matching pair; conflicting identifiers return 422 and `instrument_name` is rejected. The same 404 and 409 apply as at creation.
+- Requires `admin` on the dataset (`manage_acl`).
+- One transaction updates the dataset's instrument, removes the outgoing instrument's operator group grant, grants the new operator group `contributor`, and updates the dataset's modification time. Other grants are unchanged.
+- Resubmitting the current instrument changes nothing except ensuring that its `contributor` grant exists.
+- The response (`DatasetInstrumentRead`) contains `dataset_mfid`, `instrument`, `previous_instrument` and `previous_instrument_name`.
 
-The operation requires `manage_acl` on the dataset. One transaction updates the instrument references, removes the outgoing instrument group's grant, grants contributor to the new instrument group, and advances the resource modification time.
+An instrument cannot be removed from a dataset: there is no `DELETE` route for it.
 
-The route supports initial assignment and reassignment. Resubmitting the current instrument is idempotent and ensures its contributor grant exists. Reassignment removes only the outgoing assigned instrument group's grant; unrelated grants remain unchanged.
+## Generic update
 
-`DELETE /datasets/{dataset_mfid}/instrument` to clear the instrument is not implemented.
+`PATCH /datasets/{dataset_mfid}` does not change the instrument. Its deprecated `instrument_id` and `instrument_name` fields accept only the current values, compared case-insensitively, so that clients resubmitting a full record do not fail; any other value, or `null` on a dataset with an instrument, returns 409. Clients omit both fields.
+
+## Display name
+
+Dataset responses read `instrument_id`, `instrument_name` and the nested `instrument` reference from the assigned instrument, so a rename appears in every dataset response. A dataset without an instrument returns `null` for all three.
+
+The `instrument_name` filter on `GET /datasets` is deprecated: it matches datasets whose assigned instrument has exactly that name. Filter by `instrument_mfid` or `instrument_id` instead.

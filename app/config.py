@@ -29,8 +29,8 @@ class ConfigurationError(RuntimeError):
 
 
 class FeatureDisabled(Exception):
-    def __init__(self, feature: str):
-        super().__init__(f"{feature} is not enabled on this server")
+    def __init__(self, feature: str, message: str | None = None):
+        super().__init__(message or f"{feature} is not enabled on this server")
         self.feature = feature
 
 
@@ -426,7 +426,6 @@ class StorageSettings(SettingsGroup):
     gcs_project: str | None = Field(None, validation_alias="GCS_PROJECT")
     record_bucket: str | None = Field(None, validation_alias="RECORD_BUCKET")
     read_buckets: str | None = Field(None, validation_alias="STORAGE_READ_BUCKETS")
-    legacy_upload_token_downscope: bool = Field(True, validation_alias="LEGACY_UPLOAD_TOKEN_DOWNSCOPE")
     s3_endpoint_url: str | None = Field(None, validation_alias="S3_ENDPOINT_URL")
     s3_public_url: str | None = Field(None, validation_alias="S3_PUBLIC_URL")
     s3_region: str = Field("us-east-1", validation_alias="S3_REGION")
@@ -518,6 +517,7 @@ _SECRETS: dict[str, tuple[str, str]] = {
 }
 # Sent verbatim in HTTP Basic credentials and ORCID token requests, where a stray newline breaks every sign-in.
 _SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "CRUCIBLE_AUTH_PEPPER", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"})
+_LONG_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "CRUCIBLE_SECRET_KEY", "CRUCIBLE_CURSOR_SIGNING_KEY"})
 _FEATURES = {"ingestion": "ingestion", "printing": "printing", "proposal_sync": "proposals"}
 
 
@@ -638,7 +638,7 @@ def get_secret(name: str) -> str:
         value = _fetched_secrets[version]
     if (name in _SINGLE_LINE_SECRETS or _KEYED_SECRET.fullmatch(name)) and not (value.isascii() and value.isprintable()):
         raise ConfigurationError(f"{name} must be one line of printable ASCII")
-    if (name == "HUB_AUTH_CLIENT_SECRET" or name.startswith(("OAUTH_", "CRUCIBLE_AUTH_PEPPER", "CRUCIBLE_AUTH_PREVIOUS_PEPPER_"))) and len(value) < MIN_CLIENT_SECRET_LENGTH:
+    if (name in _LONG_SECRETS or name.startswith(("OAUTH_", "CRUCIBLE_AUTH_PEPPER", "CRUCIBLE_AUTH_PREVIOUS_PEPPER_"))) and len(value) < MIN_CLIENT_SECRET_LENGTH:
         raise ConfigurationError(f"{name} must be at least {MIN_CLIENT_SECRET_LENGTH} characters")
     return value
 

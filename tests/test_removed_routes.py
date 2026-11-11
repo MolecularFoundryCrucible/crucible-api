@@ -12,6 +12,7 @@ ROUTES = (
     ("GET", "/users/0tmnyhfztdwc1000w2kspzsnh0/samples", "GET /samples?accessible_to_user="),
     *((method, path, "POST /account/apikeys") for method, path in (
         ("GET", "/auth/login"), ("GET", "/auth/callback"), ("GET", "/auth/apikey"), ("POST", "/auth/apikey/regenerate"), ("GET", "/login"), ("GET", "/auth"), ("GET", "/user_apikey"))),
+    *(("POST", f"/datasets/0tmnyhfztdwc1000w2kspzsnh1/upload/{step}", "/upload/multipart/initiate") for step in ("initiate", "initiate/multipart", "complete")),
 )
 
 

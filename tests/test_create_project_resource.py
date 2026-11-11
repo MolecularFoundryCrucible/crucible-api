@@ -2,8 +2,7 @@
 single ACL entry (own group at owner) — before this fix, create_project wrote
 no Resource row at all, so a project's creation_time/modification_time were
 always null and it couldn't carry an ACL entry the way every other resource
-type can. See docs/permission_system_plan.md, Core Concepts -> Projects
-become resources.
+type can. See docs/permissions.md, "Projects".
 """
 from sqlmodel import select
 

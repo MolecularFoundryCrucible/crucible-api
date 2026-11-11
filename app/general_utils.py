@@ -10,18 +10,14 @@ def refuse_public_change(data):
 
 
 def is_orcid(val):
-    pattern= re.compile("[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$")
-    if re.match(pattern, val):
-        return True
-    else:
-        return False
+    return re.fullmatch("[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}", val) is not None
 
-_MFID_PATTERN = re.compile(r"^[0-9a-hjkmnp-tv-z]{26}$")
+_MFID_PATTERN = re.compile(r"[0-9a-hjkmnp-tv-z]{26}")
 
 def is_valid_mfid(val):
     """Check that val matches the mfid format: 26-character lowercase
     Crockford's Base32 (excludes i, l, o, u to avoid visual ambiguity)."""
-    return bool(_MFID_PATTERN.match(val))
+    return _MFID_PATTERN.fullmatch(val) is not None
 
 
 def blank_to_none(val):

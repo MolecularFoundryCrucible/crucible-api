@@ -53,8 +53,8 @@ def _projects(db_engine):
     from app.tables import DeletionRequest, Project
     with Session(db_engine) as session:
         mfids = {}
-        for slug in ("myproj", "doomed"):
-            project = Project(project_id=slug, organization="MF", project_lead_orcid="lead")
+        for slug in ("myproj", "doomed", "selfmade"):
+            project = Project(project_id=slug, organization="MF", project_lead_orcid="lead", proposal_sync=slug != "selfmade")
             session.add(project)
             session.flush()
             session.add(AccessGroup(group_name=project.unique_id, group_type=AccessGroupType.PROJECT.value))
@@ -103,7 +103,7 @@ def test_create_user_resolves_projects_like_every_project_reference(client, db_e
 
 
 def test_proposal_projects_skip_unknown_and_pending_deletion(client, db_engine, auth_as, monkeypatch):
-    monkeypatch.setattr(users_routes, "find_mf_user_proposals", lambda orcid: ["MYPROJ", "doomed", "gone"])
+    monkeypatch.setattr(users_routes, "find_mf_user_proposals", lambda orcid: ["MYPROJ", "doomed", "gone", "selfmade"])
     auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
     mfids = _projects(db_engine)
 

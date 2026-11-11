@@ -1,5 +1,6 @@
 import hashlib
 
+import pytest
 from sqlmodel import Session
 
 from app.tables import AssociatedFile, Dataset, Resource
@@ -54,3 +55,13 @@ def test_etag_is_stable_across_rename(client, db_engine, auth_as):
     renamed = client.patch(f"/files/{file_mfid}", json={"filename": "b.txt", "access_note": "x"})
     assert renamed.status_code == 200, renamed.text
     assert renamed.json()["etag"] == before
+
+
+@pytest.mark.parametrize("name", ["../b.txt", "a//b.txt", "/b.txt", "b\\c.txt", "b\n.txt", "x" * 1025])
+def test_a_rename_follows_the_filename_rules_of_an_upload(client, db_engine, auth_as, name):
+    file_mfid = _file(db_engine)
+    auth_as("0000-0000-0000-0009", platform_role=PlatformRole.ADMIN)
+    assert client.patch(f"/files/{file_mfid}", json={"filename": name}).status_code == 422
+    assert client.get(f"/files/{file_mfid}").json()["filename"] == "a.txt"
+    assert client.patch(f"/files/{file_mfid}", json={"filename": "raw/b.txt"}).status_code == 200
+

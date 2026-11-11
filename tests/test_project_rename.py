@@ -1,7 +1,7 @@
 """PATCH /projects/{proj_id} can now rename project_id itself. Safe because
 every FK that names a project stores its MFID (Project.unique_id), never
-project_id -- see docs/permission_system_plan.md, "Project identity: mfid vs
-project_id". Dataset/Sample display resolution living up to that promise is
+project_id -- see docs/permissions.md, "Project identity: MFID and
+`project_id`". Dataset/Sample display resolution living up to that promise is
 covered separately in test_project_rename_resolves_live.py.
 """
 from sqlmodel import Session, select

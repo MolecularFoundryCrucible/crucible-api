@@ -8,7 +8,7 @@ from sqlalchemy import func, update
 from sqlmodel import Session, select
 
 from app.auth.clients import client_by_id
-from app.tables import AccessToken, RefreshToken, TokenFamily, User
+from app.tables import AccessToken, DeviceAuthorization, LoginCode, RefreshToken, TokenFamily, User
 
 
 ACCESS_LIFETIME = timedelta(minutes=15)
@@ -60,6 +60,20 @@ def revoke_all_tokens(session: Session, user_id: int, *, now: datetime | None = 
     for family in session.exec(select(TokenFamily).where(TokenFamily.user_id == user_id, TokenFamily.revoked_at == None, TokenFamily.id != except_family_id).with_for_update()).all():  # noqa: E711
         family.revoked_at = current
         session.add(family)
+    cancel_pending_sign_ins(session, current, [user_id])
+
+
+def cancel_pending_sign_ins(session: Session, now: datetime, user_ids: list[int] | None = None) -> None:
+    """Cancel the sign-ins these people, or everyone, approved but have not finished: a code not yet
+    exchanged or a device that has not collected its tokens would otherwise start a session after
+    the others were ended."""
+    codes = [LoginCode.consumed_at == None]  # noqa: E711
+    devices = [DeviceAuthorization.user_id != None, DeviceAuthorization.consumed_at == None, DeviceAuthorization.denied_at == None]  # noqa: E711
+    if user_ids is not None:
+        codes.append(LoginCode.user_id.in_(user_ids))
+        devices.append(DeviceAuthorization.user_id.in_(user_ids))
+    session.execute(update(LoginCode).where(*codes).values(consumed_at=now).execution_options(synchronize_session=False))
+    session.execute(update(DeviceAuthorization).where(*devices).values(denied_at=now).execution_options(synchronize_session=False))
 
 
 def _now(value: datetime | None) -> datetime:

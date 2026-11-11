@@ -5,8 +5,8 @@ not project_id reused as one (which is what idtype.mfid does for projects
 today). Purely additive: nothing reads this column yet. project_id remains
 what ACL/group lookups key on and what Dataset.project_id/Sample.project_id
 FK to; this is groundwork for the eventual MFID-named-groups work (group C),
-not a behavior change. See docs/permission_system_plan.md, "Project
-identity: mfid vs project_id".
+not a behavior change. See docs/permissions.md, "Project
+identity: MFID and `project_id`".
 
 Nullable on existing rows until the backfill runs:
     DB_CONF_FILE=.env python migrations/data/<date>_backfill_project_unique_id.py --commit

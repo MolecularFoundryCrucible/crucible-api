@@ -8,7 +8,7 @@ from sqlmodel import Session, SQLModel, select
 
 from app.api.main import app
 from app.cli import auth as auth_cli
-from app.tables import AuthEvent, AccessToken, RefreshToken, TokenFamily, User
+from app.tables import AuthEvent, AccessToken, DeviceAuthorization, LoginCode, RefreshToken, TokenFamily, User
 from app.utils import auth_utils
 from app.utils.auth_utils import authenticate_user
 from app.auth.tokens import AUTHORIZATION_CODE, DEVICE_CODE, issue_tokens
@@ -160,3 +160,45 @@ def test_the_command_ends_one_persons_or_everyones_sessions(people, use_engine, 
     assert not works(adas) and works(bobs)
     auth_cli._run_end_sessions(type("Args", (), {"user": None, "all": True, "commit": True})())
     assert not works(bobs)
+
+
+def pending_sign_ins(engine, unique_id, mark):
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session, session.begin():
+        person = user_id(engine, unique_id)
+        session.add(LoginCode(code_hash=mark * 64, user_unique_id=unique_id, user_id=person, client_id="crucible-hub", callback_uri="https://hub.example/cb",
+                              code_challenge="x" * 43, created_at=now, expires_at=now + timedelta(minutes=1)))
+        session.add(DeviceAuthorization(device_code_hash=mark * 64, user_code_hash=mark * 64, client_id="nano-crucible", created_at=now,
+                                        expires_at=now + timedelta(minutes=5), user_id=person, approved_at=now))
+
+
+def cancelled(engine, mark):
+    with Session(engine) as session:
+        return session.get(LoginCode, mark * 64).consumed_at is not None, session.get(DeviceAuthorization, mark * 64).denied_at is not None
+
+
+def _end_through_route(client, people):
+    assert client.delete("/account/sessions", headers=bearer(sign_in(people, ADA))).status_code == 204
+
+
+def _end_as_administrator(client, people):
+    assert client.delete(f"/users/{ADA}/sessions", headers=bearer(sign_in(people, BOSS), **{"Crucible-Privilege-Mode": "elevated"})).status_code == 204
+
+
+def _disable(client, people):
+    assert client.post(f"/users/{ADA}/disable", headers=bearer(sign_in(people, BOSS), **{"Crucible-Privilege-Mode": "elevated"})).status_code == 200
+
+
+def _end_everyones(client, people):
+    from app.auth.sessions import end_everyones_sessions
+    end_everyones_sessions(people, commit=True)
+
+
+@pytest.mark.parametrize("end, bob_too", [(_end_through_route, False), (_end_as_administrator, False), (_disable, False), (_end_everyones, True)])
+def test_ending_all_sessions_also_cancels_sign_ins_that_were_approved_but_not_finished(client, people, end, bob_too):
+    pending_sign_ins(people, ADA, "a")
+    pending_sign_ins(people, BOB, "b")
+    end(client, people)
+    assert cancelled(people, "a") == (True, True)
+    assert cancelled(people, "b") == (bob_too, bob_too)
+

@@ -4,7 +4,7 @@ Everything here is a plain value or a function over plain values, which is what
 makes the combinatorial matrix in tests/test_permissions.py cheap to run
 exhaustively. The fetch-and-raise layer lives in auth_utils.
 
-Design reference: docs/permission_system_plan.md
+Design reference: docs/permissions.md
 """
 from dataclasses import dataclass, replace
 from datetime import datetime

@@ -70,12 +70,15 @@ def find_mf_user_proposals(orcid: str) -> list[str]:
 
 def usable_discovered_projects(session: Session, proposal_ids: list[str]) -> tuple[list[Project], list[str]]:
     """The projects a person may join because a proposal names them, and the proposal IDs that
-    cannot be used: not in Crucible, pending deletion, or with no access group."""
+    cannot be used: not in Crucible, with proposal sync off, pending deletion, or with no access group."""
     usable, unusable = [], []
     for proposal_id in sorted({proposal_id for proposal_id in proposal_ids if proposal_id}):
         project = resolve_project_reference(proposal_id, session)
         if project is None:
             logger.warning("Ignoring proposal project not provisioned in Crucible: %s", proposal_id)
+        elif not project.proposal_sync:
+            logger.warning("Ignoring project with proposal sync off: %s", proposal_id)
+            project = None
         elif get_active_deletion_request(session, project.unique_id) is not None:
             logger.warning("Ignoring proposal project pending deletion: %s", proposal_id)
             project = None

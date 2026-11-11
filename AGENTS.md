@@ -1,44 +1,40 @@
 # Crucible API
 
-FastAPI and SQLModel service for the Molecular Foundry's scientific records. The Foundry runs it on GKE, deployed from the mf-crucible-deploy repository; labs self-host it with `deploy/compose/`.
+FastAPI and SQLModel service on PostgreSQL that stores scientific records and decides who may see them. The Foundry runs it on GKE from the mf-crucible-deploy repository; other labs run it with `deploy/compose/`.
 
-## Commands
+## Rules
 
-- Install: `uv sync --locked`
-- Tests: `uv run pytest -q`. PostgreSQL tests skip unless `CRUCIBLE_TEST_PG_URL` is set, and S3 tests unless `S3_TEST_ENDPOINTS` is set (see `.github/workflows/tests.yml`).
-- One migration head: `uv run alembic heads` prints a single revision.
-- Server commands: `python -m app.cli` (`db upgrade`, `db sequences`, `identity backfill`, `settings check`, `storage check`, `storage cleanup`, `files restore`, `admin create`); `--help` lists the rest.
-
-## Layout
-
-- `app/api/routes/` routes, `app/services/` logic, `app/tables.py` database tables, `app/models/` request and response models, `app/cli/` server commands.
-- Routes never take or return a database table class: give each its own request or response model (`tests/test_api_schema_has_no_tables.py` checks the OpenAPI schema).
-- `app/auth/` sign-in for every client: providers, passwords, registered clients, login transactions, tokens, sessions and cleanup. Its browser pages and the Hub's `/auth/hub/*` routes are in `app/api/routes/browser_sign_in.py`; the standard OAuth routes in `oauth.py` and `device.py`.
-- `app/config.py` settings, read once through `get_settings()`; `tests/conftest.py` clears the caches between tests.
-- `app/storage/` storage adapters behind `ObjectStore`: `GoogleStore` (`STORAGE_BACKEND=gcs`) and `S3Store` (`s3`). Clients see the same routes on both; provider differences stay in the adapters.
-- `migrations/versions/` Alembic revisions; `migrations/data/` one-off audits and backfills.
-- `docs/` design notes; `deploy/compose/README.md` the self-hosting guide.
-
-## Conventions
-
-- A file's `storage_backend = "gcs"` means "stored by the API", on any store.
+- Changes reach `main` only through a pull request that the user merges. Never push or force-push `main`.
+- Never run a migration or write data on staging or production unless the user authorizes that operation.
+- Every change to a table in `app/tables.py` needs an Alembic revision; keep a single head.
+- Routes never take or return a table class; each gets its own model in `app/models/`.
+- A change that API users, operators or clients can see gets one line under `Unreleased` in `CHANGELOG.md`.
 - No code comments unless the reason is not obvious from the code.
+- Other repositories (Hub, nano-crucible, deploy, Lens) are not edited from here; tell the user what they need.
 
-## Git workflow
+## Where things are
 
-- `main` is the only long-lived branch. Changes reach `main` through a reviewed pull request; the user merges.
-- Never push directly to `main`, even when branch protection permits it.
-- Never force-push `main`.
-- A merge to `main` builds the image staging runs; production deploys only from release tags through mf-crucible-deploy.
+| Path | Holds |
+|---|---|
+| `app/api/routes/` | Routes |
+| `app/services/`, `app/utils/` | Logic shared by routes |
+| `app/tables.py` | Database tables |
+| `app/models/` | Request and response models |
+| `app/auth/` | Sign-in: providers, passwords, clients, tokens, sessions |
+| `app/storage/` | Storage adapters (`gcs`, `s3`) behind one interface |
+| `app/cli/` | Server commands: `python -m app.cli --help` |
+| `app/config.py` | Settings, read through `get_settings()` |
+| `migrations/` | Alembic revisions and one-time data scripts |
+| `deploy/compose/` | The self-hosting bundle and its guide |
+| `docs/` | Contracts, guides and open items: start at `docs/README.md` |
 
-## Change history
+## Skills
 
-- Add an entry under `Unreleased` in `CHANGELOG.md` for changes that affect API users, operators, or downstream clients: one line per change, naming the settings, routes, or migration involved.
-- Internal-only changes do not require a changelog entry.
+Workflows are in `agent-skills/`, linked from `.claude/skills/`.
 
-## Database changes
-
-- Every change to a `table=True` SQLModel requires a matching Alembic revision in `migrations/versions/`.
-- Keep a single linear Alembic head and verify the revision chain after schema changes.
-- Put one-time audits and backfills in `migrations/data/`. They must default to read-only or rollback behavior and require an explicit commit flag for writes.
-- Do not run a migration or data write against staging or production unless the user explicitly authorizes that operation.
+| Skill | Use when |
+|---|---|
+| `run-checks` | Running tests, the PostgreSQL tests or the bundle jobs locally |
+| `change-database-schema` | Editing a table, writing a migration or a data change |
+| `add-or-change-route` | Adding, changing, deprecating or removing a route |
+| `release` | Preparing a release pull request |

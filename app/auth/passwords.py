@@ -165,6 +165,7 @@ def revoke_all_passwords(engine, *, commit: bool, now: datetime | None = None) -
     from sqlalchemy import delete, update
 
     from app.auth.events import AuthEventType, record_event
+    from app.auth.tokens import cancel_pending_sign_ins
     from app.tables import TokenFamily, PasswordToken, UserIdentity
 
     current = now or datetime.now(timezone.utc)
@@ -179,6 +180,7 @@ def revoke_all_passwords(engine, *, commit: bool, now: datetime | None = None) -
                             .values(voided_at=current).execution_options(synchronize_session=False))
             session.execute(update(TokenFamily).where(TokenFamily.user_id.in_(user_ids), TokenFamily.revoked_at == None)  # noqa: E711
                             .values(revoked_at=current).execution_options(synchronize_session=False))
+            cancel_pending_sign_ins(session, current, list(user_ids))
             for user in session.exec(select(User).where(User.id.in_(user_ids))).all():
                 record_event(session, AuthEventType.PASSWORD_REMOVED, user=user)
         return counts

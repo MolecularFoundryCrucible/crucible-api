@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `GET /features` lists the optional features of a deployment (`uploads`, `ingestion`, `printing`, `proposal_sync`, `passwords`) and whether each is enabled, so clients can hide what would return 501 `feature_disabled`.
 - `python -m app.cli identity backfill --issuer URL [--commit]` records a login for each person whose identifier is an ORCID; it replaces the script `migrations/data/20261103_backfill_user_identity.py`, which is not in the image and now forwards to it.
 - `python -m app.cli db sequences [--commit]` reports id sequences that are behind their tables, which makes inserts fail with a 500 after rows are loaded with their own ids, and moves them up.
 - `GET /account/auth-events` shows people their own sign-in history, in the same shape as the administrators' route.
@@ -99,6 +100,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Removed
 
+- **Breaking:** the resumable and token upload routes are gone: `POST /datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart` and `/upload/complete` answer 410 `route_removed`; upload through `/upload/multipart` (nano-crucible 3.3.0 or newer), which needs `MULTIPART_UPLOAD_ENABLED=true`: while it is off, starting an upload answers 501 `feature_disabled` (feature `uploads`) instead of 503 with `Retry-After`. `LEGACY_UPLOAD_TOKEN_DOWNSCOPE` is no longer read (`settings check` reports it), and the server no longer hands out storage tokens.
 - **Breaking for operators:** the YAML settings files in the image (`app/conf/*.yaml`) and `API_CONF_FILE` are gone; set `API_PUBLIC_URL` and `API_PATH` (and `TRGM_SEARCH_THRESHOLD` if not 0.3). `settings check` reports `API_CONF_FILE` as retired. The Compose bundle never used them.
 - **Breaking:** the browser pages that signed in with ORCID and handed out a single API key are gone: `GET /auth/login`, `/auth/callback`, `/auth/apikey`, `POST /auth/apikey/regenerate` and the aliases `/login`, `/auth`, `/user_apikey` answer 410 `route_removed`. Create named keys with `POST /account/apikeys` (the Hub's Security page), or sign in from nano-crucible 4.0.
 - **Breaking for operators:** `ORCID_CLIENT_ID` and `ORCID_CLIENT_SECRET` are no longer read (`settings check` reports them); ORCID sign-in uses the provider entry in `CRUCIBLE_AUTH_PROVIDERS` with `OIDC_ORCID_CLIENT_SECRET`. The ORCID application no longer needs the `<API>/auth` redirect, and the `crucible_login_session` cookie is gone.
@@ -107,6 +109,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- **Breaking for operators:** `CRUCIBLE_SECRET_KEY`, `CRUCIBLE_CURSOR_SIGNING_KEY` and every secret in `CRUCIBLE_CURSOR_SIGNING_KEYS` must be at least 32 characters; the server refuses to start with a shorter one.
+- **Breaking:** `GET /keywords` and `GET /keywords/{keyword}` need sign-in.
+- **Breaking:** `POST /projects` lets only an administrator name someone else as the lead (403 `lead_must_be_caller`) and never a service account (422). Projects have `proposal_sync`: proposal sync adds people only to projects that have it, which are those an administrator created or set it on with `PATCH /projects/{project_ref}`; a rename by anyone else turns it off. Existing projects keep it on. Needs migration `c41d7e9a52b6`.
+- `PATCH /service_accounts/{service_account_ref}` needs a browser session with a recent sign-in to make a service account an administrator (API keys get 403 `hub_session_required`); every role change is recorded as `role_changed` and takes effect on the account's keys at once.
+- Ending all of a person's sessions (sign out everywhere, a password change, reset or removal, disabling the account, the `auth` server commands) also cancels their sign-ins that were approved but not finished: codes not yet exchanged and devices that have not collected their tokens.
+- A device approval is accepted only from the person who signed in for it, recorded on the server; the signed form no longer decides who that is.
+- A malformed `POST /account/password` is answered without repeating the submitted values.
+- `POST /users/resolve` and `POST /datasets/first_thumbnails` take at most 1000 entries per list (422 above). Renaming a stored file follows the filename rules of an upload. `%` and `_` in a user search are matched as text. MFID and ORCID checks no longer accept a trailing newline.
+- Compose bundle: `/api/v3/metrics` is no longer served to the outside (404); scrape `api:8000/metrics` inside the Compose network.
 - From the review against the spec: the 30-second refresh grace now applies only to a token its holder used, so a copied token can no longer keep renewing itself beside the owner's (new column `hubrefreshtoken.retired_at`, migration `208288a60073`); a password now counts as a way to sign in when unlinking a login; approving and rejecting waiting accounts from a session needs a recent sign-in; the older ORCID browser flow registers nobody new when no ORCID provider is listed (closed, not open); the bundle's Caddy limits the API's sign-in forms (`/oauth/password`, `/oauth/password-link`, `/oauth/register`, `/oauth/device`) to 8 KB.
 - Removed four finished data scripts from May and June 2026 (storage paths, file MFIDs, usernames, personal access groups) that wrote to the database without a `--commit` flag; they remain in git history.
 - `ingestion_class` on the ingest routes must be 1 to 128 letters, digits, dots, hyphens or underscores (422 otherwise), and `PATCH /ingestion_requests/{id}` now changes only `status`, `time_completed` and `ingestion_githash`, ignoring other fields, so a caller can no longer rewrite the stored file location or ingestor.

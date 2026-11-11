@@ -97,6 +97,15 @@ def field_error(answer):
     return error["loc"], error["type"]
 
 
+def test_a_malformed_request_is_not_answered_with_the_passwords_it_carried(client, people):
+    token = sign_in(people, NEWCOMER)
+    for body in ({"current_password": OLD}, {"current_password": OLD, "new_password": [NEW]}, {"current_password": OLD, "new_password": NEW + "x" * 1024}):
+        answer = client.post("/account/password", headers=bearer(token), json=body)
+        assert answer.status_code == 422, answer.text
+        assert OLD not in answer.text and NEW not in answer.text
+        assert all(set(error) == {"loc", "msg", "type"} for error in answer.json()["detail"])
+
+
 def test_a_first_password_needs_a_username_set_first(client, people):
     token = sign_in(people, NEWCOMER)
     refused = change(client, token, new_password=NEW)

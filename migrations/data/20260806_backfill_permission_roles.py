@@ -1,6 +1,6 @@
 """
 Phase 1 backfill for the permission system redesign.
-See docs/permission_system_plan.md -> Migration path.
+See docs/permissions.md.
 
 Run AFTER migrations/data/20260806_add_permission_roles.sql, and after
 migrations/data/20260806_audit_permission_preconditions.py reports no blockers.

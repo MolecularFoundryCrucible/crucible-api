@@ -1,40 +1,18 @@
 from datetime import datetime, timezone
-from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.api.routes import gcs_storage
 from app.tables import Dataset, Resource, UploadSession
-from app.models.uploads import UploadComplete
 from app.utils.deletion_utils import _hard_delete_dataset
 from app.utils.multipart_config import MultipartStorageConfig
-from app.utils.permissions import Principal
 
 
 def make_session(**kwargs):
     values = dict(dataset_mfid="ds", object_key="uploads/object", associated_file_name="data", owner_user_id="owner", user_id=1, expires_at=datetime(2000, 1, 1, tzinfo=timezone.utc), size=10)
     values.update(kwargs)
     return UploadSession(**values)
-
-
-@pytest.mark.parametrize("protocol,owner,status", [(None, "owner", 410), ("gcs_xml_v1", "owner", 409), ("future", "owner", 409), ("gcs_xml_v1", "other", 403)])
-def test_legacy_completion_protocol_guard(protocol, owner, status):
-    upload = make_session(protocol=protocol)
-    with patch.object(gcs_storage, "Session") as session_cls, patch.object(gcs_storage, "server_client") as storage:
-        session = session_cls.return_value.__enter__.return_value
-        session.exec.return_value.one_or_none.return_value = upload
-        with pytest.raises(HTTPException) as error:
-            gcs_storage.complete_resumable_upload(dsid="ds", response=Response(), body=UploadComplete(upload_id=upload.upload_id, sha256_hash="claimed"), auth_res=Principal(user_id=owner, internal_user_id=1 if owner == "owner" else 2, groups=()))
-        assert error.value.status_code == status
-        storage.assert_not_called()
-        if protocol is None:
-            session.delete.assert_called_once_with(upload)
-        else:
-            session.delete.assert_not_called()
-            session.commit.assert_not_called()
 
 
 def test_legacy_inserts_and_new_idempotency(db_engine):

@@ -194,7 +194,7 @@ services:
   # One-off: `docker compose run --rm files-backup backup` copies every bucket to the backup folder,
   # `restore` copies it back (README.md, "Backups"). Works with the bundled store or your own.
   files-backup:
-    image: rclone/rclone:1.75.2
+    image: rclone/rclone:1.76.0
     profiles: [backup]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

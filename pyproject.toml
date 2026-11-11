@@ -1,15 +1,15 @@
 [project]
 name = "crucible-api"
-version = "3.3.1"
+version = "4.0.0a1"
 description = "Crucible API: scientific records service for the Molecular Foundry"
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.11"
 dependencies = [
     "cachetools>=7.2.8",
-    "fastapi==0.162.0",
+    "fastapi==0.162.2",
     "google-api-core==2.24.0",
-    "google-auth==2.62.0",
+    "google-auth==2.62.1",
     "google-cloud-secret-manager==2.22.1",
     "google-cloud-storage>=3.4.1",
     "gunicorn",
@@ -25,7 +25,7 @@ dependencies = [
     "joserfc>=1.7.7",
     "google-crc32c>=1.9.0",
     "pyyaml==6.0.3",
-    "sqlalchemy==2.1.6",
+    "sqlalchemy==2.1.8",
     "sqlmodel==0.0.48",
     "urllib3==2.8.0",
     "uvicorn==0.54.0",
@@ -38,8 +38,8 @@ dependencies = [
     "itsdangerous>=2.2.0",
     "python-dotenv>=1.0.1",
     "pydantic-settings==2.16.2",
-    "boto3==1.43.123",
-    "awscrt==0.38.0",
+    "boto3==1.43.126",
+    "awscrt==0.38.1",
     "jinja2>=3.1.6",
     "anyascii>=0.3.3",
     "email-validator>=2.2",

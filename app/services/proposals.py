@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 from app.config import ConfigurationError, get_secret, get_settings
 from app.tables import AccessGroup, Project, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, Role
-from app.utils.project_utils import resolve_project_reference
+from app.utils.project_utils import project_id_is_reserved, resolve_project_reference
 from app.utils.sql_utils import get_active_deletion_request
 from app.utils.user_utils import sql_add_user_to_access_group
 
@@ -70,7 +70,8 @@ def find_mf_user_proposals(orcid: str) -> list[str]:
 
 def usable_discovered_projects(session: Session, proposal_ids: list[str]) -> tuple[list[Project], list[str]]:
     """The projects a person may join because a proposal names them, and the proposal IDs that
-    cannot be used: not in Crucible, with proposal sync off, pending deletion, or with no access group."""
+    cannot be used: not in Crucible, with proposal sync off, outside the reserved project_id pattern
+    when one is set, pending deletion, or with no access group."""
     usable, unusable = [], []
     for proposal_id in sorted({proposal_id for proposal_id in proposal_ids if proposal_id}):
         project = resolve_project_reference(proposal_id, session)
@@ -78,6 +79,9 @@ def usable_discovered_projects(session: Session, proposal_ids: list[str]) -> tup
             logger.warning("Ignoring proposal project not provisioned in Crucible: %s", proposal_id)
         elif not project.proposal_sync:
             logger.warning("Ignoring project with proposal sync off: %s", proposal_id)
+            project = None
+        elif get_settings().api.reserved_project_id_pattern and not project_id_is_reserved(project.project_id):
+            logger.warning("Ignoring project outside RESERVED_PROJECT_ID_PATTERN: %s", proposal_id)
             project = None
         elif get_active_deletion_request(session, project.unique_id) is not None:
             logger.warning("Ignoring proposal project pending deletion: %s", proposal_id)

@@ -208,6 +208,18 @@ class ApiSettings(SettingsGroup):
     orcid_issuer: str = Field("https://orcid.org", validation_alias="ORCID_ISSUER")
     max_body_mib: int = Field(10, ge=1, le=1024, description="Largest request body the API accepts, in MiB; files go to storage through signed URLs, not through the API.")
     max_thumbnail_body_mib: int = Field(20, ge=1, le=1024, description="Largest body for creating or replacing a thumbnail, sent as base64 JSON, in MiB.")
+    reserved_project_id_pattern: str | None = Field(None, validation_alias="RESERVED_PROJECT_ID_PATTERN", description="Regular expression, matched against the whole project_id ignoring case. Only an administrator may create a project with a matching project_id or rename one to or from it, and proposal sync adds people only to matching projects. Unset: no project_id is reserved.")
+
+    @field_validator("reserved_project_id_pattern")
+    @classmethod
+    def _valid_pattern(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        try:
+            re.compile(value)
+        except re.error as error:
+            raise ValueError(f"is not a valid regular expression: {error}") from None
+        return value
 
 
 class OidcProvider(BaseModel):

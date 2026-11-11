@@ -31,7 +31,7 @@ from app.utils.sql_utils import assert_not_pending_deletion
 from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
     project_fields, project_leads,
-    assert_project_id_available, project_id_matches, sql_add_user_to_project,
+    assert_project_id_available, project_id_is_reserved, project_id_matches, sql_add_user_to_project,
     resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
@@ -47,6 +47,7 @@ from app.services.resource_details import (
 )
 
 router = APIRouter(tags=["projects"])
+RESERVED_PROJECT_ID = {"code": "project_id_reserved", "message": "This project_id is reserved; only an administrator can create or rename a project with it"}
 
 
 
@@ -93,6 +94,9 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
         existing = session.exec(select(Project).where(project_id_matches(P.project_id))).one_or_none()
         if existing is not None:
             raise HTTPException(status_code=409, detail=f"Project '{P.project_id}' already exists. Use PATCH to update it.")
+
+        if not auth_res.is_platform_admin and project_id_is_reserved(P.project_id):
+            raise HTTPException(status_code=403, detail=RESERVED_PROJECT_ID)
 
         # The project does not exist, so any access group already holding this
         # name belongs to something else. add_or_update below would reuse it.
@@ -375,6 +379,8 @@ def update_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depen
 
         if update_data.get("project_id") and update_data["project_id"] != project.project_id:
             if not auth_res.is_platform_admin:
+                if project_id_is_reserved(update_data["project_id"]) or project_id_is_reserved(project.project_id):
+                    raise HTTPException(status_code=403, detail=RESERVED_PROJECT_ID)
                 update_data["proposal_sync"] = False
             existing = session.exec(
                 select(Project).where(

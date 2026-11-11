@@ -157,6 +157,17 @@ def test_sync_skips_projects_an_administrator_did_not_create(client, auth_as, db
     assert group not in memberships(db_engine)
 
 
+def test_sync_skips_projects_outside_the_reserved_pattern(client, auth_as, db_engine, monkeypatch, lookup_on):
+    monkeypatch.setenv("RESERVED_PROJECT_ID_PATTERN", r"MFP\d{5}")
+    get_settings.cache_clear()
+    person(db_engine, ORCID, linked=ORCID)
+    outside, inside = project(db_engine, "MF-1"), project(db_engine, "MFP00001")
+    answers(monkeypatch, "MF-1", "MFP00001")
+    result = sync(client, auth_as).json()
+    assert result["projects_added"] == ["MFP00001"] and result["projects_not_found"] == ["MF-1"]
+    assert inside in memberships(db_engine) and outside not in memberships(db_engine)
+
+
 def test_sync_reports_unknown_projects(client, auth_as, db_engine, monkeypatch, lookup_on):
     person(db_engine, ORCID, linked=ORCID)
     answers(monkeypatch, "MF-404")

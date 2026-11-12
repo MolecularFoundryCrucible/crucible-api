@@ -97,9 +97,9 @@ def test_a_username_or_email_in_use_gets_one_answer(client, setup, taken):
     ({"username": "x"}, 422, "3-24"),
     ({"email": "not-an-address"}, 422, "@-sign"),
     ({"first_name": " "}, 422, "first and last name"),
-    ({"confirm": PASSWORD + "!"}, 422, "different"),
+    ({"confirm": PASSWORD + "!"}, 422, 'role="alert">Passwords do not match.'),
     ({"password": "too short", "confirm": "too short"}, 422, "at least"),
-    ({"password": "rosalind@example.org", "confirm": "rosalind@example.org"}, 422, "username, email address, name"),
+    ({"password": "rosalind@example.org", "confirm": "rosalind@example.org"}, 422, "name, username, email address"),
 ])
 def test_each_rule_applies_and_keeps_what_was_typed(client, setup, change, status, text):
     answer = submit(client, **change)

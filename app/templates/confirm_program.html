@@ -1,15 +1,13 @@
 {% extends "sign_in_base.html" %}
 {% block title %}Allow this program?{% endblock %}
-{% block style %}
-    p { margin: 0 0 1rem; font-size: 0.9375rem; line-height: 1.4; }
-    .where { font-family: ui-monospace, monospace; font-size: 0.875rem; overflow-wrap: anywhere; }
-    .allow { background: var(--foreground); color: var(--background); }
-{% endblock %}
 {% block content %}
     <p><strong>{{ client_name }}</strong> on this computer is asking to use your Crucible account.</p>
-    <p>Only continue if you just started it yourself, for example by typing a sign-in command. It will receive the sign-in at <span class="where">{{ where }}</span>.</p>
-    <ul>
-      <li><a class="allow" href="{{ allow }}">Allow</a></li>
-      <li><a href="{{ deny }}">Cancel</a></li>
-    </ul>
+    <dl class="facts stacked">
+      <dt>Returns to</dt><dd class="code">{{ where }}</dd>
+    </dl>
+    <p class="note">Only continue if you just started it yourself, for example by typing a sign-in command.</p>
+    <div class="actions pair">
+      <a class="button primary" href="{{ allow }}">Allow</a>
+      <a class="button" href="{{ deny }}">Cancel</a>
+    </div>
 {% endblock %}

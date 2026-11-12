@@ -3,7 +3,7 @@
 {% block content %}
     <ul>
       {% for method in methods %}
-      <li><a href="{{ method.href }}">{% if method.is_orcid %}{% include "marks/orcid_id.svg" %}{% endif %}<span>Sign in with {{ method.display_name }}</span></a></li>
+      <li><a class="button" href="{{ method.href }}">{% if method.is_orcid %}{% include "marks/orcid_id.svg" %}{% endif %}<span>Sign in with {{ method.display_name }}</span></a></li>
       {% endfor %}
     </ul>
 {% endblock %}

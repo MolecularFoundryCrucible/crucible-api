@@ -155,10 +155,19 @@ def test_a_real_browser_sets_a_password_through_a_link(servers, browser_name):
             page.on("console", lambda message: violations.append(message.text) if "Content Security Policy" in message.text or "CSP" in message.text else None)
             page.goto(f"{api_url}/oauth/password-link?token={token}")
             assert page.url == f"{api_url}/oauth/password-link"
+            assert page.inner_text("#password-rule") == "At least 15 characters" and page.is_hidden("#confirm-rule")
+            page.fill('input[name="password"]', "too short")
+            assert "met" not in page.get_attribute("#password-rule", "class").split()
             page.fill('input[name="password"]', new)
+            assert "met" in page.get_attribute("#password-rule", "class").split()
+            page.fill('input[name="confirm"]', new[:-1])
+            assert page.inner_text("#confirm-rule") == "Passwords do not match"
+            page.click('button[type="submit"]')
+            assert page.url == f"{api_url}/oauth/password-link" and page.is_visible('input[name="confirm"]')
             page.fill('input[name="confirm"]', new)
+            assert page.inner_text("#confirm-rule") == "Passwords match"
             page.check("#show-password")
-            assert page.get_attribute("#confirm", "type") == "text"
+            assert page.get_attribute("#confirm", "type") == "text" and page.get_attribute("#password", "type") == "text"
             page.click('button[type="submit"]')
             page.wait_for_selector("text=Password changed")
         finally:

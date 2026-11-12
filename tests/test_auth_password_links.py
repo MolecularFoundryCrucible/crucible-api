@@ -174,6 +174,14 @@ def test_a_reset_clears_the_lock_and_ends_sessions_codes_and_device_approvals(cl
     assert attempt_password(people, ada.id, NEW, None)
 
 
+def test_the_form_states_the_rule_and_carries_the_live_checks(client, auth_as):
+    as_admin_key(auth_as)
+    page, _ = open_link(client, issue(client).json()["url"])
+    assert '<p class="rule" id="password-rule" data-min="15" aria-live="polite">At least 15 characters</p>' in page.text
+    assert 'id="confirm-rule" aria-live="polite" hidden></p>' in page.text and "Confirm password" in page.text
+    assert "setCustomValidity" in page.text and "easy to remember" not in page.text
+
+
 def test_a_new_link_replaces_the_old_one(client, auth_as):
     as_admin_key(auth_as)
     old = issue(client).json()["url"]
@@ -234,7 +242,7 @@ def test_different_or_weak_passwords_keep_the_link(client, people, auth_as):
     as_admin_key(auth_as)
     _, form_token = open_link(client, issue(client).json()["url"])
     differ = submit(client, form_token, confirm=NEW + "!")
-    assert differ.status_code == 422 and "different" in differ.text
+    assert differ.status_code == 422 and 'role="alert">Passwords do not match.' in differ.text
     weak = submit(client, form_token, password="ada.lovelace@example.org"[:11])
     assert weak.status_code == 422
     personal = submit(client, form_token, password="ada@example.org")

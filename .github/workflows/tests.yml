@@ -357,9 +357,9 @@ jobs:
           curl -fsS --cacert "$CA" "$SITE/hub/health" | grep -q '"sessions":"ok"'
           login=$(curl -sS --cacert "$CA" -o /dev/null -w '%{redirect_url}' "$SITE/hub/auth/login")
           case "$login" in "$SITE/api/v3/oauth/authorize?"*) ;; *) echo "Hub login went to $login"; exit 1;; esac
-          test "$(curl -sS --cacert "$CA" -o "$RUNNER_TEMP/chooser.html" -w '%{http_code}' "$login")" = 200
-          grep -q 'provider=orcid' "$RUNNER_TEMP/chooser.html"
-          grep -q 'provider=password' "$RUNNER_TEMP/chooser.html"
+          test "$(curl -sS --cacert "$CA" -L -c "$RUNNER_TEMP/jar" -b "$RUNNER_TEMP/jar" -o "$RUNNER_TEMP/sign-in.html" -w '%{http_code}' "$login")" = 200
+          grep -q 'autocomplete="current-password"' "$RUNNER_TEMP/sign-in.html"
+          grep -q 'provider=orcid' "$RUNNER_TEMP/sign-in.html"
           orcid=$(curl -sS --cacert "$CA" -o /dev/null -w '%{redirect_url}' "$login&provider=orcid")
           case "$orcid" in "https://sandbox.orcid.org/oauth/authorize?"*) ;; *) echo "API login went to ${orcid%%\?*}"; exit 1;; esac
           python3 -c "import sys; from urllib.parse import parse_qs, urlparse; q = parse_qs(urlparse(sys.argv[1]).query); assert q['redirect_uri'] == [sys.argv[2] + '/api/v3/oauth/callback/orcid'], q['redirect_uri']" "$orcid" "$SITE"

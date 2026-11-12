@@ -17,7 +17,7 @@ The tag is the user's. Your part ends with a merged release pull request and a l
 1. Set `version` in `pyproject.toml` and run `uv lock`.
 2. In `CHANGELOG.md`, turn `Unreleased` into `## [X.Y.Z] - YYYY-MM-DD` and start an empty `Unreleased`. One short line per change, breaking changes first, entries that a later one superseded merged into it.
 3. For a release with operator steps, write or update `docs/upgrading/<from>-to-<to>.md`: what to set before, the cut-over in order, the cleanup after.
-4. Update the Hub release pinned in `deploy/compose/README.md` and `.github/workflows/tests.yml` if a newer one is required.
+4. Update the Hub release pinned in `deploy/compose/docs/hub.md` and `.github/workflows/tests.yml` if a newer one is required.
 5. Run every check (skill `run-checks`), including both bundle jobs.
 6. Open the pull request. Its body is a `## Summary` of one-line bullets.
 

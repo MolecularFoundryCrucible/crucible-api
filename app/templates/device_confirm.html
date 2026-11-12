@@ -1,19 +1,18 @@
 {% extends "sign_in_base.html" %}
 {% block title %}Approve this device?{% endblock %}
-{% block style %}
-    form { display: flex; flex-direction: column; gap: 0.5rem; }
-    p { margin: 0 0 1rem; font-size: 0.9375rem; line-height: 1.4; }
-    .code { font-family: ui-monospace, monospace; letter-spacing: 0.1em; }
-    button { min-height: 2.25rem; border: 1px solid var(--action-border); border-radius: 0.625rem; background: var(--action-surface); color: var(--foreground); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; }
-    button.allow { background: var(--foreground); color: var(--background); }
-    button:focus-visible { outline: 3px solid color-mix(in oklch, var(--ring), transparent 35%); outline-offset: 2px; }
-{% endblock %}
 {% block content %}
     <p>Sign in <strong>{{ client_name }}</strong> on another device as <strong>{{ person }}</strong>?</p>
-    <p>It asked at {{ asked_at }}{% if requested_from %} from the network address <span class="code">{{ requested_from }}</span>{% endif %} with the code <span class="code">{{ user_code }}</span>. Only approve if you started it yourself, just now. If someone sent you this code, deny.</p>
+    <dl class="facts">
+      <dt>Code</dt><dd class="code">{{ user_code }}</dd>
+      <dt>Requested</dt><dd>{{ asked_at }}</dd>
+      {% if requested_from %}<dt>From</dt><dd class="code">{{ requested_from }}</dd>{% endif %}
+    </dl>
+    <p class="note">Only approve if you started it yourself, just now. If someone sent you this code, deny.</p>
     <form method="post" action="approve">
       <input type="hidden" name="decision_token" value="{{ token }}">
-      <button class="allow" type="submit" name="decision" value="approve">Approve</button>
-      <button type="submit" name="decision" value="deny">Deny</button>
+      <div class="actions pair">
+        <button class="button primary" type="submit" name="decision" value="approve">Approve</button>
+        <button class="button" type="submit" name="decision" value="deny">Deny</button>
+      </div>
     </form>
 {% endblock %}

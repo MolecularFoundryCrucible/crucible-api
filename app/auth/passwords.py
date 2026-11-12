@@ -129,15 +129,15 @@ def check_new_password(password: str, *, context: Iterable[str | None]) -> Passw
     normalized = unicodedata.normalize("NFC", password)
     shortest = get_settings().auth.password_min_length
     if len(normalized) < shortest:
-        return PasswordProblem("too_short", f"Use at least {shortest} characters. A few unrelated words make a strong password that is easy to remember.")
+        return PasswordProblem("too_short", f"Use at least {shortest} characters.")
     if len(normalized) > MAX_LENGTH:
         return PasswordProblem("too_long", f"Use at most {MAX_LENGTH} characters.")
     folded = normalized.casefold()
     if folded in blocked_passwords():
-        return PasswordProblem("common", "This password is on a list of commonly used passwords, so it is easy to guess. Choose another one.")
+        return PasswordProblem("common", "This password is commonly used and easy to guess. Choose a different one.")
     personal = {_folded(value) for value in context if value} | {SERVICE_NAME}
     if folded in personal:
-        return PasswordProblem("personal", "Don't use your username, email address, name or the name of this service as your password.")
+        return PasswordProblem("personal", "Do not use your name, username, email address or the name of this service.")
     return None
 
 

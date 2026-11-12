@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- The Docker Compose installation guide is a quick start; HTTPS, sign-in methods, the Hub, file storage, operations and troubleshooting each have a page in `deploy/compose/docs/`.
+- The pages that set a password (password link, registration) check the length rule and the confirmation as the user types, and their hints and messages are shorter.
+- With passwords enabled, the sign-in page is the username and password form, with the listed identity providers offered below it; the separate method-choice page remains only for several providers without passwords. `provider=` still goes straight to one method.
+- The sign-in pages served by the API (method choice, password sign-in, password link, registration, program and device approval, result pages) share one layout: a narrower card, larger controls, boxed error messages, request details as a list, and a full-width layout on phones.
+
 ## [4.0.0a1] - 2026-11-11
 
 Pre-release of 4.0.0 for testing; the final release keeps this list.

@@ -1,6 +1,6 @@
 # Authentication configuration
 
-This page is for operators. Client-side usage is covered in [Authentication](sign_in.md). The Docker Compose bundle configures most of these settings; see its [installation guide](../deploy/compose/README.md#signing-in).
+This page is for operators. Client-side usage is covered in [Authentication](sign_in.md). The Docker Compose bundle configures most of these settings; see [Sign-in methods](../deploy/compose/docs/sign_in.md) in its installation guide.
 
 ## Settings overview
 

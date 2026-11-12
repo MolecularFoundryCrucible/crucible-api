@@ -1,25 +1,13 @@
 {% extends "sign_in_base.html" %}
 {% block title %}Sign in a device{% endblock %}
-{% block style %}
-    form { display: flex; flex-direction: column; gap: 1rem; }
-    label { display: flex; flex-direction: column; gap: 0.375rem; font-size: 0.875rem; font-weight: 600; }
-    input[type="text"] {
-      min-height: 2.5rem; padding: 0.25rem 0.625rem; border: 1px solid oklch(0.62 0.018 240); border-radius: 0.625rem;
-      background: var(--action-surface); color: var(--foreground); font: inherit; font-size: 1.25rem; letter-spacing: 0.15em; text-transform: uppercase;
-    }
-    input:focus-visible, button:focus-visible { outline: 3px solid color-mix(in oklch, var(--ring), transparent 35%); outline-offset: 2px; }
-    button { min-height: 2.25rem; border: 1px solid var(--action-border); border-radius: 0.625rem; background: var(--foreground); color: var(--background); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; }
-    p { margin: 0; font-size: 0.875rem; line-height: 1.4; }
-    .problem { color: #bb0914; }
-    @media (prefers-color-scheme: dark) { input[type="text"] { border-color: oklch(0.52 0.02 240); } .problem { color: #ff8a88; } }
-{% endblock %}
 {% block content %}
+    <p>Enter the code your program shows, for example in a terminal.</p>
     <form method="post">
-      {% if problem %}<p class="problem" role="alert">{{ problem }}</p>{% endif %}
-      <p>Enter the code your program shows, for example in a terminal. Only do this for a program you started yourself, just now. Never enter a code someone sent you.</p>
+      {% if problem %}<p class="alert" role="alert">{{ problem }}</p>{% endif %}
       <label>Code
-        <input type="text" name="user_code" value="{{ user_code }}" autocomplete="off" autocapitalize="characters" spellcheck="false" required maxlength="32" placeholder="XXXX-XXXX" autofocus>
+        <input class="code-entry" type="text" name="user_code" value="{{ user_code }}" autocomplete="off" autocapitalize="characters" spellcheck="false" required maxlength="32" placeholder="XXXX-XXXX" autofocus>
       </label>
-      <button type="submit">Continue</button>
+      <button class="button primary" type="submit">Continue</button>
     </form>
+    <p class="note">Only do this for a program you started yourself, just now. Never enter a code someone sent you.</p>
 {% endblock %}

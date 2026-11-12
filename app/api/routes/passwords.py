@@ -290,7 +290,7 @@ async def password_link_submitted(
         return _done(request, "Link not valid", NOT_VALID, 400)
     await run_in_threadpool(give_back, engine, digest)
     if password != confirm:
-        return _form(request, link, browser["n"], problem="The two passwords are different. Type the same password in both.", status=422)
+        return _form(request, link, browser["n"], problem="Passwords do not match.", status=422)
     problem = check_new_password(password, context=link.context)
     if problem is not None:
         return _form(request, link, browser["n"], problem=problem.message, status=422)
@@ -411,7 +411,7 @@ async def registration_submitted(
     if not allowed:
         return _register_page(request, nonce, values, problem="Too many requests from your network. Wait a minute and try again.", status=429)
     if password != confirm:
-        return _register_page(request, nonce, values, problem="The two passwords are different. Type the same password in both.", status=422)
+        return _register_page(request, nonce, values, problem="Passwords do not match.", status=422)
     try:
         fields = await run_in_threadpool(lambda: _checked(engine, username=username, first_name=first_name, last_name=last_name, email=email))
     except RegistrationRefused as refused:

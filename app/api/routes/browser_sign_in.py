@@ -164,8 +164,6 @@ def _chooser(request: Request, listed: list[OidcProvider], hub_request: dict[str
     """Starts nothing: each link returns to this route with a provider, which then starts that sign-in."""
     known = {name: value for name, value in hub_request.items() if value is not None}
     methods = [{"display_name": provider.display_name, "is_orcid": provider.is_orcid, "href": f"?{urlencode({**known, 'provider': provider.key})}"} for provider in listed]
-    if get_settings().auth.password_enabled:
-        methods.append({"display_name": "a password", "is_orcid": False, "href": f"?{urlencode({**known, 'provider': LOCAL_PROVIDER})}"})
     nonce = secrets.token_urlsafe(16)
     response = _templates.TemplateResponse(request, "sign_in_chooser.html", {"methods": methods, "style_nonce": nonce})
     response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -221,17 +219,18 @@ async def start_sign_in(request: Request, engine, *, path: str, response_type: s
         return _client_error(redirect_uri, state, "invalid_request")
     listed = get_settings().auth.providers
     passwords = get_settings().auth.password_enabled
-    if provider is None and len(listed) + passwords > 1:
+    if provider is None and len(listed) > 1 and not passwords:
         return _chooser(request, listed, {
             "response_type": response_type if path != "/auth/hub/login" else None,
             "client_id": client_id, "redirect_uri": redirect_uri, "state": state, "code_challenge": code_challenge,
             "code_challenge_method": code_challenge_method, "max_age": max_age, "required_user": required_user,
         })
-    if provider == LOCAL_PROVIDER or (provider is None and not listed):
+    if provider == LOCAL_PROVIDER or (provider is None and (passwords or not listed)):
         if not passwords:
             raise HTTPException(status_code=400, detail="Invalid sign-in request")
         provider_state, browser_secret, _ = await run_in_threadpool(create_login, engine, config, client_id, redirect_uri, state, code_challenge, provider_key=LOCAL_PROVIDER, required_user=required_user)
-        response = _browser_headers(RedirectResponse(f"{config.public_api_url}/oauth/password?{urlencode({'state': provider_state})}", status_code=302))
+        form = {"state": provider_state} | ({"max_age": max_age} if max_age is not None else {})
+        response = _browser_headers(RedirectResponse(f"{config.public_api_url}/oauth/password?{urlencode(form)}", status_code=302))
         response.set_cookie(login_cookie_name(provider_state), browser_secret, max_age=600, path=_password_path(), secure=config.public_api_url.startswith("https://"), httponly=True, samesite="lax")
         return response
     chosen = listed[0] if provider is None else get_settings().auth.provider(provider)
@@ -465,14 +464,28 @@ def _origin(uri: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
-def _password_page(request: Request, *, state: str = "", username: str = "", problem: str | None = None, expired: bool = False, callback_uri: str | None = None, status: int = 200) -> Response:
+def _other_methods(transaction: LoginTransaction, max_age: int | None) -> list[dict]:
+    """The providers a person can choose in place of the password, each restarting this sign-in at
+    the authorization endpoint with the client's own request."""
+    request = {
+        "response_type": "code", "client_id": transaction.client_id, "redirect_uri": transaction.callback_uri, "state": transaction.hub_state,
+        "code_challenge": transaction.code_challenge, "code_challenge_method": "S256",
+    } | ({"max_age": max_age} if max_age is not None else {}) | ({"required_user": transaction.required_user} if transaction.required_user else {})
+    return [
+        {"display_name": provider.display_name, "is_orcid": provider.is_orcid, "href": f"{public_api_url()}/oauth/authorize?{urlencode({**request, 'provider': provider.key})}"}
+        for provider in get_settings().auth.providers
+    ]
+
+
+def _password_page(request: Request, *, state: str = "", username: str = "", problem: str | None = None, expired: bool = False, transaction: LoginTransaction | None = None, max_age: int | None = None, status: int = 200) -> Response:
     """The form posts to itself, then the answer redirects to the client, so form-action names both."""
     from app.auth.password_registration import registration_open
 
     style_nonce, script_nonce = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
+    callback_uri = transaction.callback_uri if transaction is not None else None
     response = _templates.TemplateResponse(request, "password_form.html", {
         "style_nonce": style_nonce, "script_nonce": script_nonce, "state": state, "username": username, "problem": problem, "expired": expired,
-        "can_register": registration_open(),
+        "can_register": registration_open(), "max_age": max_age, "methods": _other_methods(transaction, max_age) if transaction is not None else [],
     }, status_code=status)
     targets = "'self'" + (f" {_origin(callback_uri)}" if callback_uri else "")
     response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{style_nonce}'; script-src 'nonce-{script_nonce}'; form-action {targets}; base-uri 'none'; frame-ancestors 'none'"
@@ -503,14 +516,14 @@ def _require_passwords() -> None:
 
 
 @password_router.get("/password", response_class=HTMLResponse, responses={400: {"description": "Unknown, used or expired sign-in", "content": {"text/html": {}}}, 404: {"description": "Passwords are off"}})
-def password_form(request: Request, state: str = Query(min_length=1, max_length=128), engine=Depends(get_engine)) -> Response:
-    """The password form for a sign-in started at /oauth/authorize with provider=password."""
+def password_form(request: Request, state: str = Query(min_length=1, max_length=128), max_age: int | None = Query(default=None, ge=0, le=86400), engine=Depends(get_engine)) -> Response:
+    """The password form for a sign-in started at /oauth/authorize, with the listed providers offered below it."""
     _require_passwords()
     try:
         transaction = peek_login(engine, state, request.cookies.get(login_cookie_name(state)))
     except InvalidLoginRequest:
         return _password_page(request, expired=True, status=400)
-    return _password_page(request, state=state, callback_uri=transaction.callback_uri)
+    return _password_page(request, state=state, transaction=transaction, max_age=max_age)
 
 
 @password_router.post("/password", response_class=RedirectResponse, status_code=303, responses={
@@ -522,6 +535,7 @@ async def password_sign_in(
     username: str = Form(max_length=255),
     password: str = Form(max_length=1024),
     state: str = Form(min_length=1, max_length=128),
+    max_age: int | None = Form(default=None, ge=0, le=86400),
     engine=Depends(get_engine),
 ) -> Response:
     """Check a password within the attempt limits. Every failure, for whatever reason, gives the same
@@ -542,7 +556,7 @@ async def password_sign_in(
     except HashBusy:
         valid = False
     if not valid:
-        return _password_page(request, state=state, username=username.strip(), problem=SIGN_IN_FAILED, callback_uri=transaction.callback_uri, status=401)
+        return _password_page(request, state=state, username=username.strip(), problem=SIGN_IN_FAILED, transaction=transaction, max_age=max_age, status=401)
     _, unique_id, pending = holder
     if pending:
         await run_in_threadpool(consume_login, engine, state, browser_secret)

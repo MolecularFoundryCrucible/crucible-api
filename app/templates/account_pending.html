@@ -1,8 +1,6 @@
 {% extends "sign_in_base.html" %}
 {% block title %}Account waiting for approval{% endblock %}
-{% block style %}    p { margin: 0 0 0.75rem; line-height: 1.5rem; }
-{% endblock %}
 {% block content %}
     <p>You signed in, and your Crucible account has been created. An administrator needs to approve it before you can use it.</p>
-    <p>You can close this page. Sign in again once your account has been approved.</p>
+    <p class="note">You can close this page. Sign in again once your account has been approved.</p>
 {% endblock %}

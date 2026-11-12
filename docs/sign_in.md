@@ -15,7 +15,7 @@ Both credentials are sent in the same header: `Authorization: Bearer <access tok
 
 Crucible is a standard OAuth 2.0 authorization server with PKCE. `GET <API>/.well-known/oauth-authorization-server` lists the endpoints below.
 
-1. Redirect the user's browser to `GET /oauth/authorize` with `response_type=code`, the `client_id`, the exact `redirect_uri`, a random `state` (16 to 256 characters), and `code_challenge` with `code_challenge_method=S256`. Optional parameters: `provider` to skip the provider selection page, `max_age=0` to force reauthentication, `required_user` to require a specific account.
+1. Redirect the user's browser to `GET /oauth/authorize` with `response_type=code`, the `client_id`, the exact `redirect_uri`, a random `state` (16 to 256 characters), and `code_challenge` with `code_challenge_method=S256`. Optional parameters: `provider` to go straight to one sign-in method (without it the user sees the password form with the identity providers below it, or a list of providers when passwords are disabled), `max_age=0` to force reauthentication, `required_user` to require a specific account.
 2. The user signs in. For a public client, sign-in ends on a consent page where the user confirms the client application.
 3. The browser returns to the `redirect_uri` with `code`, `state` and `iss`, or with `error`. Verify that `state` matches the value sent and that `iss` is the API's address.
 4. Exchange the code at `POST /oauth/token`, form-encoded: `grant_type=authorization_code`, `code`, `redirect_uri`, `code_verifier`. A confidential client authenticates with HTTP Basic; a public client sends `client_id`.

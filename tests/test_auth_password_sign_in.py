@@ -110,10 +110,33 @@ def test_a_password_only_deployment_goes_straight_to_the_form(client):
     assert start(client)
 
 
-def test_chooser_offers_password_beside_providers(client, monkeypatch, orcid_provider_settings):
+def test_the_password_form_comes_first_and_offers_the_providers_below(client, db_engine, orcid_provider_settings):
     orcid_provider_settings()
-    page = client.get("/oauth/authorize", params={"response_type": "code", "client_id": "crucible-hub", "redirect_uri": CALLBACK, "state": "client-state-123456789", "code_challenge": CHALLENGE, "code_challenge_method": "S256"})
-    assert page.status_code == 200 and "Sign in with a password" in page.text and "provider=password" in page.text
+    person(db_engine)
+    started = client.get("/oauth/authorize", params={"response_type": "code", "client_id": "crucible-hub", "redirect_uri": CALLBACK, "state": "client-state-123456789", "code_challenge": CHALLENGE, "code_challenge_method": "S256", "max_age": 0}, follow_redirects=False)
+    assert started.status_code == 302, started.text
+    location = urlparse(started.headers["location"])
+    assert location.path == "/oauth/password" and parse_qs(location.query)["max_age"] == ["0"]
+    state = parse_qs(location.query)["state"][0]
+    for page in (client.get("/oauth/password", params={"state": state, "max_age": 0}), client.post("/oauth/password", data={"username": "ada.lovelace", "password": "not the right one, but long", "state": state, "max_age": 0})):
+        assert 'autocomplete="current-password"' in page.text and "Sign in with ORCID" in page.text and 'name="max_age" value="0"' in page.text
+        link = urlparse(re.search(r'href="([^"]+provider=orcid[^"]*)"', page.text).group(1).replace("&amp;", "&"))
+        assert f"{link.scheme}://{link.netloc}{link.path}" == f"{API_URL}/oauth/authorize"
+        assert {name: values[0] for name, values in parse_qs(link.query).items()} == {
+            "response_type": "code", "client_id": "crucible-hub", "redirect_uri": CALLBACK, "state": "client-state-123456789",
+            "code_challenge": CHALLENGE, "code_challenge_method": "S256", "max_age": "0", "provider": "orcid",
+        }
+    assert "Sign in with ORCID" not in client.get("/oauth/password", params={"state": "unknown"}).text
+
+
+def test_a_named_provider_still_skips_the_password_form(client, orcid_provider_settings, monkeypatch):
+    orcid_provider_settings()
+
+    async def unreachable(*args, **kwargs):
+        raise routes.ProviderUnavailable
+    monkeypatch.setattr(routes, "new_code_verifier", unreachable)
+    named = client.get("/oauth/authorize", params={"response_type": "code", "client_id": "crucible-hub", "redirect_uri": CALLBACK, "state": "client-state-123456789", "code_challenge": CHALLENGE, "code_challenge_method": "S256", "provider": "orcid"}, follow_redirects=False)
+    assert named.status_code == 302 and "/oauth/password" not in named.headers["location"]
 
 
 @pytest.mark.parametrize("case", ["unknown user", "wrong password", "delayed", "locked", "disabled", "no password set", "service account"])

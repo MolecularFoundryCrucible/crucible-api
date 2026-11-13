@@ -2,12 +2,14 @@ import hashlib
 from typing import List, Literal, Optional
 from pydantic import MISSING, ConfigDict, Field, computed_field, field_validator, model_validator
 from sqlmodel import SQLModel
-from app.general_utils import refuse_instrument_name, refuse_public_change
+from app.general_utils import fold_owner_ref, refuse_instrument_name, refuse_public_change
 from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.fields import NonEmptyStr
 from app.models.links import LinkedResource
 from app.models.instrument import InstrumentReferenceRead
+from app.models.access import AccessPermission
 from app.models.projects import ProjectReferenceRead, ProjectRelation
+from app.models.resource import RECORD_ROLE_DESCRIPTION, ActiveDeletionRequestRead
 from app.models.resource import ResourceCapabilities
 from app.models.timestamps import UtcDatetime
 from app.models.users import UserPublicRead
@@ -56,11 +58,17 @@ class DatasetCreate(SQLModel):
     owner_orcid: Optional[str] = Field(
         default=None,
         deprecated=True,
-        description="Deprecated canonical owner identity (human ORCID or service-account MFID). Use owner.",
+        description="Deprecated canonical owner identity (human ORCID or service-account MFID). Use owner_ref.",
+    )
+    owner_ref: Optional[str] = Field(
+        default=None,
+        exclude=True,
+        description="Owner: unique_id, linked ORCID, username or email. Defaults to the authenticated identity.",
     )
     owner: Optional[str] = Field(
         default=None,
-        description="Owner reference: ORCID, service-account MFID, username, or email. Defaults to the authenticated identity.",
+        deprecated=True,
+        description="Deprecated: use owner_ref.",
     )
 
     @field_validator(
@@ -70,6 +78,7 @@ class DatasetCreate(SQLModel):
         "instrument_mfid",
         "owner_orcid",
         "owner",
+        "owner_ref",
         mode="before",
         check_fields=False,
     )
@@ -100,10 +109,7 @@ class DatasetCreate(SQLModel):
 
     @model_validator(mode="after")
     def validate_owner_reference(self):
-        values = self.model_dump()
-        if values.get("owner") is not None and values.get("owner_orcid") is not None:
-            raise ValueError("Provide owner or owner_orcid, not both")
-        return self
+        return fold_owner_ref(self)
 
 class DatasetUpdate(SQLModel):
     '''Partial update schema for Dataset. Only provided fields are modified.
@@ -186,10 +192,10 @@ class DatasetRead(SQLModel):
     public: bool
     dataset_name: Optional[str] = None
    # file_to_upload: Optional[str] = None
-    owner_orcid: Optional[str] = None
-    project_id: Optional[str] = None
-    instrument_name: Optional[str] = None
-    instrument_id: Optional[str] = None  # instrument's validated slug, resolved server-side
+    owner_orcid: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use owner.unique_id.")
+    project_id: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use project.project_id.")
+    instrument_name: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use instrument.instrument_name.")
+    instrument_id: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use instrument.instrument_id.")
     instrument: Optional[InstrumentReferenceRead] = None
     project: Optional[ProjectReferenceRead] = None
     timestamp: Optional[str] = None
@@ -334,11 +340,12 @@ class DatasetResponse(DatasetRead):
     creation_time: Optional[UtcDatetime] = None
     modification_time: Optional[UtcDatetime] = None
     scientific_metadata: Optional[dict] = None
-    deletion_request: Optional[dict] = None
+    deletion_request: Optional[ActiveDeletionRequestRead] = None
     links: Optional[List[LinkedResource]] = None
     owner: Optional[UserPublicRead] = None
     capabilities: Optional[ResourceCapabilities] = None
     project_relation: Optional[ProjectRelation] = None
+    role: Optional[AccessPermission] = Field(default=None, description=RECORD_ROLE_DESCRIPTION)
 
 
 class KeywordRead(SQLModel):

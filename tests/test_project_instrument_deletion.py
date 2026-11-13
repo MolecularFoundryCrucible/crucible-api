@@ -825,7 +825,7 @@ class TestMetadataAndCapability:
         body = client.get(f"/instruments/{mfid}").json()
         assert body["capabilities"]["can_delete"] is True
 
-    def test_dataset_capability_stays_false(self, client, db_engine, auth_as):
+    def test_dataset_owner_can_delete_directly(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "ds-cap-owner")
             session.add(Resource(mfid="ds-cap-1", resource_type="dataset"))
@@ -841,7 +841,8 @@ class TestMetadataAndCapability:
 
         auth_as("ds-cap-owner", groups=[("ds-cap-owner", _group_id_session(db_engine, "ds-cap-owner"), Role.OWNER)])
         body = client.get("/datasets/ds-cap-1").json()
-        assert body["capabilities"]["can_delete"] is False
+        assert body["capabilities"]["can_delete"] is True
+        assert client.delete("/resources/ds-cap-1", params={"force": True}).status_code == 200
 
 
 class TestDeleteCapabilityCheck:
@@ -856,14 +857,12 @@ class TestDeleteCapabilityCheck:
         assert client.get(f"/resources/{mfid}").json()["capabilities"]["can_delete"] is False
 
     def test_callers_who_cannot_delete_trigger_no_blocker_queries(self, client, db_engine, auth_as, monkeypatch):
-        import app.api.routes.projects as projects_routes
-        import app.services.resource_details as resource_details
+        import app.utils.deletion_utils as deletion_utils
         calls = []
         def counting(*args):
             calls.append(args)
             return False
-        monkeypatch.setattr(projects_routes, "has_deletion_blockers", counting)
-        monkeypatch.setattr(resource_details, "has_deletion_blockers", counting)
+        monkeypatch.setattr(deletion_utils, "has_deletion_blockers", counting)
         project_mfid = _project(db_engine, "proj_cap_lazy", "cap-owner-lazy")
         _add_member(db_engine, project_mfid, "cap-viewer-lazy", Role.VIEWER)
         group_id = _group_id_session(db_engine, project_mfid)

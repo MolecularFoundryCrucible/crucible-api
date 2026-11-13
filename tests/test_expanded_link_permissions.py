@@ -230,12 +230,12 @@ def test_singleton_and_generic_routes_filter_expanded_links(
     sample = samples_routes.read_sample(
         "sample-root",
         principal,
-        SampleDetailQuery(include_links=True),
+        SampleDetailQuery(include_links=True, include_datasets=True),
     )
     generic_sample = resources_routes.get_resource(
         principal,
         "sample-root",
-        ResourceDetailQuery(include_links=True),
+        ResourceDetailQuery(include_links=True, include_datasets=True),
     )
     generic_links = resources_routes.get_resource_links(
         "dataset-root",

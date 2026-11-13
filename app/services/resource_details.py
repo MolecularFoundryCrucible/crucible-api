@@ -19,7 +19,7 @@ from app.tables import (
     User,
     UserAccessGroupLink,
 )
-from app.models.datasets import DatasetRead, DatasetResponse
+from app.models.datasets import DatasetResponse
 from app.models.instrument import InstrumentResponse
 from app.models.projects import ProjectWithLead
 from app.models.samples import SampleResponse
@@ -28,11 +28,11 @@ from app.utils.auth_utils import (
     entry_capabilities,
     fetch_acl_rows,
     require_permission,
-    resource_capabilities,
 )
-from app.services.instrument_members import load_member_grants as load_instrument_member_grants
+from app.services.capabilities import record_capabilities
+from app.services.related_records import dataset_responses
+from app.services.instrument_members import load_members as load_instrument_members
 from app.services.resource_access import may_view_members, record_role
-from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Permission, Principal, Role, effective_role
@@ -155,22 +155,14 @@ def load_dataset_detail(
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": _metadata(session, resource_id, options.include_metadata),
         "deletion_request": _deletion_request_payload(deletion_request),
+        "role": role.db_value if (role := record_role(principal, acl_rows)) is not None else None,
         "links": fetch_readable_links(
             session,
             principal,
             "dataset",
             dataset,
         ) if options.include_links else None,
-        "capabilities": resource_capabilities(
-            session,
-            principal,
-            resource_id,
-            status_permission=None,
-            acl_rows=acl_rows,
-            request_deletion_with=Permission.CREATE,
-            deletion_requested=deletion_request is not None,
-            holds_files=True,
-        ),
+        "capabilities": record_capabilities(session, principal, "dataset", resource_id, acl_rows=acl_rows, deletion_requested=deletion_request is not None),
     })
 
 
@@ -211,40 +203,19 @@ def load_sample_detail(
         if options.include_datasets or options.include_links
         else []
     )
-    instrument_references = (
-        resolve_instrument_mfids_to_references(
-            [dataset.instrument_mfid for dataset in readable_datasets],
-            session,
-        )
-        if options.include_datasets
-        else {}
-    )
-    project_references = resolve_project_mfids_to_references(
-        ([dataset.project_mfid for dataset in readable_datasets] if options.include_datasets else [])
-        + [sample.project_mfid],
-        session,
-    )
-    dataset_owners = owners_of(session, readable_datasets) if options.include_datasets else {}
+    project_references = resolve_project_mfids_to_references([sample.project_mfid], session)
     return SampleResponse.model_validate({
         **sample.model_dump(),
         **owner_fields(sample, owners_of(session, [sample]), options.include_owner),
         "project_id": project_references[sample.project_mfid].project_id if sample.project_mfid in project_references else None,
         "project": project_references.get(sample.project_mfid),
         "public": is_public(session, sample.unique_id),
-        "datasets": [
-            DatasetRead.model_validate({
-                **dataset.model_dump(),
-                **owner_fields(dataset, dataset_owners),
-                **dataset_instrument_fields(dataset, instrument_references.get(dataset.instrument_mfid)),
-                "project_id": project_references[dataset.project_mfid].project_id if dataset.project_mfid in project_references else None,
-                "project": project_references.get(dataset.project_mfid),
-            })
-            for dataset in readable_datasets
-        ] if options.include_datasets else None,
+        "datasets": dataset_responses(session, principal, readable_datasets) if options.include_datasets else None,
         "creation_time": resource.creation_time if resource else None,
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": _metadata(session, resource_id, options.include_metadata),
         "deletion_request": _deletion_request_payload(deletion_request),
+        "role": role.db_value if (role := record_role(principal, acl_rows)) is not None else None,
         "links": fetch_readable_links(
             session,
             principal,
@@ -252,15 +223,7 @@ def load_sample_detail(
             sample,
             associated_entities=readable_datasets,
         ) if options.include_links else None,
-        "capabilities": resource_capabilities(
-            session,
-            principal,
-            resource_id,
-            status_permission=None,
-            acl_rows=acl_rows,
-            request_deletion_with=Permission.CREATE,
-            deletion_requested=deletion_request is not None,
-        ),
+        "capabilities": record_capabilities(session, principal, "sample", resource_id, acl_rows=acl_rows, deletion_requested=deletion_request is not None),
     })
 
 
@@ -297,16 +260,9 @@ def load_instrument_detail(
         "creation_time": resource.creation_time if resource else None,
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": _metadata(session, resource_id, options.include_metadata),
-        "capabilities": resource_capabilities(
-            session,
-            principal,
-            resource_id,
-            acl_rows=acl_rows,
-            can_delete=lambda: not has_deletion_blockers(session, "instrument", resource_id),
-            deletion_requested=deletion_request is not None,
-        ),
+        "capabilities": record_capabilities(session, principal, "instrument", resource_id, acl_rows=acl_rows, deletion_requested=deletion_request is not None),
         "deletion_request": _deletion_request_payload(deletion_request),
-        "members": load_instrument_member_grants(session, principal, resource_id)
+        "members": load_instrument_members(session, principal, resource_id)
         if options.include_members and may_view_members(session, principal, resource_id) else None,
         "role": role.db_value if (role := record_role(principal, acl_rows)) is not None else None,
     })
@@ -344,15 +300,7 @@ def load_project_detail(
             resource_id,
             options.include_metadata and is_member,
         ),
-        capabilities=resource_capabilities(
-            session,
-            principal,
-            resource_id,
-            manage_access_floor=Role.EDITOR,
-            status_permission=Permission.EDIT,
-            can_delete=lambda: not has_deletion_blockers(session, "project", resource_id),
-            deletion_requested=deletion_request is not None,
-        ),
+        capabilities=record_capabilities(session, principal, "project", resource_id, deletion_requested=deletion_request is not None),
         deletion_request=_deletion_request_payload(deletion_request),
         role=role.db_value if (role := principal.role_in(project.unique_id)) is not None else None,
     )

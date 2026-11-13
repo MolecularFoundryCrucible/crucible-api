@@ -44,13 +44,13 @@ def _setup(client, db_engine, auth_as):
 
 
 def _member_roles(body):
-    return {(m["principal_id"], m["principal_type"], m["permission"]) for m in body["members"]}
+    return {(m["unique_id"], m["role"]) for m in body["members"]}
 
 
 EXPECTED_MEMBERS = {
-    (OWNER, "user", "owner"),
-    (ADMIN, "user", "admin"),
-    (EDITOR, "user", "editor"),
+    (OWNER, "owner"),
+    (ADMIN, "admin"),
+    (EDITOR, "editor"),
 }
 
 
@@ -67,14 +67,14 @@ class TestIncludeMembers:
         mfid = _setup(client, db_engine, auth_as)
         _as(auth_as, db_engine, EDITOR)
         members = client.get(f"/instruments/{mfid}", params={"include_members": True}).json()["members"]
-        assert [m["permission"] for m in members] == ["owner", "admin", "editor"]
+        assert [m["role"] for m in members] == ["owner", "admin", "editor"]
 
     def test_operator_group_and_bound_service_accounts_are_not_members(self, client, db_engine, auth_as):
         mfid = _setup(client, db_engine, auth_as)
         _as(auth_as, db_engine, OWNER)
         members = client.get(f"/instruments/{mfid}", params={"include_members": True}).json()["members"]
-        assert all(m["principal_type"] == "user" for m in members)
-        assert SA not in {m["principal_id"] for m in members}
+        assert not any(m["is_service_account"] for m in members)
+        assert SA not in {m["unique_id"] for m in members}
 
     def test_caller_without_a_role_gets_no_members(self, client, db_engine, auth_as):
         mfid = _setup(client, db_engine, auth_as)

@@ -3,9 +3,10 @@ from typing import List, Optional
 from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 
-from app.general_utils import blank_to_none
-from app.models.access import AccessGrantRead, AccessPermission
-from app.models.resource import ResourceCapabilities
+from app.general_utils import blank_to_none, fold_owner_ref
+from app.models.access import AccessPermission
+from app.models.access_groups import AccessGroupMemberRead
+from app.models.resource import ActiveDeletionRequestRead, ResourceCapabilities
 from app.models.timestamps import UtcDatetime
 from app.models.users import UserPublicRead
 
@@ -22,14 +23,20 @@ class InstrumentCreate(SQLModel):
 
     instrument_id: str
     instrument_name: str
+    owner_ref: Optional[str] = Field(
+        default=None,
+        exclude=True,
+        description="Owner: unique_id, linked ORCID, username or email. Defaults to the authenticated identity.",
+    )
     owner: Optional[str] = Field(
         default=None,
-        description="Owner reference: ORCID, service-account MFID, username, or email. Defaults to the authenticated identity.",
+        deprecated=True,
+        description="Deprecated: use owner_ref.",
     )
     owner_orcid: Optional[str] = Field(
         default=None,
         deprecated=True,
-        description="Deprecated canonical owner identity (human ORCID or service-account MFID). Use owner.",
+        description="Deprecated canonical owner identity (human ORCID or service-account MFID). Use owner_ref.",
     )
     location: str
     other_id: Optional[str] = None
@@ -45,16 +52,14 @@ class InstrumentCreate(SQLModel):
         from app.utils.instrument_utils import validate_instrument_id_format
         return validate_instrument_id_format(v)
 
-    @field_validator("owner", "owner_orcid", mode="before")
+    @field_validator("owner", "owner_orcid", "owner_ref", mode="before")
     @classmethod
     def blank_owner_to_none(cls, v):
         return blank_to_none(v)
 
     @model_validator(mode="after")
     def validate_owner_reference(self):
-        if self.owner is not None and self.owner_orcid is not None:
-            raise ValueError("Provide owner or owner_orcid, not both")
-        return self
+        return fold_owner_ref(self)
 
 
 class InstrumentUpdate(SQLModel):
@@ -84,7 +89,7 @@ class InstrumentRead(SQLModel):
     unique_id: str
     instrument_id: Optional[str] = None
     instrument_name: str
-    owner_orcid: Optional[str] = Field(default=None, description="Canonical owner identity: human ORCID or service-account MFID. Null when the instrument has no owner.")
+    owner_orcid: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use owner.unique_id.")
     owner: Optional[UserPublicRead] = None
     location: str
     other_id: Optional[str] = None
@@ -110,15 +115,15 @@ class InstrumentResponse(InstrumentRead):
     scientific_metadata: Optional[dict] = None
     status: Optional[str] = None
     capabilities: Optional[ResourceCapabilities] = None
-    deletion_request: Optional[dict] = None
-    members: Optional[List[AccessGrantRead]] = Field(
+    deletion_request: Optional[ActiveDeletionRequestRead] = None
+    members: Optional[List[AccessGroupMemberRead]] = Field(
         default=None,
-        description="People and projects holding a role on the instrument record. Null unless requested and visible to the caller.",
+        description="The instrument's members, highest role first. Null unless requested and visible to the caller.",
     )
     role: Optional[AccessPermission] = Field(
         default=None,
         description=(
-            "The caller's effective role on the instrument record. Null when the caller holds none; "
-            "bound service accounts are operators, not record roles."
+            "The caller's membership role on the instrument. Null when the caller holds none; "
+            "bound service accounts are operators, not members."
         ),
     )

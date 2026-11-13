@@ -47,7 +47,7 @@ def test_get_resource_resolves_instrument_id_slug(client, db_engine, auth_as):
     instrument_mfid, slug = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
-    resp = client.get("/resources/samp_1")
+    resp = client.get("/resources/samp_1", params={"include_datasets": True})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["capabilities"] == {
@@ -56,7 +56,7 @@ def test_get_resource_resolves_instrument_id_slug(client, db_engine, auth_as):
         "can_view_access": True,
         "can_change_status": False,
         "can_transfer": True,
-        "can_delete": False,
+        "can_delete": True,
         "can_delete_files": False,
         "can_request_deletion": True,
         "max_grant_role": "admin",
@@ -76,7 +76,7 @@ def test_get_sample_resolves_instrument_id_slug(client, db_engine, auth_as):
     instrument_mfid, slug = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
-    resp = client.get("/samples/samp_1")
+    resp = client.get("/samples/samp_1", params={"include_datasets": True})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["capabilities"] == {
@@ -85,7 +85,7 @@ def test_get_sample_resolves_instrument_id_slug(client, db_engine, auth_as):
         "can_view_access": True,
         "can_change_status": False,
         "can_transfer": True,
-        "can_delete": False,
+        "can_delete": True,
         "can_delete_files": False,
         "can_request_deletion": True,
         "max_grant_role": "admin",

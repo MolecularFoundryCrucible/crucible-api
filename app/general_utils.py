@@ -19,6 +19,18 @@ def refuse_instrument_name(data):
     return data
 
 
+def fold_owner_ref(model):
+    """Create models accept owner_ref and the deprecated owner and owner_orcid; at most one may be given.
+    owner_ref is carried in owner, which the routes resolve."""
+    values = {name: getattr(model, name, None) for name in ("owner_ref", "owner", "owner_orcid")}
+    given = [name for name, value in values.items() if value is not None]
+    if len(given) > 1 and len({values[name] for name in given}) > 1:
+        raise ValueError(f"Provide only owner_ref, not {' and '.join(given)}")
+    if model.owner_ref is not None:
+        model.owner = model.owner_ref
+    return model
+
+
 def is_orcid(val):
     return re.fullmatch("[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}", val) is not None
 

@@ -1,7 +1,7 @@
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import func
+from sqlalchemy import false, func, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -9,14 +9,14 @@ from app.api.path_params import ProjectRef, UserRef
 from app.tables import (
     AccessGroup, Project, Resource, ScientificMetadataBinary, User, UserAccessGroupLink,
 )
+from app.services.capabilities import record_capabilities
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
 from app.utils.auth_utils import (
     caller_row,
     access_selector_filter, authorize_user,
     load_principal, project_member_filter, project_owner_affiliation_filter,
-    require_grant, require_permission, resolve_access_principal,
-    resource_capabilities)
+    require_grant, require_permission, resolve_access_principal)
 from app.utils.permissions import (
     AccessGroupType, Permission, PlatformRole, Principal, Role, has_global_permission)
 from app.utils.search_utils import (
@@ -26,9 +26,8 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import record_resource, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
-from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.sql_utils import assert_not_pending_deletion
-from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
+from app.utils.user_utils import person_by_reference, resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
     project_fields, project_leads,
     assert_project_id_available, project_id_is_reserved, project_id_matches, sql_add_user_to_project,
@@ -64,14 +63,7 @@ def _validate_service_account_project_role(user: User, role: Role) -> None:
 
 
 def _project_capabilities(session, principal, project):
-    return resource_capabilities(
-        session,
-        principal,
-        project.unique_id,
-        manage_access_floor=Role.EDITOR,
-        status_permission=Permission.EDIT,
-        can_delete=lambda: not has_deletion_blockers(session, "project", project.unique_id),
-    )
+    return record_capabilities(session, principal, "project", project.unique_id)
 
 
 @router.post("/projects", response_model=ProjectRead)
@@ -86,7 +78,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
     """
     named_lead_fields = [P.project_lead, P.project_lead_orcid, P.project_lead_email, P.project_lead_username]
     if not any(named_lead_fields):
-        raise HTTPException(status_code=400, detail="One of project_lead, project_lead_orcid, project_lead_email, or project_lead_username must be provided.")
+        raise HTTPException(status_code=400, detail="owner_ref must be provided.")
     if P.project_lead and any(named_lead_fields[1:]):
         raise HTTPException(status_code=400, detail="Provide project_lead or one of project_lead_orcid/_email/_username, not both.")
 
@@ -216,6 +208,9 @@ def list_projects(
                 base = base.where(project_member_filter(member_id, Project, roles=roles))
         if params.affiliation:
             base = base.where(project_owner_affiliation_filter(auth_res, Project))
+        if params.owner_ref:
+            owners = [person.unique_id for ref in params.owner_ref if (person := person_by_reference(session, ref)) is not None]
+            base = base.where(or_(*(project_member_filter(owner, Project, roles=(Role.OWNER,)) for owner in owners)) if owners else false())
         base = base.where(deletion_filter_for(Project))
         if params.active_since is not None:
             base = base.where(Project.last_activity_at >= params.active_since)
@@ -277,7 +272,7 @@ def _resolve_member_selectors(session, caller: Principal, user_refs) -> list[str
     return resolved
 
 
-@router.get("/projects/search", response_model=PaginatedResponse[ProjectRead])
+@router.get("/projects/search", response_model=PaginatedResponse[ProjectWithLead])
 def search_projects(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     params: Annotated[SearchQuery, Query()],
@@ -286,11 +281,8 @@ def search_projects(
     Search projects by title or project_id across all projects, not just ones the
     caller is a member of. This is how a user discovers a project to request to
     join via POST /projects/{project_ref}/join_requests. Returns results ordered by
-    match quality. Maximum 50 results.
-
-    Note: ProjectRead has no lead/scientific_metadata fields, so this is safe to
-    open regardless of membership. See GET /projects/{proj_id} for the fields
-    that stay member-only.
+    match quality. Maximum 50 results. Items have the GET /projects shape without
+    scientific metadata and members, which stay member-only.
     '''
     normalized_q, tokens = normalize_search_query(params.q)
     with Session(get_engine()) as session:
@@ -312,7 +304,16 @@ def search_projects(
 
         results = session.exec(query).all()
         leads = project_leads(session, results)
-        return PaginatedResponse(limit=params.limit, items=[ProjectRead(**project_fields(project, leads.get(project.lead_user_id))) for project in results])
+        items = []
+        for project in results:
+            lead = leads.get(project.lead_user_id)
+            role = auth_res.role_in(project.unique_id)
+            items.append(ProjectWithLead(
+                **project_fields(project, lead),
+                lead=UserPublicRead.model_validate(lead) if lead else None,
+                role=role.db_value if role is not None else None,
+            ))
+        return PaginatedResponse(limit=params.limit, items=items)
 
 
 @router.get("/projects/{project_ref}", response_model=ProjectWithLead)

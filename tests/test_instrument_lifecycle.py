@@ -36,7 +36,7 @@ INSTRUMENT_UPDATE_ROUTE_REQUIRED = (
 
 
 class TestCreateInstrument:
-    def test_creates_operator_group_without_a_grant_on_the_record(self, client, db_engine, auth_as):
+    def test_creates_operator_group_and_members_group(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             owner = _user(session, "admin-1")
             owner_group_id = session.exec(select(AccessGroup.id).where(
@@ -69,9 +69,15 @@ class TestCreateInstrument:
             assert ag.group_type == AccessGroupType.INSTRUMENT.value
             assert session.exec(select(ResourceACL).where(
                 ResourceACL.accessgroup_id == ag.id, ResourceACL.mfid == mfid)).one_or_none() is None
-            owner_acl = session.exec(select(ResourceACL).where(
-                ResourceACL.accessgroup_id == owner_group_id, ResourceACL.mfid == mfid)).one()
-            assert owner_acl.permission == Role.OWNER.db_value
+            assert session.exec(select(ResourceACL).where(
+                ResourceACL.accessgroup_id == owner_group_id, ResourceACL.mfid == mfid)).one_or_none() is None
+            members = session.exec(select(AccessGroup).where(AccessGroup.group_name == f"{mfid}:members")).one()
+            assert members.group_type == AccessGroupType.INSTRUMENT_MEMBER.value
+            record_grants = session.exec(select(ResourceACL.accessgroup_id, ResourceACL.permission).where(ResourceACL.mfid == mfid)).all()
+            assert record_grants == [(members.id, Role.OWNER.db_value)]
+            links = session.exec(select(UserAccessGroupLink.user_id, UserAccessGroupLink.role).where(
+                UserAccessGroupLink.accessgroup_id == members.id)).all()
+            assert links == [(owner.id, Role.OWNER.db_value)]
 
     def test_rejects_duplicate_instrument_id(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
@@ -241,7 +247,7 @@ class TestDatasetInstrumentResolution:
             _user(session, "0000-0004")
 
         auth_as("0000-0004", groups=[])
-        resp = client.post("/datasets", json={"dataset_name": "d1", "instrument_name": "XRD-1"})
+        resp = client.post("/datasets", json={"dataset_name": "d1", "instrument_id": "xrd-1"})
         assert resp.status_code == 200, resp.text
 
         with Session(db_engine) as session:
@@ -251,30 +257,15 @@ class TestDatasetInstrumentResolution:
                 ResourceACL.accessgroup_id == ag.id, ResourceACL.mfid == ds.unique_id)).one()
             assert acl.permission == Role.CONTRIBUTOR.db_value
 
-    def test_unregistered_instrument_name_is_rejected(self, client, db_engine, auth_as):
+    def test_unregistered_instrument_id_is_rejected(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "0000-0005")
 
         auth_as("0000-0005", groups=[])
-        resp = client.post("/datasets", json={"dataset_name": "d2", "instrument_name": "no-such-instrument"})
-        assert resp.status_code == 400
+        resp = client.post("/datasets", json={"dataset_name": "d2", "instrument_id": "no-such-instrument"})
+        assert resp.status_code == 404
 
-    def test_instrument_name_match_is_case_insensitive(self, client, db_engine, auth_as):
-        with Session(db_engine) as session:
-            session.add(Instrument(unique_id="inst-ci-1", instrument_id="ci-1",
-                                   instrument_name="hip_microscope", owner="lab", location="b30"))
-            session.add(AccessGroup(
-                group_name="inst-ci-1",
-                group_type=AccessGroupType.INSTRUMENT.value,
-            ))
-            session.commit()
-            _user(session, "0000-0006")
-
-        auth_as("0000-0006", groups=[])
-        resp = client.post("/datasets", json={"dataset_name": "d3", "instrument_name": "HiP_Microscope"})
-        assert resp.status_code == 200, resp.text
-
-    def test_update_dataset_rejects_instrument_name_reassignment(self, client, db_engine, auth_as):
+    def test_update_dataset_refuses_instrument_name(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             owner = _user(session, "0000-0007")
             owner_group_id = session.exec(select(AccessGroup.id).where(
@@ -286,8 +277,7 @@ class TestDatasetInstrumentResolution:
         dsid = resp.json()["unique_id"]
 
         resp = client.patch(f"/datasets/{dsid}", json={"instrument_name": "no-such-instrument"})
-        assert resp.status_code == 409
-        assert resp.json()["detail"] == INSTRUMENT_UPDATE_ROUTE_REQUIRED
+        assert resp.status_code == 422
 
 
 class TestInstrumentIdOnDataset:
@@ -402,18 +392,6 @@ class TestInstrumentIdOnDataset:
         })
 
         assert resp.status_code == 404
-
-    def test_create_dataset_via_instrument_name_still_echoes_instrument_id(self, client, db_engine, auth_as):
-        """A dataset created the legacy way (free-text instrument_name) still
-        gets instrument_id resolved in the response, for clients that adopt it."""
-        self._register(client, db_engine, auth_as)
-        with Session(db_engine) as session:
-            _user(session, "0000-0012")
-
-        auth_as("0000-0012", groups=[])
-        resp = client.post("/datasets", json={"dataset_name": "d7", "instrument_name": "XRD ID 1"})
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["instrument_id"] == "xrd-id-1"
 
     def test_patch_dataset_rejects_instrument_id_reassignment(self, client, db_engine, auth_as):
         self._register(client, db_engine, auth_as)

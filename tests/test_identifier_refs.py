@@ -97,24 +97,24 @@ def test_project_grant_accepts_project_mfid(client, db_engine, auth_as):
     ids = _setup(db_engine)
     _as_owner(auth_as, ids)
 
-    resp = client.put(f"/resources/{ids['instrument']}/access/projects/{ids['other']}",
+    resp = client.put(f"/resources/ds_1/access/projects/{ids['other']}",
                       json={"permission": "editor"})
 
     assert resp.status_code == 200, resp.text
-    assert _project_grants(db_engine, ids["instrument"]) == [(ids["other"], "editor")]
+    assert (ids["other"], "editor") in _project_grants(db_engine, "ds_1")
 
 
 def test_project_grant_still_accepts_slug_case_insensitively(client, db_engine, auth_as):
     ids = _setup(db_engine)
     _as_owner(auth_as, ids)
 
-    resp = client.put(f"/resources/{ids['instrument']}/access/projects/OTHER-PROJ",
+    resp = client.put("/resources/ds_1/access/projects/OTHER-PROJ",
                       json={"permission": "viewer"})
     assert resp.status_code == 200, resp.text
 
-    resp = client.delete(f"/resources/{ids['instrument']}/access/projects/{ids['other']}")
+    resp = client.delete(f"/resources/ds_1/access/projects/{ids['other']}")
     assert resp.status_code == 200, resp.text
-    assert _project_grants(db_engine, ids["instrument"]) == []
+    assert _project_grants(db_engine, "ds_1") == [(ids["project"], "admin")]
 
 
 def test_instrument_routes_accept_slug(client, db_engine, auth_as):

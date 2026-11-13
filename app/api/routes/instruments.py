@@ -1,39 +1,42 @@
+from dataclasses import replace
 from typing import Annotated, List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import func, join, or_
+from sqlalchemy import func, join
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.api.path_params import InstrumentRef, ServiceAccountRef
+from app.api.path_params import InstrumentRef, ServiceAccountRef, UserRef
 from app.general_utils import get_utc_datetime
 from app.models.access import EntryCapabilities
 from app.models.access_groups import AccessGroupMemberRead
 from app.tables import (
     AccessGroup, Instrument, Resource, ResourceACL, ScientificMetadataBinary, User, UserAccessGroupLink)
-from app.models.instrument import InstrumentCreate, InstrumentResponse, InstrumentUpdate
+from app.models.instrument import InstrumentCreate, InstrumentMembershipRole, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
     InstrumentAffiliation, InstrumentDetailQuery, InstrumentListQuery,
     InstrumentSearchQuery, InstrumentStatus)
 from app.models.users import UserPublicRead
-from app.services.resource_access import load_member_grants, may_view_members, record_role, with_grant_capabilities
+from app.services.instrument_members import (
+    create_members_group, ensure_members_group, load_member_grants, load_members, member_filter, member_link,
+    require_members_group)
+from app.services.resource_access import may_view_members, record_role
 from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
 from app.utils.auth_utils import (
-    authorize_user, fetch_acl_rows, maintainer_affiliation_filter, owner_affiliation_filter,
-    require_permission, resource_capabilities)
+    authorize_user, fetch_acl_rows, forget_cached_keys, require_grant, require_permission, resource_capabilities)
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
 from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.instrument_utils import assert_instrument_id_available, get_instrument_or_404
-from app.utils.permissions import AccessGroupType, Permission, Principal, Role, has_permission
+from app.utils.permissions import AccessGroupType, GroupMembership, Permission, Principal, Role, has_permission
 from app.utils.search_utils import (
     apply_trigram_search,
     configure_trigram_search,
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import record_resource, add_or_update, create_standard_acls, touch_resource_modification_time, deletion_filter_for
-from app.utils.user_utils import owned_by, resolve_create_owner, resolve_service_account_reference
+from app.utils.sql_utils import record_resource, add_or_update, assert_not_pending_deletion, touch_resource_modification_time, deletion_filter_for
+from app.utils.user_utils import owned_by, resolve_create_owner, resolve_service_account_reference, resolve_user_by_identifier
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
@@ -69,12 +72,16 @@ INSTRUMENT_FILTER_FIELDS = {
 VALID_INSTRUMENT_STATUSES = tuple(status.value for status in InstrumentStatus)
 
 
+_AFFILIATION_ROLES = {
+    InstrumentAffiliation.OWNER: (Role.OWNER,),
+    InstrumentAffiliation.MAINTAINER: (Role.EDITOR, Role.ADMIN),
+    InstrumentAffiliation.MEMBER: (Role.VIEWER, Role.EDITOR, Role.ADMIN, Role.OWNER),
+}
+
+
 def _instrument_affiliation_filter(principal, affiliation):
-    predicates = {
-        InstrumentAffiliation.OWNER: owner_affiliation_filter,
-        InstrumentAffiliation.MAINTAINER: maintainer_affiliation_filter,
-    }
-    return or_(*(predicates[value](principal, Instrument) for value in dict.fromkeys(affiliation)))
+    roles = {role for value in affiliation for role in _AFFILIATION_ROLES[value]}
+    return member_filter(principal.user_id, roles)
 
 
 def _instrument_capabilities(session, principal, instrument):
@@ -123,7 +130,7 @@ def _instrument_roles(session, principal, instrument_mfids) -> dict:
 def _instrument_members(session, principal, instrument):
     if not may_view_members(session, principal, instrument.unique_id):
         return None
-    return with_grant_capabilities(session, principal, instrument.unique_id, load_member_grants(session, instrument.unique_id))
+    return load_member_grants(session, principal, instrument.unique_id)
 
 
 def _instrument_owners(session, instruments) -> dict[int, User]:
@@ -356,21 +363,21 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
                       AccessGroup.group_name == db_instrument.unique_id,
                       group_name=db_instrument.unique_id,
                       group_type=AccessGroupType.INSTRUMENT.value)
-        create_standard_acls(
-            session,
-            db_instrument.unique_id,
-            owner_id=owner_user.unique_id,
-            requestor_id=user_unique_id,
-        )
+        members = create_members_group(session, db_instrument.unique_id, owner_user)
 
         session.commit()
+        forget_cached_keys(session, owner_user.id)
+        caller = auth_res
+        if auth_res.is_user(owner_user):
+            caller = replace(auth_res, groups=auth_res.groups + (GroupMembership(
+                id=members.id, group_name=members.group_name, role=Role.OWNER, group_type=members.group_type),))
         session.refresh(db_instrument)
         background_tasks.add_task(write_record, db_instrument.unique_id, instrument_record(db_instrument, ri, owner_user), user_unique_id, "create")
         return _instrument_response(
             db_instrument,
             ri,
             owner=owner_user,
-            capabilities=_instrument_capabilities(session, auth_res, db_instrument),
+            capabilities=_instrument_capabilities(session, caller, db_instrument),
         )
 
 
@@ -573,3 +580,127 @@ def remove_instrument_service_account(
         session.commit()
 
         return _get_instrument_operators(instrument_mfid, session, auth_res)
+
+
+def _member_user(session, user_ref: str) -> User:
+    user = resolve_user_by_identifier(session, user_ref)
+    if user.is_service_account:
+        raise HTTPException(status_code=422, detail="Service accounts are not instrument members; bind them with POST /instruments/{instrument_ref}/service_accounts/{service_account_ref}")
+    return user
+
+
+@router.get("/instruments/{instrument_ref}/users", response_model=PaginatedResponse[AccessGroupMemberRead])
+def list_instrument_users(
+    instrument_ref: InstrumentRef,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    '''
+    List the instrument's members, highest role first. Members read every dataset assigned to the instrument.
+    Readable by members and platform administrators.
+    '''
+    with Session(get_engine()) as session:
+        instrument_mfid = get_instrument_or_404(session, instrument_ref).unique_id
+        if not may_view_members(session, auth_res, instrument_mfid):
+            raise HTTPException(status_code=403, detail="Access denied")
+        members = load_members(session, auth_res, instrument_mfid)
+        return PaginatedResponse(total=len(members), limit=limit, offset=offset, items=members[offset:offset + limit])
+
+
+@router.post("/instruments/{instrument_ref}/users/{user_ref}", response_model=List[AccessGroupMemberRead])
+def add_instrument_user(
+    instrument_ref: InstrumentRef,
+    user_ref: UserRef,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    role: InstrumentMembershipRole = InstrumentMembershipRole.VIEWER,
+):
+    '''
+    Add a person to the instrument at `role` (viewer, editor or admin). Every member reads the instrument's datasets.
+    Requires admin on the instrument, granting at most your own role. The owner changes only through
+    POST /resources/{mfid}/transfer_ownership. Service accounts are bound instead of added.
+    '''
+    target = Role.from_db(role.value)
+    with Session(get_engine()) as session:
+        instrument_mfid = get_instrument_or_404(session, instrument_ref).unique_id
+        require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
+        assert_not_pending_deletion(session, instrument_mfid)
+        user = _member_user(session, user_ref)
+        group = ensure_members_group(session, instrument_mfid)
+        link = member_link(session, group, user)
+        if link is not None:
+            current = Role.from_db(link.role)
+            if current == target:
+                return load_members(session, auth_res, instrument_mfid)
+            raise HTTPException(
+                status_code=409,
+                detail=(f"User '{user.unique_id}' is already a member of this instrument with role '{current.db_value}'. "
+                        f"Use PATCH /instruments/{instrument_mfid}/users/{user.unique_id}?role={target.db_value} to change it."))
+        require_grant(session, auth_res, instrument_mfid, target, floor=Role.ADMIN)
+        session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=group.id, role=target.db_value))
+        touch_resource_modification_time(session, instrument_mfid)
+        session.commit()
+        forget_cached_keys(session, user.id)
+        return load_members(session, auth_res, instrument_mfid)
+
+
+@router.patch("/instruments/{instrument_ref}/users/{user_ref}", response_model=List[AccessGroupMemberRead])
+def set_instrument_user_role(
+    instrument_ref: InstrumentRef,
+    user_ref: UserRef,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    role: InstrumentMembershipRole,
+):
+    '''
+    Change a member's role. Requires admin on the instrument; both the new and the current role must be at most
+    your own. The owner's role changes only through POST /resources/{mfid}/transfer_ownership.
+    '''
+    target = Role.from_db(role.value)
+    with Session(get_engine()) as session:
+        instrument_mfid = get_instrument_or_404(session, instrument_ref).unique_id
+        require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
+        user = _member_user(session, user_ref)
+        link = member_link(session, require_members_group(session, instrument_mfid), user)
+        if link is None:
+            raise HTTPException(status_code=404, detail=f"{user.unique_id} is not a member of this instrument")
+        current = Role.from_db(link.role)
+        if current is Role.OWNER:
+            raise HTTPException(status_code=409, detail="Cannot change the owner's role this way; use POST /resources/{mfid}/transfer_ownership")
+        require_grant(session, auth_res, instrument_mfid, target, current=current, floor=Role.ADMIN)
+        link.role = target.db_value
+        session.add(link)
+        touch_resource_modification_time(session, instrument_mfid)
+        session.commit()
+        forget_cached_keys(session, user.id)
+        return load_members(session, auth_res, instrument_mfid)
+
+
+@router.delete("/instruments/{instrument_ref}/users/{user_ref}", response_model=List[AccessGroupMemberRead])
+def remove_instrument_user(
+    instrument_ref: InstrumentRef,
+    user_ref: UserRef,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+):
+    '''
+    Remove a member. Members may leave on their own; otherwise this requires admin on the instrument and a member
+    whose role is at most your own. The owner cannot be removed; transfer ownership first.
+    '''
+    with Session(get_engine()) as session:
+        instrument_mfid = get_instrument_or_404(session, instrument_ref).unique_id
+        user = resolve_user_by_identifier(session, user_ref)
+        is_self = auth_res.is_user(user)
+        if not is_self:
+            require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
+        link = member_link(session, require_members_group(session, instrument_mfid), user)
+        if link is None:
+            raise HTTPException(status_code=404, detail=f"{user.unique_id} is not a member of this instrument")
+        current = Role.from_db(link.role)
+        if current is Role.OWNER:
+            raise HTTPException(status_code=409, detail="The instrument owner cannot be removed; use POST /resources/{mfid}/transfer_ownership first")
+        if not is_self:
+            require_grant(session, auth_res, instrument_mfid, current, current=current, floor=Role.ADMIN)
+        session.delete(link)
+        touch_resource_modification_time(session, instrument_mfid)
+        session.commit()
+        forget_cached_keys(session, user.id)
+        return load_members(session, auth_res, instrument_mfid)

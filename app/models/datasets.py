@@ -2,7 +2,7 @@ import hashlib
 from typing import List, Literal, Optional
 from pydantic import MISSING, ConfigDict, Field, computed_field, field_validator, model_validator
 from sqlmodel import SQLModel
-from app.general_utils import refuse_public_change
+from app.general_utils import refuse_instrument_name, refuse_public_change
 from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.fields import NonEmptyStr
 from app.models.links import LinkedResource
@@ -39,14 +39,6 @@ class DatasetCreate(SQLModel):
         default=None,
         description="Canonical project MFID. May be combined with a matching project_id.",
     )
-    instrument_name: Optional[str] = Field(
-        default=None,
-        deprecated=True,
-        description=(
-            "Deprecated. Display-name lookup used only when instrument_id and instrument_mfid are omitted; "
-            "returns 409 when the name matches more than one instrument. Use instrument_id or instrument_mfid."
-        ),
-    )
     instrument_id: Optional[str] = Field(
         default=None,
         description="Registered instrument slug. May be combined with a matching instrument_mfid.",
@@ -76,7 +68,6 @@ class DatasetCreate(SQLModel):
         "project_mfid",
         "instrument_id",
         "instrument_mfid",
-        "instrument_name",
         "owner_orcid",
         "owner",
         mode="before",
@@ -102,6 +93,11 @@ class DatasetCreate(SQLModel):
             raise ValueError("project_mfid must be a valid mfid: 26-character lowercase Crockford's Base32")
         return v
 
+    @model_validator(mode="before")
+    @classmethod
+    def instrument_name_is_not_an_identifier(cls, data):
+        return refuse_instrument_name(data)
+
     @model_validator(mode="after")
     def validate_owner_reference(self):
         values = self.model_dump()
@@ -118,11 +114,6 @@ class DatasetUpdate(SQLModel):
     model_config = ConfigDict(extra="forbid")
 
     dataset_name: Optional[str] = None
-    instrument_name: Optional[str] = Field(
-        default=None,
-        deprecated=True,
-        description="Deprecated for dataset updates. Only the current value is accepted. Use PUT /datasets/{dataset_mfid}/instrument.",
-    )
     instrument_id: Optional[str] = Field(
         default=None,
         deprecated=True,
@@ -137,7 +128,7 @@ class DatasetUpdate(SQLModel):
     @model_validator(mode="before")
     @classmethod
     def public_is_not_editable(cls, data):
-        return refuse_public_change(data)
+        return refuse_instrument_name(refuse_public_change(data))
 
 
 class DatasetInstrumentAssign(SQLModel):

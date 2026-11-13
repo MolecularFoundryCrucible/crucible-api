@@ -40,7 +40,7 @@ def _setup(db_engine, *, assigned=True):
 def test_dataset_update_instrument_fields_are_deprecated():
     properties = DatasetUpdate.model_json_schema()["properties"]
     assert properties["instrument_id"]["deprecated"] is True
-    assert properties["instrument_name"]["deprecated"] is True
+    assert "instrument_name" not in properties
 
 
 def test_patch_accepts_current_instrument_values(db_engine):
@@ -52,7 +52,6 @@ def test_patch_accepts_current_instrument_values(db_engine):
         updated_dataset=DatasetUpdate(
             dataset_name="after",
             instrument_id="xrd-1",
-            instrument_name="xrd 1",
         ),
         background_tasks=BackgroundTasks(),
     )
@@ -67,9 +66,7 @@ def test_patch_rejects_changed_or_cleared_instrument(db_engine):
 
     for payload in (
         {"instrument_id": "xrd-2"},
-        {"instrument_name": "XRD 2"},
         {"instrument_id": None},
-        {"instrument_name": None},
     ):
         with pytest.raises(HTTPException) as exc:
             update_dataset(
@@ -87,7 +84,7 @@ def test_patch_accepts_null_instrument_values_for_unassigned_dataset(db_engine):
     response = update_dataset(
         auth_res=Principal(user_id="admin", platform_role=PlatformRole.ADMIN),
         dsid="dataset-mfid",
-        updated_dataset=DatasetUpdate(instrument_id=None, instrument_name=None),
+        updated_dataset=DatasetUpdate(instrument_id=None),
         background_tasks=BackgroundTasks(),
     )
 

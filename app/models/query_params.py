@@ -46,23 +46,37 @@ class ResourceAffiliation(str, Enum):
     MEMBER = "member"
 
 
+class DatasetAffiliation(str, Enum):
+    OWNER = "owner"
+    MEMBER = "member"
+    INSTRUMENT = "instrument"
+
+
 RESOURCE_AFFILIATION_DESCRIPTION = (
     AFFILIATION_DESCRIPTION
     + " owner matches records the caller owns. member matches records the caller reaches through"
-    " one of their own grants (personal, project, instrument, or group), so records visible only"
-    " because they are public are excluded; combine with visibility to narrow further. For platform"
-    " administrators, member counts only their own grants, not their global access."
+    " one of their own grants (personal, project, explicit share or group, and the operator group of an"
+    " instrument a service account is bound to), so records visible only because they are public are"
+    " excluded; combine with visibility to narrow further. For platform administrators, member counts"
+    " only their own grants, not their global access."
+)
+DATASET_AFFILIATION_DESCRIPTION = (
+    RESOURCE_AFFILIATION_DESCRIPTION
+    + " instrument matches datasets the caller reads as a member of the instrument they are assigned to;"
+    " member does not include them."
 )
 
 
 class InstrumentAffiliation(str, Enum):
     OWNER = "owner"
     MAINTAINER = "maintainer"
+    MEMBER = "member"
 
 
 INSTRUMENT_AFFILIATION_DESCRIPTION = (
     AFFILIATION_DESCRIPTION
-    + " maintainer matches instruments where the caller holds editor or admin on the instrument record."
+    + " owner matches instruments the caller owns, maintainer those where the caller is an editor or admin member,"
+    " and member those where the caller is a member at any role."
 )
 MEMBER_REF_DESCRIPTION = (
     "Projects where every listed user is a member. Accepts an ORCID, service-account MFID, "
@@ -404,6 +418,19 @@ class ResourceCollectionQuery(StrictQueryModel):
 
 
 class DatasetListQuery(ResourceCollectionQuery):
+    @model_validator(mode="before")
+    @classmethod
+    def instrument_name_is_not_a_filter(cls, data):
+        if isinstance(data, dict) and data.get("instrument_name") not in (None, ""):
+            raise ValueError("instrument_name is not a filter; use instrument_mfid or instrument_id")
+        return data
+
+    affiliation: Optional[list[DatasetAffiliation]] = Field(
+        default=None,
+        min_length=1,
+        max_length=5,
+        description=DATASET_AFFILIATION_DESCRIPTION,
+    )
     sample_mfid: Optional[str] = Field(
         default=None,
         description="Filter datasets linked to this canonical sample MFID.",
@@ -427,10 +454,6 @@ class DatasetListQuery(ResourceCollectionQuery):
     owner_orcid: Annotated[Optional[str], Field(
         deprecated=True,
         description="Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
-    )] = None
-    instrument_name: Annotated[Optional[str], Field(
-        deprecated=True,
-        description="Deprecated display-name filter. Matches the registered instrument's current name. Use instrument_mfid.",
     )] = None
     timestamp: Optional[str] = None
     size: Optional[int] = None
@@ -579,6 +602,12 @@ class ResourceFacetQuery(StrictQueryModel):
 
 
 class DatasetFacetQuery(ResourceFacetQuery):
+    affiliation: Optional[list[DatasetAffiliation]] = Field(
+        default=None,
+        min_length=1,
+        max_length=5,
+        description=DATASET_AFFILIATION_DESCRIPTION,
+    )
     field: DatasetFacetField = Field(description="Dataset field to group into facet buckets.")
     sample_mfid: Optional[str] = None
     instrument_mfid: Optional[str] = Field(default=None, description="Instrument MFID. May be combined with a matching instrument_id.")
@@ -1002,6 +1031,15 @@ class ResourceSearchQuery(SearchQuery):
         if self.project_scope is not None and self.project_id is None and self.project_mfid is None:
             raise ValueError("project_scope requires project_id or project_mfid")
         return self
+
+
+class DatasetSearchQuery(ResourceSearchQuery):
+    affiliation: Optional[list[DatasetAffiliation]] = Field(
+        default=None,
+        min_length=1,
+        max_length=5,
+        description=DATASET_AFFILIATION_DESCRIPTION,
+    )
 
 
 class InstrumentSearchQuery(SearchQuery):

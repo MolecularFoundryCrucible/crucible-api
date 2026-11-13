@@ -47,7 +47,7 @@ Approval deletes the record and writes the audit row in one transaction. For a p
 
 Projects and instruments are previewed first. Without `confirm=true` the route returns a preview and deletes nothing; with `confirm=true` it locks the row, repeats the emptiness check and deletes. A project or instrument that is not empty returns 409 with the blocking counts, with or without `confirm`.
 
-The preview and the result of a confirmed deletion use `DeletionPreviewRead`: `resource_id`, `resource_mfid`, `resource_type`, `deleted`, `blocking`, `memberships_removed` (project group members), `service_accounts_unbound` (instrument operator group members), `join_requests_removed`, and `removed_grants`, a list of `{resource_mfid, resource_type, permission}` for grants that the deleted access group holds on other records.
+The preview and the result of a confirmed deletion use `DeletionPreviewRead`: `resource_id`, `resource_mfid`, `resource_type`, `deleted`, `blocking`, `memberships_removed` (project or instrument members), `service_accounts_unbound` (instrument operator group members), `join_requests_removed`, and `removed_grants`, a list of `{resource_mfid, resource_type, permission}` for grants that the deleted access group holds on other records.
 
 ## Records pending deletion
 

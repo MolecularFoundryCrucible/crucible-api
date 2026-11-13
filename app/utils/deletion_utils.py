@@ -1,6 +1,7 @@
 from sqlalchemy import delete, exists, func, or_
 from sqlmodel import Session, select
 
+from app.services.instrument_members import members_group as instrument_members_group
 from app.tables import (
     AccessGroup, AccessGroupJoinRequest, AssociatedFile, Dataset,
     DatasetKeywordLink, DatasetLink, DatasetSampleLink, DeletionRequest,
@@ -92,6 +93,11 @@ def _instrument_deletion_summary(session: Session, instrument_mfid: str) -> dict
             grant for grant in _deleted_group_grants(session, group)
             if grant["resource_mfid"] != instrument_mfid
         ]
+    members = instrument_members_group(session, instrument.unique_id)
+    if members is not None:
+        summary["memberships_removed"] = session.exec(
+            select(func.count(UserAccessGroupLink.user_id)).where(UserAccessGroupLink.accessgroup_id == members.id)
+        ).one()
     return summary
 
 
@@ -259,14 +265,16 @@ def _hard_delete_instrument(instrument_unique_id: str, session: Session, resourc
         )
     ).one_or_none()
 
-    if group is not None:
+    for instrument_group in (group, instrument_members_group(session, instrument.unique_id)):
+        if instrument_group is None:
+            continue
         session.execute(delete(ResourceACL).where(
-            ResourceACL.accessgroup_id == group.id
+            ResourceACL.accessgroup_id == instrument_group.id
         ))
         session.execute(delete(UserAccessGroupLink).where(
-            UserAccessGroupLink.accessgroup_id == group.id
+            UserAccessGroupLink.accessgroup_id == instrument_group.id
         ))
-        session.execute(delete(AccessGroup).where(AccessGroup.id == group.id))
+        session.execute(delete(AccessGroup).where(AccessGroup.id == instrument_group.id))
 
     session.execute(delete(ScientificMetadataBinary).where(
         ScientificMetadataBinary.unique_id == instrument_unique_id

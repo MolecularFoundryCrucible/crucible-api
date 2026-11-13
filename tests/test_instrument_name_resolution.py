@@ -55,61 +55,41 @@ class TestDisplayNameFollowsTheInstrument:
         body = client.get("/datasets/0legacy0000000000000000000").json()
         assert (body["instrument_name"], body["instrument_id"], body["instrument"]) == (None, None, None)
 
-    def test_patch_accepts_only_the_current_name(self, client, db_engine, auth_as):
-        mfid = _register(client, db_engine, auth_as)
+    def test_patch_refuses_a_name_and_drops_a_null(self, client, db_engine, auth_as):
+        _register(client, db_engine, auth_as)
         dsid = client.post("/datasets", json={"dataset_name": "d", "instrument_id": "xrd-1"}).json()["unique_id"]
-        _rename(client, mfid, "XRD Two")
-        assert client.patch(f"/datasets/{dsid}", json={"instrument_name": "xrd two"}).status_code == 200
-        assert client.patch(f"/datasets/{dsid}", json={"instrument_name": "XRD One"}).status_code == 409
-        assert client.patch(f"/datasets/{dsid}", json={"instrument_name": "Other"}).status_code == 409
+        resp = client.patch(f"/datasets/{dsid}", json={"instrument_name": "XRD One"})
+        assert resp.status_code == 422
+        assert "instrument_id" in resp.text
+        assert client.patch(f"/datasets/{dsid}", json={"instrument_name": None, "measurement": "m"}).status_code == 200
 
 
-class TestDeprecatedNameFilter:
-    def test_filter_matches_the_current_name(self, client, db_engine, auth_as):
-        mfid = _register(client, db_engine, auth_as)
-        client.post("/datasets", json={"dataset_name": "d", "instrument_id": "xrd-1"})
-        _rename(client, mfid, "XRD Two")
-        assert _total(client, instrument_name="XRD Two") == 1
-        assert _total(client, instrument_name="XRD One") == 0
-
-    def test_filter_matches_only_registered_instruments(self, client, db_engine, auth_as):
+class TestNameIsNotAnInput:
+    def test_create_refuses_a_name(self, client, db_engine, auth_as):
         _register(client, db_engine, auth_as)
-        with Session(db_engine) as session:
-            session.add(Dataset(unique_id="0legacy0000000000000000000", dataset_name="old"))
-            session.add(Resource(mfid="0legacy0000000000000000000", resource_type="dataset"))
-            session.commit()
-        assert _total(client, instrument_name="XRD One") == 0
+        resp = client.post("/datasets", json={"dataset_name": "d", "instrument_name": "XRD One"})
+        assert resp.status_code == 422
+        assert "instrument_mfid" in resp.text
+        resp = client.post("/datasets", json={"dataset_name": "d", "instrument_id": "xrd-1", "instrument_name": "XRD One"})
+        assert resp.status_code == 422
 
-    def test_filter_is_deprecated_in_openapi(self, client):
-        parameters = client.get("/openapi.json").json()["paths"]["/datasets"]["get"]["parameters"]
-        assert next(p for p in parameters if p["name"] == "instrument_name")["deprecated"] is True
-
-
-class TestDeprecatedNameFallbackOnCreate:
-    def test_unique_name_still_resolves(self, client, db_engine, auth_as):
+    def test_create_drops_a_null_name(self, client, db_engine, auth_as):
         _register(client, db_engine, auth_as)
-        resp = client.post("/datasets", json={"dataset_name": "d", "instrument_name": "xrd one"})
+        resp = client.post("/datasets", json={"dataset_name": "d", "instrument_id": "xrd-1", "instrument_name": None})
         assert resp.status_code == 200, resp.text
-        assert resp.json()["instrument_id"] == "xrd-1"
         assert resp.json()["instrument_name"] == "XRD One"
 
-    def test_ambiguous_name_is_a_conflict_not_a_server_error(self, client, db_engine, auth_as):
-        _register(client, db_engine, auth_as, "xrd-1", "Shared")
-        _register(client, db_engine, auth_as, "xrd-2", "shared")
-        resp = client.post("/datasets", json={"dataset_name": "d", "instrument_name": "Shared"})
-        assert resp.status_code == 409
-        assert "instrument_id" in resp.json()["detail"]
+    def test_list_refuses_the_name_filter(self, client, db_engine, auth_as):
+        _register(client, db_engine, auth_as)
+        resp = client.get("/datasets", params={"instrument_name": "XRD One"})
+        assert resp.status_code == 422
+        assert "instrument_mfid" in resp.text
 
-    def test_slug_wins_over_an_ambiguous_name(self, client, db_engine, auth_as):
-        _register(client, db_engine, auth_as, "xrd-1", "Shared")
-        _register(client, db_engine, auth_as, "xrd-2", "Shared")
-        resp = client.post("/datasets", json={"dataset_name": "d", "instrument_id": "xrd-2", "instrument_name": "Shared"})
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["instrument_id"] == "xrd-2"
-
-    def test_create_field_is_deprecated_in_openapi(self, client):
-        schema = client.get("/openapi.json").json()["components"]["schemas"]["DatasetCreate"]
-        assert schema["properties"]["instrument_name"]["deprecated"] is True
+    def test_name_is_not_in_the_request_schemas(self, client):
+        openapi = client.get("/openapi.json").json()
+        assert "instrument_name" not in openapi["components"]["schemas"]["DatasetCreate"]["properties"]
+        assert "instrument_name" not in openapi["components"]["schemas"]["DatasetUpdate"]["properties"]
+        assert "instrument_name" not in {p["name"] for p in openapi["paths"]["/datasets"]["get"]["parameters"]}
 
 
 def test_status_change_writes_an_audit_record(client, db_engine, auth_as, monkeypatch):

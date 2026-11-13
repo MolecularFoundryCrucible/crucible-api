@@ -87,6 +87,15 @@ def _instrument(client, db_engine, auth_as):
     return resp.json()["unique_id"]
 
 
+def _as_instrument_owner(auth_as, db_engine):
+    from app.utils.auth_utils import load_principal
+    from tests.people import internal_id
+
+    with Session(db_engine) as session:
+        principal = load_principal(session, internal_id(session, "instr-admin"))
+    auth_as("instr-admin", groups=[(g.group_name, g.id, g.role, g.group_type) for g in principal.groups])
+
+
 def _add_member(db_engine, project_mfid, orcid, role=Role.CONTRIBUTOR):
     with Session(db_engine) as session:
         user = _user(session, orcid)
@@ -279,9 +288,7 @@ class TestForcedDeletionInstrument:
 
     def test_request_then_approval_deletes_the_instrument(self, client, db_engine, auth_as):
         mfid = _instrument(client, db_engine, auth_as)
-        with Session(db_engine) as session:
-            owner_group = _group_id(session, "instr-admin")
-        auth_as("instr-admin", groups=[("instr-admin", owner_group, Role.OWNER)])
+        _as_instrument_owner(auth_as, db_engine)
 
         created = _create_deletion_request(client, mfid)
         assert created["status"] == "pending"
@@ -431,7 +438,7 @@ class TestPendingState:
 
     def _pending_instrument(self, client, db_engine, auth_as):
         mfid = _instrument(client, db_engine, auth_as)
-        auth_as("instr-admin", groups=[("instr-admin", _group_id_session(db_engine, "instr-admin"), Role.OWNER)])
+        _as_instrument_owner(auth_as, db_engine)
         created = _create_deletion_request(client, mfid)
         return mfid, created["id"]
 
@@ -504,7 +511,7 @@ class TestPendingState:
         search = client.get("/instruments/search", params={"q": "XRD deletion"}).json()
         assert search["items"] == []
 
-        auth_as("instr-admin", groups=[("instr-admin", _group_id_session(db_engine, "instr-admin"), Role.OWNER)])
+        _as_instrument_owner(auth_as, db_engine)
         resp = client.patch(f"/deletion_requests/{request_id}", params={"status": "rejected"})
         assert resp.status_code == 200, resp.text
 
@@ -602,7 +609,7 @@ class TestPendingState:
         resp = client.put("/datasets/pending-ds/instrument", json={"instrument_id": "xrd-del-1"})
         assert resp.status_code == 409, resp.text
 
-        auth_as("instr-admin", groups=[("instr-admin", _group_id_session(db_engine, "instr-admin"), Role.OWNER)])
+        _as_instrument_owner(auth_as, db_engine)
         resp = client.patch(f"/deletion_requests/{request_id}", params={"status": "rejected"})
         assert resp.status_code == 200, resp.text
 
@@ -813,7 +820,7 @@ class TestMetadataAndCapability:
 
     def test_instrument_can_delete_for_owner(self, client, db_engine, auth_as):
         mfid = _instrument(client, db_engine, auth_as)
-        auth_as("instr-admin", groups=[("instr-admin", _group_id_session(db_engine, "instr-admin"), Role.OWNER)])
+        _as_instrument_owner(auth_as, db_engine)
 
         body = client.get(f"/instruments/{mfid}").json()
         assert body["capabilities"]["can_delete"] is True

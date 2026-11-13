@@ -213,14 +213,44 @@ def _grants_world(db_engine, people, projects):
 
 
 @pytest.mark.parametrize("people, projects", [(2, 1), (12, 6)])
-def test_member_grants_resolve_principals_in_constant_queries(db_engine, people, projects):
-    from app.services.resource_access import load_member_grants
+def test_grant_principals_resolve_in_constant_queries(db_engine, people, projects):
+    from sqlmodel import select
+
+    from app.services.resource_access import access_grant_reads
+    from app.tables import ResourceACL
     _grants_world(db_engine, people, projects)
-    with Session(db_engine) as session, _statement_count(db_engine) as statements:
-        grants = load_member_grants(session, "shared-ds")
+    with Session(db_engine) as session:
+        rows = [(ag, acl.permission) for acl, ag in session.exec(
+            select(ResourceACL, AccessGroup).join(AccessGroup, AccessGroup.id == ResourceACL.accessgroup_id)
+            .where(ResourceACL.mfid == "shared-ds")).all()]
+        with _statement_count(db_engine) as statements:
+            grants = access_grant_reads(session, rows)
     assert len(grants) == people + projects
     assert {grant.principal_type for grant in grants} == {"user", "project"}
-    assert len(statements) <= 4
+    assert len(statements) <= 3
+
+
+@pytest.mark.parametrize("members", [2, 12])
+def test_instrument_members_load_in_constant_queries(db_engine, members):
+    from app.services.instrument_members import load_member_grants
+    from app.tables import Instrument, Resource, User
+    from app.utils.permissions import Principal, Role
+    from tests.instrument_members_seed import seed_instrument_members
+    with Session(db_engine) as session:
+        session.add_all([Instrument(unique_id="inst-many", instrument_id="many", instrument_name="Many", location="b30"),
+                         Resource(mfid="inst-many", resource_type="instrument")])
+        people = {}
+        for n in range(members):
+            orcid = f"0000-0011-0000-{n:04d}"
+            session.add(User(first_name="P", last_name=str(n), email=None, unique_id=orcid))
+            people[orcid] = Role.OWNER if n == 0 else Role.VIEWER
+        session.flush()
+        seed_instrument_members(session, "inst-many", people)
+        session.commit()
+        with _statement_count(db_engine) as statements:
+            grants = load_member_grants(session, Principal(user_id="0000-0011-0000-0000"), "inst-many")
+    assert len(grants) == members
+    assert len(statements) <= 3
 
 
 def test_adding_a_file_does_not_load_the_datasets_other_files(client, db_engine, auth_as):

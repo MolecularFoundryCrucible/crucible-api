@@ -20,6 +20,7 @@ from app.tables import (
     UserAccessGroupLink,
 )
 from app.utils.permissions import AccessGroupType, Role
+from tests.instrument_members_seed import seed_instrument_members
 from tests.people import user_id_or_none
 
 
@@ -92,11 +93,12 @@ def _seed_owned_resources(db_engine):
             ResourceACL(mfid="sample-alice", accessgroup_id=alice_group.id, read=True, write=True, permission=Role.OWNER.db_value),
             ResourceACL(mfid="sample-bob", accessgroup_id=bob_group.id, read=True, write=True, permission=Role.OWNER.db_value),
             ResourceACL(mfid="sample-bob", accessgroup_id=alice_group.id, read=True, write=False, permission=Role.VIEWER.db_value),
-            ResourceACL(mfid="instrument-alice", accessgroup_id=alice_group.id, read=True, write=True, permission=Role.OWNER.db_value),
-            ResourceACL(mfid="instrument-bob", accessgroup_id=bob_group.id, read=True, write=True, permission=Role.OWNER.db_value),
             ResourceACL(mfid=alice_project.unique_id, accessgroup_id=alice_project_group.id, read=True, write=True, permission=Role.OWNER.db_value),
             ResourceACL(mfid=bob_project.unique_id, accessgroup_id=bob_project_group.id, read=True, write=True, permission=Role.OWNER.db_value),
         ])
+        session.commit()
+        seed_instrument_members(session, "instrument-alice", {ALICE: Role.OWNER})
+        seed_instrument_members(session, "instrument-bob", {BOB: Role.OWNER, ALICE: Role.VIEWER})
         session.commit()
         return alice_group.id
 

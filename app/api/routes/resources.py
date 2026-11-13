@@ -8,6 +8,8 @@ from sqlalchemy.orm import attributes, selectinload
 from sqlalchemy.sql import and_, exists
 from sqlmodel import Session, select
 
+from app.services import instrument_members
+from app.utils.auth_utils import forget_cached_keys
 from app.api.dependencies import get_engine
 from app.api.path_params import ResourceMfid
 from app.general_utils import get_utc_datetime
@@ -766,17 +768,28 @@ def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, aut
 # project id.
 # ---------------------------------------------------------------------------
 
-def _reject_project_grants(resource: Resource) -> None:
+def _reject_membership_grants(resource: Resource) -> None:
     if resource.resource_type == "project":
         raise HTTPException(status_code=409, detail={
             "code": "use_project_members",
             "message": "Project access is managed through membership; use /projects/{project_ref}/users",
         })
+    if resource.resource_type == "instrument":
+        raise HTTPException(status_code=409, detail={
+            "code": "use_instrument_members",
+            "message": "Instrument access is managed through membership; use /instruments/{instrument_ref}/users",
+        })
 
 
 def _guard_grant(session, resource: Resource, access_group: AccessGroup) -> None:
-    """Projects are shared through membership, and a record's own project grant follows its assignment."""
-    _reject_project_grants(resource)
+    """Projects and instruments are shared through membership, instrument groups follow dataset
+    assignment, and a record's own project grant follows its assignment."""
+    _reject_membership_grants(resource)
+    if access_group.group_type in (AccessGroupType.INSTRUMENT.value, AccessGroupType.INSTRUMENT_MEMBER.value):
+        raise HTTPException(status_code=409, detail={
+            "code": "instrument_group_grant",
+            "message": "Instrument groups hold grants only on the datasets assigned to the instrument; use PUT /datasets/{dataset_mfid}/instrument",
+        })
     if resource.resource_type in ("dataset", "sample") and access_group.group_type == AccessGroupType.PROJECT.value:
         model = Dataset if resource.resource_type == "dataset" else Sample
         owning = session.exec(select(model.project_mfid).where(model.unique_id == resource.mfid)).first()
@@ -855,8 +868,9 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
     `kind` is `users` or `projects`. Requires admin on the resource, and you
     may not grant above your own role nor overwrite a grant above it. Owner
     grants and changes to an existing owner require transfer_ownership.
-    Projects are shared through /projects/{project_ref}/users, and a record's
-    own project grant changes only with POST /resources/{mfid}/project (409).
+    Projects and instruments are shared through /projects/{project_ref}/users and
+    /instruments/{instrument_ref}/users, and a record's own project grant changes
+    only with POST /resources/{mfid}/project (409).
     """
     if kind not in ("users", "projects"):
         raise HTTPException(status_code=404,
@@ -877,7 +891,7 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
                 status_code=409,
                 detail=f"Cannot grant owner access this way; use POST /resources/{mfid}/transfer_ownership")
 
-        _reject_project_grants(resource)
+        _reject_membership_grants(resource)
         ag, canonical = _resolve_grantee(session, kind, principal)
         _guard_grant(session, resource, ag)
         _set_resource_access_grant(session, auth_res, mfid, ag, target)
@@ -903,7 +917,7 @@ def revoke_resource_access(mfid: str, kind: str, principal: str,
             raise HTTPException(status_code=404, detail="Resource not found")
         require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
 
-        _reject_project_grants(resource)
+        _reject_membership_grants(resource)
         ag, canonical = _resolve_grantee(session, kind, principal)
         _guard_grant(session, resource, ag)
         existing = session.exec(
@@ -1085,12 +1099,6 @@ def _transfer_resource_owner_acl(session, resource: Resource, mfid: str, new_own
             entity.owner_orcid = new_owner.unique_id
             entity.owner_user_id = new_owner.id
             session.add(entity)
-    elif resource.resource_type == "instrument":
-        instrument = session.exec(select(Instrument).where(Instrument.unique_id == mfid)).one_or_none()
-        if instrument is not None:
-            instrument.owner = new_owner.unique_id
-            instrument.owner_user_id = new_owner.id
-            session.add(instrument)
 
     return previous_owner
 
@@ -1115,6 +1123,8 @@ def _current_owner(session, resource: Resource, mfid: str) -> Optional[User]:
                   UserAccessGroupLink.role == Role.OWNER.db_value)
         ).first()
         return session.exec(select(User).where(User.id == link.user_id)).one_or_none() if link else None
+    if resource.resource_type == "instrument":
+        return instrument_members.current_owner(session, mfid)
 
     acl = session.exec(
         select(ResourceACL).where(ResourceACL.mfid == mfid, ResourceACL.permission == Role.OWNER.db_value)
@@ -1163,6 +1173,12 @@ def transfer_ownership(mfid: str, body: TransferOwnershipRequest,
 
         if resource.resource_type == "project":
             previous_owner = _transfer_project_ownership(session, mfid, new_owner)
+        elif resource.resource_type == "instrument":
+            instrument = session.exec(select(Instrument).where(Instrument.unique_id == mfid)).one()
+            previous_owner = instrument_members.transfer_ownership(session, instrument, new_owner)
+            for person in (new_owner, previous_owner):
+                if person is not None:
+                    forget_cached_keys(session, person.id)
         else:
             previous_owner = _transfer_resource_owner_acl(session, resource, mfid, new_owner)
 

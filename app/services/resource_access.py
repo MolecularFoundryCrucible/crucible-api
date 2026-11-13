@@ -1,14 +1,18 @@
 from sqlmodel import Session, select
 
 from app.models.access import AccessGrantRead, EntryCapabilities
-from app.tables import AccessGroup, Dataset, Instrument, Project, Resource, ResourceACL, Sample, User
+from app.tables import AccessGroup, Dataset, Instrument, Project, Resource, Sample, User
 from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, Principal, Role, effective_role
 
 
 def access_grant_reads(session, grants) -> list[AccessGrantRead]:
     """AccessGrantRead for each (access_group, permission) pair, resolving the principals in three queries at most."""
+    from app.services.instrument_members import instrument_of_members_group
+
     names = {kind: {ag.group_name for ag, _ in grants if ag.group_type == kind.value}
              for kind in (AccessGroupType.IDENTITY, AccessGroupType.PROJECT, AccessGroupType.INSTRUMENT)}
+    names[AccessGroupType.INSTRUMENT] |= {instrument_of_members_group(ag.group_name) for ag, _ in grants
+                                          if ag.group_type == AccessGroupType.INSTRUMENT_MEMBER.value}
     users = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(names[AccessGroupType.IDENTITY])))} if names[AccessGroupType.IDENTITY] else {}
     projects = {p.unique_id: p for p in session.exec(select(Project).where(Project.unique_id.in_(names[AccessGroupType.PROJECT])))} if names[AccessGroupType.PROJECT] else {}
     instruments = {i.unique_id: i for i in session.exec(select(Instrument).where(Instrument.unique_id.in_(names[AccessGroupType.INSTRUMENT])))} if names[AccessGroupType.INSTRUMENT] else {}
@@ -55,6 +59,18 @@ def _grant_read(access_group: AccessGroup, permission: str, users, projects, ins
             slug=project.project_id,
             display_name=project.title or project.project_id,
         )
+    if group_type == AccessGroupType.INSTRUMENT_MEMBER.value:
+        from app.services.instrument_members import instrument_of_members_group
+
+        instrument = instruments.get(instrument_of_members_group(group_name))
+        if instrument:
+            return AccessGrantRead(
+                principal_id=instrument.unique_id,
+                principal_type="instrument_members",
+                permission=permission,
+                slug=instrument.instrument_id,
+                display_name=instrument.instrument_name,
+            )
     instrument = instruments.get(group_name) if group_type == AccessGroupType.INSTRUMENT.value else None
     if instrument:
         return AccessGrantRead(
@@ -69,22 +85,6 @@ def _grant_read(access_group: AccessGroup, permission: str, users, projects, ins
         principal_type="unknown",
         permission=permission,
     )
-
-
-def load_member_grants(session: Session, mfid: str) -> list[AccessGrantRead]:
-    """Grants held by people and projects on a resource, excluding the
-    resource's own group, public access, and system groups."""
-    rows = session.exec(
-        select(ResourceACL, AccessGroup)
-        .join(AccessGroup, AccessGroup.id == ResourceACL.accessgroup_id)
-        .where(
-            ResourceACL.mfid == mfid,
-            AccessGroup.group_name != mfid,
-            AccessGroup.group_type.in_((AccessGroupType.IDENTITY.value, AccessGroupType.PROJECT.value)),
-        )
-    ).all()
-    grants = access_grant_reads(session, [(ag, Role.from_db(acl.permission).db_value) for acl, ag in rows])
-    return sorted(grants, key=lambda grant: (-Role.from_db(grant.permission.value), grant.principal_id))
 
 
 def with_grant_capabilities(session: Session, principal: Principal, mfid: str, grants: list[AccessGrantRead]) -> list[AccessGrantRead]:

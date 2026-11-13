@@ -838,11 +838,15 @@ def add_user_to_access_group(auth_res: Annotated[Principal, Depends(authorize_us
             raise HTTPException(
                 status_code=400,
                 detail=f"'{group_name}' is a project. Use POST /projects/{group_name}/users/{user_id} instead.")
+        if ag.group_type == AccessGroupType.INSTRUMENT_MEMBER.value:
+            raise HTTPException(
+                status_code=409,
+                detail="Instrument membership is managed with POST /instruments/{instrument_ref}/users/{user_ref}.")
         if ag.group_type == AccessGroupType.INSTRUMENT.value and not user.is_service_account:
             raise HTTPException(
                 status_code=409,
                 detail=(f"'{group_name}' is an instrument group, which holds service accounts only. "
-                        f"Grant instrument maintainers access through PUT /resources/{group_name}/access/users/{user_id}."))
+                        "Add people to the instrument with POST /instruments/{instrument_ref}/users/{user_ref}."))
         ag = sql_add_user_to_access_group(user_id, group_name, session)
         session.commit()
         session.refresh(ag)
@@ -890,6 +894,10 @@ def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authori
             raise HTTPException(
                 status_code=400,
                 detail=f"'{group_name}' is a project. Use DELETE /projects/{group_name}/users/{user_id} instead.")
+        if ag.group_type == AccessGroupType.INSTRUMENT_MEMBER.value:
+            raise HTTPException(
+                status_code=409,
+                detail="Instrument membership is managed with DELETE /instruments/{instrument_ref}/users/{user_ref}.")
 
         user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
         if user is None:

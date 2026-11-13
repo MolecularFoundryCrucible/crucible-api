@@ -176,6 +176,23 @@ class SampleFacetField(str, Enum):
 
 
 MFID_FILTER_MAX = 100
+OWNER_REF_MAX = 10
+OWNER_REF_DESCRIPTION = (
+    f"Owner, repeatable, at most {OWNER_REF_MAX} values, OR semantics. Each value is a unique_id, "
+    "linked ORCID, username or email, resolved by its form; an unknown person matches nothing."
+)
+DEPRECATED_OWNER_ID_DESCRIPTION = "Deprecated: use owner_ref, which is repeatable and accepts the same forms."
+
+
+def owner_ref_field():
+    return Field(default=None, min_length=1, max_length=OWNER_REF_MAX, description=OWNER_REF_DESCRIPTION)
+
+
+def requested_owners(params, *legacy: Optional[str]) -> Optional[list[str]]:
+    """The owners a query asks for: owner_ref values, then the deprecated single-value filters."""
+    values = [*(getattr(params, "owner_ref", None) or []), getattr(params, "owner_id", None), *legacy]
+    values = list(dict.fromkeys(v.strip() for v in values if v and v.strip()))
+    return values or None
 UNIQUE_ID_FILTER_DEPRECATION = "@1792540800"
 MFID_FILTER_DESCRIPTION = (
     f"Repeatable exact MFID filter, at most {MFID_FILTER_MAX} values, OR semantics. "
@@ -446,14 +463,11 @@ class DatasetListQuery(ResourceCollectionQuery):
     keyword: Optional[str] = None
     public: Optional[bool] = None
     dataset_name: Optional[str] = None
-    owner_id: Optional[str] = Field(
-        default=None,
-        min_length=1,
-        description="Exact owner: unique_id, linked ORCID, username or email.",
-    )
+    owner_ref: Optional[list[str]] = owner_ref_field()
+    owner_id: Optional[str] = Field(default=None, min_length=1, deprecated=True, description=DEPRECATED_OWNER_ID_DESCRIPTION)
     owner_orcid: Annotated[Optional[str], Field(
         deprecated=True,
-        description="Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
+        description="Deprecated exact owner filter. Use owner_ref, or affiliation=owner for the authenticated caller.",
     )] = None
     timestamp: Optional[str] = None
     size: Optional[int] = None
@@ -479,7 +493,7 @@ class DatasetListQuery(ResourceCollectionQuery):
             raise ValueError("measurement_is_null=true cannot be combined with measurement")
         if self.data_format_is_null is True and self.data_format is not None:
             raise ValueError("data_format_is_null=true cannot be combined with data_format")
-        if self.owner_id_is_null is True and (self.owner_id is not None or owner_orcid is not None):
+        if self.owner_id_is_null is True and (self.owner_id is not None or owner_orcid is not None or self.owner_ref):
             raise ValueError("owner_id_is_null=true cannot be combined with an exact owner filter")
         if self.instrument_mfid_is_null is True and (self.instrument_mfid is not None or self.instrument_id is not None):
             raise ValueError("instrument_mfid_is_null=true cannot be combined with an instrument filter")
@@ -500,14 +514,11 @@ class SampleListQuery(ResourceCollectionQuery):
     public: Optional[bool] = None
     sample_name: Optional[str] = None
     sample_type: Optional[str] = None
-    owner_id: Optional[str] = Field(
-        default=None,
-        min_length=1,
-        description="Exact owner: unique_id, linked ORCID, username or email.",
-    )
+    owner_ref: Optional[list[str]] = owner_ref_field()
+    owner_id: Optional[str] = Field(default=None, min_length=1, deprecated=True, description=DEPRECATED_OWNER_ID_DESCRIPTION)
     owner_orcid: Annotated[Optional[str], Field(
         deprecated=True,
-        description="Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
+        description="Deprecated exact owner filter. Use owner_ref, or affiliation=owner for the authenticated caller.",
     )] = None
     description: Optional[str] = None
     timestamp: Optional[str] = None
@@ -522,7 +533,7 @@ class SampleListQuery(ResourceCollectionQuery):
             raise ValueError("owner_id and owner_orcid must identify the same owner")
         if self.sample_type_is_null is True and self.sample_type is not None:
             raise ValueError("sample_type_is_null=true cannot be combined with sample_type")
-        if self.owner_id_is_null is True and (self.owner_id is not None or owner_orcid is not None):
+        if self.owner_id_is_null is True and (self.owner_id is not None or owner_orcid is not None or self.owner_ref):
             raise ValueError("owner_id_is_null=true cannot be combined with an exact owner filter")
         if self.project_mfid_is_null is True and (self.project_id is not None or self.project_mfid is not None):
             raise ValueError("project_mfid_is_null=true cannot be combined with a project filter")
@@ -615,7 +626,8 @@ class DatasetFacetQuery(ResourceFacetQuery):
     session_name: Optional[str] = None
     measurement: Optional[str] = None
     data_format: Optional[str] = None
-    owner_id: Optional[str] = Field(default=None, min_length=1, description="Exact owner: unique_id, linked ORCID, username or email.")
+    owner_ref: Optional[list[str]] = owner_ref_field()
+    owner_id: Optional[str] = Field(default=None, min_length=1, deprecated=True, description=DEPRECATED_OWNER_ID_DESCRIPTION)
     session_name_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether session_name is null.")
     measurement_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether measurement is null.")
     data_format_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether data_format is null.")
@@ -631,8 +643,8 @@ class DatasetFacetQuery(ResourceFacetQuery):
             raise ValueError("measurement_is_null=true cannot be combined with measurement")
         if self.data_format_is_null is True and self.data_format is not None:
             raise ValueError("data_format_is_null=true cannot be combined with data_format")
-        if self.owner_id_is_null is True and self.owner_id is not None:
-            raise ValueError("owner_id_is_null=true cannot be combined with owner_id")
+        if self.owner_id_is_null is True and (self.owner_id is not None or self.owner_ref):
+            raise ValueError("owner_id_is_null=true cannot be combined with an owner filter")
         if self.instrument_mfid_is_null is True and (self.instrument_mfid is not None or self.instrument_id is not None):
             raise ValueError("instrument_mfid_is_null=true cannot be combined with an instrument filter")
         if self.project_mfid_is_null is True and (self.project_id is not None or self.project_mfid is not None):
@@ -644,7 +656,8 @@ class SampleFacetQuery(ResourceFacetQuery):
     field: SampleFacetField = Field(description="Sample field to group into facet buckets.")
     dataset_mfid: Optional[str] = None
     sample_type: Optional[str] = None
-    owner_id: Optional[str] = Field(default=None, min_length=1, description="Exact owner: unique_id, linked ORCID, username or email.")
+    owner_ref: Optional[list[str]] = owner_ref_field()
+    owner_id: Optional[str] = Field(default=None, min_length=1, deprecated=True, description=DEPRECATED_OWNER_ID_DESCRIPTION)
     sample_type_is_null: Optional[bool] = Field(default=None, description="Restrict contributing samples by whether sample_type is null.")
     owner_id_is_null: Optional[bool] = Field(default=None, description="Restrict contributing samples by whether they have an owner.")
     project_mfid_is_null: Optional[bool] = Field(default=None, description="Restrict contributing samples by canonical primary project assignment.")
@@ -653,8 +666,8 @@ class SampleFacetQuery(ResourceFacetQuery):
     def validate_facet_filters(self):
         if self.sample_type_is_null is True and self.sample_type is not None:
             raise ValueError("sample_type_is_null=true cannot be combined with sample_type")
-        if self.owner_id_is_null is True and self.owner_id is not None:
-            raise ValueError("owner_id_is_null=true cannot be combined with owner_id")
+        if self.owner_id_is_null is True and (self.owner_id is not None or self.owner_ref):
+            raise ValueError("owner_id_is_null=true cannot be combined with an owner filter")
         if self.project_mfid_is_null is True and (self.project_id is not None or self.project_mfid is not None):
             raise ValueError("project_mfid_is_null=true cannot be combined with a project filter")
         return self
@@ -662,6 +675,7 @@ class SampleFacetQuery(ResourceFacetQuery):
 
 class ProjectListQuery(StrictQueryModel):
     project_id: Optional[str] = Field(default=None, description="Exact project slug.")
+    owner_ref: Optional[list[str]] = owner_ref_field()
     mfid: Optional[list[str]] = Field(default=None, min_length=1, max_length=MFID_FILTER_MAX, description=MFID_FILTER_DESCRIPTION)
     accessible_to_user: Optional[list[str]] = Field(
         default=None,
@@ -827,14 +841,11 @@ class InstrumentListQuery(StrictQueryModel):
     instrument_name: Optional[str] = None
     manufacturer: Optional[str] = None
     model: Optional[str] = None
-    owner_id: Optional[str] = Field(
-        default=None,
-        min_length=1,
-        description="Exact owner: unique_id, linked ORCID, username or email.",
-    )
+    owner_ref: Optional[list[str]] = owner_ref_field()
+    owner_id: Optional[str] = Field(default=None, min_length=1, deprecated=True, description=DEPRECATED_OWNER_ID_DESCRIPTION)
     owner: Annotated[Optional[str], Field(
         deprecated=True,
-        description="Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
+        description="Deprecated exact owner filter. Use owner_ref, or affiliation=owner for the authenticated caller.",
     )] = None
     location: Optional[str] = None
     description: Optional[str] = None
@@ -863,7 +874,8 @@ class InstrumentListQuery(StrictQueryModel):
                 "sort", "direction",
             },
         )
-        values["owner_id"] = self.owner_id or self.__dict__.get("owner")
+        values["owner_id"] = requested_owners(self, self.__dict__.get("owner"))
+        values.pop("owner_ref", None)
         if self.instrument_id is None and self.mfid is None and self.status is None:
             values["status"] = InstrumentStatus.ACTIVE.value
         return values
@@ -1008,11 +1020,8 @@ class ResourceSearchQuery(SearchQuery):
         max_length=5,
         description=RESOURCE_AFFILIATION_DESCRIPTION,
     )
-    owner_id: Optional[str] = Field(
-        default=None,
-        min_length=1,
-        description="Exact owner: unique_id, linked ORCID, username or email.",
-    )
+    owner_ref: Optional[list[str]] = owner_ref_field()
+    owner_id: Optional[str] = Field(default=None, min_length=1, deprecated=True, description=DEPRECATED_OWNER_ID_DESCRIPTION)
     project_id: Optional[str] = Field(
         default=None,
         description="Restrict results related to this project slug. May be combined with a matching project_mfid.",
@@ -1043,11 +1052,8 @@ class DatasetSearchQuery(ResourceSearchQuery):
 
 
 class InstrumentSearchQuery(SearchQuery):
-    owner_id: Optional[str] = Field(
-        default=None,
-        min_length=1,
-        description="Exact owner: unique_id, linked ORCID, username or email.",
-    )
+    owner_ref: Optional[list[str]] = owner_ref_field()
+    owner_id: Optional[str] = Field(default=None, min_length=1, deprecated=True, description=DEPRECATED_OWNER_ID_DESCRIPTION)
     status: Optional[InstrumentStatus] = Field(
         default=None,
         description="Restrict results to one lifecycle status.",

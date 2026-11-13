@@ -2,7 +2,7 @@
 # Table model lives in app/tables.py
 from typing import Literal, Optional
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from sqlmodel import SQLModel
 
 from app.models.users import UserPublicRead
@@ -21,13 +21,18 @@ class ResourceCapabilities(SQLModel):
 
 
 class TransferOwnershipRequest(SQLModel):
-    """Body for POST /resources/{mfid}/transfer_ownership.
+    """Body for POST /resources/{mfid}/transfer_ownership: the new owner as one reference in any form."""
+    new_owner_ref: Optional[str] = Field(default=None, description="The new owner: unique_id, linked ORCID, username or email.")
+    new_owner: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use new_owner_ref.")
 
-    new_owner may be an ORCID, username, email, or (for a service account) an
-    MFID — resolved by format via resolve_user_by_identifier. One field, not
-    three, so there's nothing for a caller to leave conflicting.
-    """
-    new_owner: str
+    @model_validator(mode="after")
+    def one_reference(self):
+        if self.new_owner_ref is None and self.new_owner is None:
+            raise ValueError("Provide new_owner_ref")
+        if None not in (self.new_owner_ref, self.new_owner) and self.new_owner_ref != self.new_owner:
+            raise ValueError("Provide only new_owner_ref")
+        self.new_owner = self.new_owner_ref or self.new_owner
+        return self
 
 
 class TransferOwnershipRead(SQLModel):

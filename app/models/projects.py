@@ -1,8 +1,8 @@
 import warnings
 from enum import Enum
 from typing import List, Literal, Optional
-from pydantic import MISSING, ConfigDict, field_validator, model_validator
-from sqlmodel import Field, SQLModel
+from pydantic import MISSING, ConfigDict, Field, field_validator, model_validator
+from sqlmodel import SQLModel
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.fields import NonBlankStr
 from app.models.resource import ResourceCapabilities
@@ -35,14 +35,25 @@ class ProjectCreate(SQLModel):
         access groups needs a session and lives in the route."""
         from app.utils.project_utils import validate_project_id
         return validate_project_id(v)
-    project_lead: Optional[str] = None  # ORCID, username, or email; resolved server-side.
-                                         # Prefer over the three project_lead_* fields below,
-                                         # kept for existing integrations. Provide at most one.
-    project_lead_orcid: Optional[str] = None
-    project_lead_email: Optional[str] = None
-    project_lead_username: Optional[str] = None
+    owner_ref: Optional[str] = Field(
+        default=None,
+        exclude=True,
+        description="Owner: unique_id, linked ORCID, username or email. Only an administrator may name someone other than the caller.",
+    )
+    project_lead: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use owner_ref.")
+    project_lead_orcid: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use owner_ref.")
+    project_lead_email: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use owner_ref.")
+    project_lead_username: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use owner_ref.")
     status: Optional[str] = None
     title: Optional[str] = None
+
+    @model_validator(mode="after")
+    def fold_owner_ref(self):
+        if self.owner_ref is not None:
+            if self.project_lead not in (None, self.owner_ref) or any((self.project_lead_orcid, self.project_lead_email, self.project_lead_username)):
+                raise ValueError("Provide only owner_ref, not project_lead fields")
+            self.project_lead = self.owner_ref
+        return self
 
 
 class ProjectRead(SQLModel):

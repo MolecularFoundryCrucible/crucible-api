@@ -45,7 +45,8 @@ from app.utils.search_utils import (
 from app.utils.sql_utils import is_public, public_grant_exists, record_resource, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
 
 from app.utils.gcs_record_utils import write_record, sample_record
-from app.utils.user_utils import owned_by, owner_fields, owner_unique_id, owners_of, resolve_create_owner
+from app.models.query_params import requested_owners
+from app.utils.user_utils import owned_by_any, owner_fields, owner_unique_id, owners_of, resolve_create_owner
 from app.models.response_schemas import MessageResponse
 from app.services.resource_details import ResourceDetailOptions, load_sample_detail
 from app.services.resource_facets import list_sample_facets
@@ -350,15 +351,15 @@ def list_samples(
         )
         if param_values[key] is not None
     }
-    owner_id = params.owner_id or param_values["owner_orcid"]
+    owners = requested_owners(params, param_values["owner_orcid"])
     result_filters = params.normalized_result_filters(
         exclude={
             "anchor_mfid", "cursor", "offset", "limit", "sort", "direction",
             "include_metadata", "include_links", "include_datasets", "include_owner",
-            "include_total", "owner_orcid",
+            "include_total", "owner_orcid", "owner_ref",
         },
     )
-    result_filters["owner_id"] = owner_id
+    result_filters["owner_id"] = owners
     pagination = prepare_resource_pagination(
         params=params,
         query_params=request.query_params,
@@ -399,8 +400,8 @@ def list_samples(
                 )
             if params.mfid is not None:
                 q = q.where(Sample.unique_id.in_(params.mfid))
-            if owner_id is not None:
-                q = q.where(owned_by(session, Sample.owner_user_id, owner_id))
+            if owners:
+                q = q.where(owned_by_any(session, Sample.owner_user_id, owners))
             for key, value in exact_filters.items():
                 q = q.where(getattr(Sample, key) == value)
             for column, value in (
@@ -598,8 +599,8 @@ def search_samples(
             ))
         if params.affiliation:
             query = query.where(resource_affiliation_filter(auth_res, Sample, params.affiliation))
-        if params.owner_id is not None:
-            query = query.where(owned_by(session, Sample.owner_user_id, params.owner_id))
+        if owners := requested_owners(params):
+            query = query.where(owned_by_any(session, Sample.owner_user_id, owners))
         query = query.order_by(
             trigram_rank(normalized_q, (Sample.sample_name,)).desc(),
             Sample.unique_id.desc(),

@@ -1,7 +1,7 @@
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import func
+from sqlalchemy import false, func, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -28,7 +28,7 @@ from app.utils.search_utils import (
 from app.utils.sql_utils import record_resource, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.sql_utils import assert_not_pending_deletion
-from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
+from app.utils.user_utils import person_by_reference, resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
     project_fields, project_leads,
     assert_project_id_available, project_id_is_reserved, project_id_matches, sql_add_user_to_project,
@@ -86,7 +86,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
     """
     named_lead_fields = [P.project_lead, P.project_lead_orcid, P.project_lead_email, P.project_lead_username]
     if not any(named_lead_fields):
-        raise HTTPException(status_code=400, detail="One of project_lead, project_lead_orcid, project_lead_email, or project_lead_username must be provided.")
+        raise HTTPException(status_code=400, detail="owner_ref must be provided.")
     if P.project_lead and any(named_lead_fields[1:]):
         raise HTTPException(status_code=400, detail="Provide project_lead or one of project_lead_orcid/_email/_username, not both.")
 
@@ -216,6 +216,9 @@ def list_projects(
                 base = base.where(project_member_filter(member_id, Project, roles=roles))
         if params.affiliation:
             base = base.where(project_owner_affiliation_filter(auth_res, Project))
+        if params.owner_ref:
+            owners = [person.unique_id for ref in params.owner_ref if (person := person_by_reference(session, ref)) is not None]
+            base = base.where(or_(*(project_member_filter(owner, Project, roles=(Role.OWNER,)) for owner in owners)) if owners else false())
         base = base.where(deletion_filter_for(Project))
         if params.active_since is not None:
             base = base.where(Project.last_activity_at >= params.active_since)

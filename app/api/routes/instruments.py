@@ -36,7 +36,8 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import record_resource, add_or_update, assert_not_pending_deletion, touch_resource_modification_time, deletion_filter_for
-from app.utils.user_utils import owned_by, resolve_create_owner, resolve_service_account_reference, resolve_user_by_identifier
+from app.models.query_params import requested_owners
+from app.utils.user_utils import owned_by_any, resolve_create_owner, resolve_service_account_reference, resolve_user_by_identifier
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
@@ -172,7 +173,7 @@ def list_instruments(
     limit = params.limit
     cursor = params.cursor
     offset = params.offset
-    owner_ref = params.owner_id or param_values["owner"]
+    owners = requested_owners(params, param_values["owner"])
     if instrument_id is None and params.mfid is None and params.status is None:
         param_values["status"] = "active"
     filters = [
@@ -209,8 +210,8 @@ def list_instruments(
             statement = statement.where(f)
         if params.affiliation:
             statement = statement.where(_instrument_affiliation_filter(auth_res, params.affiliation))
-        if owner_ref is not None:
-            statement = statement.where(owned_by(session, Instrument.owner_user_id, owner_ref))
+        if owners:
+            statement = statement.where(owned_by_any(session, Instrument.owner_user_id, owners))
 
         total = (
             session.exec(select(func.count()).select_from(statement.with_only_columns(Instrument.id).subquery())).one()
@@ -267,8 +268,8 @@ def search_instruments(
             base = base.where(Instrument.status == params.status)
         if params.affiliation:
             base = base.where(_instrument_affiliation_filter(auth_res, params.affiliation))
-        if params.owner_id is not None:
-            base = base.where(owned_by(session, Instrument.owner_user_id, params.owner_id))
+        if owners := requested_owners(params):
+            base = base.where(owned_by_any(session, Instrument.owner_user_id, owners))
         fields = (
             Instrument.instrument_name,
             Instrument.instrument_type,

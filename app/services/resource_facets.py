@@ -2,7 +2,8 @@ from fastapi import HTTPException
 from sqlalchemy import and_, case, exists, func, literal, or_
 from sqlmodel import Session, select
 
-from app.utils.user_utils import owned_by
+from app.models.query_params import requested_owners
+from app.utils.user_utils import owned_by_any
 from app.tables import (
     Dataset,
     DatasetSampleLink,
@@ -329,8 +330,8 @@ def list_dataset_facets(
     ):
         if value is not None:
             query = query.where(filter_column == value)
-    if params.owner_id is not None:
-        query = query.where(owned_by(session, Dataset.owner_user_id, params.owner_id))
+    if owners := requested_owners(params):
+        query = query.where(owned_by_any(session, Dataset.owner_user_id, owners))
     for filter_column, value in (
         (Dataset.session_name, params.session_name_is_null),
         (Dataset.measurement, params.measurement_is_null),
@@ -400,8 +401,8 @@ def list_sample_facets(
     ):
         if value is not None:
             query = query.where(filter_column == value)
-    if params.owner_id is not None:
-        query = query.where(owned_by(session, Sample.owner_user_id, params.owner_id))
+    if owners := requested_owners(params):
+        query = query.where(owned_by_any(session, Sample.owner_user_id, owners))
     for filter_column, value in (
         (Sample.sample_type, params.sample_type_is_null),
         (Sample.owner_user_id, params.owner_id_is_null),

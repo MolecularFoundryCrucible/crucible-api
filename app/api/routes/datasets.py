@@ -88,7 +88,8 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.user_utils import owned_by, owner_fields, owner_unique_id, owners_of, resolve_create_owner
+from app.models.query_params import requested_owners
+from app.utils.user_utils import owned_by_any, owner_fields, owner_unique_id, owners_of, resolve_create_owner
 from app.utils.sql_utils import record_resource, is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
@@ -499,15 +500,15 @@ def list_datasets(
         )
         if param_values[key] is not None
     }
-    owner_id = params.owner_id or param_values["owner_orcid"]
+    owners = requested_owners(params, param_values["owner_orcid"])
     result_filters = params.normalized_result_filters(
         exclude={
             "anchor_mfid", "cursor", "offset", "limit", "sort", "direction",
             "include_metadata", "include_links", "include_owner", "include_total",
-            "owner_orcid",
+            "owner_orcid", "owner_ref",
         },
     )
-    result_filters["owner_id"] = owner_id
+    result_filters["owner_id"] = owners
     pagination = prepare_resource_pagination(
         params=params,
         query_params=request.query_params,
@@ -551,8 +552,8 @@ def list_datasets(
                 )
             if params.mfid is not None:
                 q = q.where(Dataset.unique_id.in_(params.mfid))
-            if owner_id is not None:
-                q = q.where(owned_by(session, Dataset.owner_user_id, owner_id))
+            if owners:
+                q = q.where(owned_by_any(session, Dataset.owner_user_id, owners))
             for key, value in exact_filters.items():
                 q = q.where(getattr(Dataset, key) == value)
             for column, value in (
@@ -751,8 +752,8 @@ def search_datasets(
             ))
         if params.affiliation:
             query = query.where(resource_affiliation_filter(auth_res, Dataset, params.affiliation))
-        if params.owner_id is not None:
-            query = query.where(owned_by(session, Dataset.owner_user_id, params.owner_id))
+        if owners := requested_owners(params):
+            query = query.where(owned_by_any(session, Dataset.owner_user_id, owners))
         query = query.order_by(
             trigram_rank(normalized_q, (Dataset.dataset_name,)).desc(),
             Dataset.unique_id.desc(),

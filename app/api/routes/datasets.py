@@ -75,7 +75,6 @@ from app.utils.project_utils import (
 )
 from app.utils.instrument_utils import (
     dataset_instrument_fields,
-    dataset_instrument_name_filter,
     resolve_instrument_filter_mfid,
     resolve_instrument_identifiers,
     resolve_instrument_mfids_to_references,
@@ -200,20 +199,6 @@ def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
             instrument_id_slug,
             instrument_mfid,
         )
-        if instrument is None and dataset_details.get('instrument_name', None):
-            matches = session.exec(
-                select(Instrument).where(func.lower(Instrument.instrument_name) == dataset_details['instrument_name'].lower())
-            ).all()
-            if not matches:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Instrument '{dataset_details['instrument_name']}' is not registered")
-            if len(matches) > 1:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(f"Instrument name '{dataset_details['instrument_name']}' matches more than one "
-                            "instrument. Use instrument_id or instrument_mfid."))
-            instrument = matches[0]
         if instrument is not None:
             assert_parent_accepts_assignment(session, instrument.unique_id)
             dataset_details['instrument_mfid'] = instrument.unique_id
@@ -302,7 +287,7 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         update_dict = updated_dataset.model_dump(exclude_unset=True)
         instrument_updates = {
             field: update_dict.pop(field)
-            for field in ("instrument_id", "instrument_name")
+            for field in ("instrument_id",)
             if field in update_dict
         }
         if instrument_updates:
@@ -313,17 +298,6 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
                 ).one_or_none()
 
             current_instrument_id = current_instrument.instrument_id if current_instrument else None
-            current_instrument_names = {
-                name.casefold()
-                for name in (current_instrument.instrument_name if current_instrument else None,)
-                if name is not None
-            }
-            name_matches = "instrument_name" not in instrument_updates or (
-                instrument_updates["instrument_name"] is None and not current_instrument_names
-            ) or (
-                isinstance(instrument_updates["instrument_name"], str)
-                and instrument_updates["instrument_name"].casefold() in current_instrument_names
-            )
             requested_instrument_id = instrument_updates.get("instrument_id", current_instrument_id)
             id_matches = (
                 requested_instrument_id is None and current_instrument_id is None
@@ -332,7 +306,7 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
                 and isinstance(current_instrument_id, str)
                 and requested_instrument_id.casefold() == current_instrument_id.casefold()
             )
-            if not id_matches or not name_matches:
+            if not id_matches:
                 raise HTTPException(
                     status_code=409,
                     detail=(
@@ -581,8 +555,6 @@ def list_datasets(
                 q = q.where(owned_by(session, Dataset.owner_user_id, owner_id))
             for key, value in exact_filters.items():
                 q = q.where(getattr(Dataset, key) == value)
-            if param_values["instrument_name"] is not None:
-                q = q.where(dataset_instrument_name_filter(param_values["instrument_name"]))
             for column, value in (
                 (Dataset.session_name, params.session_name_is_null),
                 (Dataset.measurement, params.measurement_is_null),

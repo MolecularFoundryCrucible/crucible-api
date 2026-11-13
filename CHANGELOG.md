@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Instruments have members, like projects: `GET`, `POST`, `PATCH`, `DELETE /instruments/{instrument_ref}/users/{user_ref}` (roles `viewer`, `editor`, `admin`); user and project grants on an instrument through `/resources/{mfid}/access/...` return 409 `use_instrument_members`. Needs migrations `3b8e5d1f7c24` and `9d4a2c7e6f13`.
 - Every instrument member reads the datasets assigned to the instrument, at `viewer` and never more; the migration makes today's owners, admins and editors members.
 - Transferring an instrument keeps the previous owner as an `admin` member, and a service account cannot own an instrument.
+- `instrument_name` is no longer an input: dataset create and update return 422 for a name (`null` is ignored), and the `instrument_name` filter on `GET /datasets` returns 422; use `instrument_id` or `instrument_mfid`.
 
 ### Added
 

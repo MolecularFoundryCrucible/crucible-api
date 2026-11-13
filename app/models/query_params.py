@@ -418,6 +418,13 @@ class ResourceCollectionQuery(StrictQueryModel):
 
 
 class DatasetListQuery(ResourceCollectionQuery):
+    @model_validator(mode="before")
+    @classmethod
+    def instrument_name_is_not_a_filter(cls, data):
+        if isinstance(data, dict) and data.get("instrument_name") not in (None, ""):
+            raise ValueError("instrument_name is not a filter; use instrument_mfid or instrument_id")
+        return data
+
     affiliation: Optional[list[DatasetAffiliation]] = Field(
         default=None,
         min_length=1,
@@ -447,10 +454,6 @@ class DatasetListQuery(ResourceCollectionQuery):
     owner_orcid: Annotated[Optional[str], Field(
         deprecated=True,
         description="Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
-    )] = None
-    instrument_name: Annotated[Optional[str], Field(
-        deprecated=True,
-        description="Deprecated display-name filter. Matches the registered instrument's current name. Use instrument_mfid.",
     )] = None
     timestamp: Optional[str] = None
     size: Optional[int] = None

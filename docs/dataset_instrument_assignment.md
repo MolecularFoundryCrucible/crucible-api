@@ -8,7 +8,7 @@ This page covers how a dataset's instrument is set at creation, how it is change
 
 Assignment requires no role on the instrument. When a service account creates a dataset for an instrument it is not bound to, the dataset is created and the server logs a warning.
 
-`instrument_name` is deprecated as a lookup key, because instrument names are free-text and need not be unique. It is consulted only when both `instrument_id` and `instrument_mfid` are omitted, and matches case-insensitively. An unregistered name returns 400, and a name matching more than one instrument returns 409.
+`instrument_name` is not accepted, because instrument names are free text and need not be unique: a request that names an instrument by `instrument_name` returns 422, and a `null` value is ignored.
 
 ## Reassignment
 
@@ -29,10 +29,10 @@ An instrument cannot be removed from a dataset: there is no `DELETE` route for i
 
 ## Generic update
 
-`PATCH /datasets/{dataset_mfid}` does not change the instrument. Its deprecated `instrument_id` and `instrument_name` fields accept only the current values, compared case-insensitively, so that clients resubmitting a full record do not fail; any other value, or `null` on a dataset with an instrument, returns 409. Clients omit both fields.
+`PATCH /datasets/{dataset_mfid}` does not change the instrument. Its deprecated `instrument_id` field accepts only the current value, compared case-insensitively, so that clients resubmitting a full record do not fail; any other value, or `null` on a dataset with an instrument, returns 409. `instrument_name` returns 422 unless `null`. Clients omit both fields.
 
 ## Display name
 
 Dataset responses read `instrument_id`, `instrument_name` and the nested `instrument` reference from the assigned instrument, so a rename appears in every dataset response. A dataset without an instrument returns `null` for all three.
 
-The `instrument_name` filter on `GET /datasets` is deprecated: it matches datasets whose assigned instrument has exactly that name. Filter by `instrument_mfid` or `instrument_id` instead.
+`GET /datasets` has no `instrument_name` filter (422); filter by `instrument_mfid` or `instrument_id`.

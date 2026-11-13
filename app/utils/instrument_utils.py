@@ -1,11 +1,11 @@
 import re
 
 from fastapi import HTTPException
-from sqlalchemy import exists, func
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.general_utils import is_valid_mfid
-from app.tables import Dataset, Instrument, Project
+from app.tables import Instrument, Project
 from app.models.instrument import InstrumentReferenceRead
 
 _INSTRUMENT_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{2,24}$')
@@ -128,14 +128,6 @@ def dataset_instrument_fields(dataset, reference: "InstrumentReferenceRead | Non
         "instrument_name": reference.instrument_name if reference else None,
         "instrument": reference,
     }
-
-
-def dataset_instrument_name_filter(instrument_name: str):
-    """Match datasets whose registered instrument has this name."""
-    return exists().where(
-        Instrument.unique_id == Dataset.instrument_mfid,
-        Instrument.instrument_name == instrument_name,
-    ).correlate(Dataset)
 
 
 def resolve_instrument_mfids_to_references(mfids, session) -> dict[str, InstrumentReferenceRead]:

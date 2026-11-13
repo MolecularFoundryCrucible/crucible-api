@@ -62,7 +62,7 @@ class TestModelsCoerceBlankProjectId:
         assert model(**required, owner_orcid="").owner_orcid is None
 
 
-@pytest.mark.parametrize("field", ["instrument_id", "instrument_mfid", "instrument_name"])
+@pytest.mark.parametrize("field", ["instrument_id", "instrument_mfid"])
 def test_dataset_create_coerces_blank_instrument_identifiers(field):
     assert getattr(DatasetCreate(**{field: "  "}), field) is None
 
@@ -116,7 +116,7 @@ def test_the_specific_payload_that_caused_this():
         "unique_id": "0tkmxbj3x5vg1000bv8kjxyykr",
         "dataset_name": "260806_131324_picam_readout.h5",
         "project_id": "",
-        "instrument_name": "HiP_Microscope",
+        "instrument_name": "",
     }
     ds = DatasetCreate(**payload)
     assert ds.project_id is None, (

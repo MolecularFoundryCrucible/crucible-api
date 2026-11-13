@@ -81,7 +81,7 @@ DELETE /instruments/{instrument_ref}/service_accounts/{service_account_ref}
 
 ## Display names
 
-`instrument_name` is a free-text display name, not an identifier: an instrument is referenced by `unique_id` or `instrument_id`. Dataset responses read `instrument_name` from the assigned instrument, so a rename appears in every dataset response, and a dataset without an instrument returns `null`. Deprecated name-based lookups are described in [dataset instrument assignment](dataset_instrument_assignment.md).
+`instrument_name` is a free-text display name, not an identifier: an instrument is referenced by `unique_id` or `instrument_id`. Dataset responses read `instrument_name` from the assigned instrument, so a rename appears in every dataset response, and a dataset without an instrument returns `null`. Requests never accept it in place of an identifier (see [dataset instrument assignment](dataset_instrument_assignment.md)).
 
 ## Deleting an instrument
 

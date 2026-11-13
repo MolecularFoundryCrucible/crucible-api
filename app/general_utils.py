@@ -9,6 +9,16 @@ def refuse_public_change(data):
     return data
 
 
+def refuse_instrument_name(data):
+    """instrument_name was removed as an input in 4.0.0. A null value from an older client is dropped;
+    a name is refused, because display names are not identifiers."""
+    if isinstance(data, dict) and "instrument_name" in data:
+        if data["instrument_name"] not in (None, ""):
+            raise ValueError("instrument_name is not accepted; name the instrument with instrument_id or instrument_mfid")
+        data = {key: value for key, value in data.items() if key != "instrument_name"}
+    return data
+
+
 def is_orcid(val):
     return re.fullmatch("[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}", val) is not None
 

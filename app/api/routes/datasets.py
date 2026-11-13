@@ -562,7 +562,7 @@ def list_datasets(
                 (Dataset.session_name, params.session_name_is_null),
                 (Dataset.measurement, params.measurement_is_null),
                 (Dataset.data_format, params.data_format_is_null),
-                (Dataset.owner_user_id, params.owner_id_is_null),
+                (Dataset.owner_user_id, params.owner_is_null),
                 (Dataset.instrument_mfid, params.instrument_mfid_is_null),
                 (Dataset.project_mfid, params.project_mfid_is_null),
             ):

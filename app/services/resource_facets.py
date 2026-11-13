@@ -336,7 +336,7 @@ def list_dataset_facets(
         (Dataset.session_name, params.session_name_is_null),
         (Dataset.measurement, params.measurement_is_null),
         (Dataset.data_format, params.data_format_is_null),
-        (Dataset.owner_user_id, params.owner_id_is_null),
+        (Dataset.owner_user_id, params.owner_is_null),
         (Dataset.instrument_mfid, params.instrument_mfid_is_null),
         (Dataset.project_mfid, params.project_mfid_is_null),
     ):
@@ -405,7 +405,7 @@ def list_sample_facets(
         query = query.where(owned_by_any(session, Sample.owner_user_id, owners))
     for filter_column, value in (
         (Sample.sample_type, params.sample_type_is_null),
-        (Sample.owner_user_id, params.owner_id_is_null),
+        (Sample.owner_user_id, params.owner_is_null),
         (Sample.project_mfid, params.project_mfid_is_null),
     ):
         query = _apply_null_filter(query, filter_column, value)

@@ -50,7 +50,7 @@ def test_owner_filters_take_an_id_username_or_email(client, db_engine, auth_as):
         assert _ids(client.get("/samples", params={"owner_id": reference})) == ["sa-owned"], reference
     for nobody in (OLD, "0000-0009-0000-0009", "someone", "nobody@example.com"):
         assert _ids(client.get("/datasets", params={"owner_id": nobody})) == [], nobody
-    assert _ids(client.get("/datasets", params={"owner_id_is_null": "true"})) == ["ds-ghost"]
+    assert _ids(client.get("/datasets", params={"owner_is_null": "true"})) == ["ds-ghost"]
     assert _ids(client.get("/datasets", params={"owner_orcid": "ada"})) == ["ds-owned"]
 
 

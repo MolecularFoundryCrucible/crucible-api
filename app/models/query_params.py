@@ -184,6 +184,15 @@ OWNER_REF_DESCRIPTION = (
 DEPRECATED_OWNER_ID_DESCRIPTION = "Deprecated: use owner_ref, which is repeatable and accepts the same forms."
 
 
+def fold_owner_is_null(params):
+    """owner_is_null, taking the deprecated owner_id_is_null when only that one is sent."""
+    legacy = params.__dict__.get("owner_id_is_null")
+    if legacy is not None and params.owner_is_null is not None and legacy != params.owner_is_null:
+        raise ValueError("owner_is_null and owner_id_is_null disagree")
+    if params.owner_is_null is None:
+        params.__dict__["owner_is_null"] = legacy
+
+
 def owner_ref_field():
     return Field(default=None, min_length=1, max_length=OWNER_REF_MAX, description=OWNER_REF_DESCRIPTION)
 
@@ -478,7 +487,8 @@ class DatasetListQuery(ResourceCollectionQuery):
     session_name_is_null: Optional[bool] = Field(default=None, description="Filter by whether session_name is null.")
     measurement_is_null: Optional[bool] = Field(default=None, description="Filter by whether measurement is null.")
     data_format_is_null: Optional[bool] = Field(default=None, description="Filter by whether data_format is null.")
-    owner_id_is_null: Optional[bool] = Field(default=None, description="Filter by whether the record has an owner.")
+    owner_is_null: Optional[bool] = Field(default=None, description="Filter by whether the record has an owner.")
+    owner_id_is_null: Optional[bool] = Field(default=None, deprecated=True, description="Deprecated: use owner_is_null.")
     instrument_mfid_is_null: Optional[bool] = Field(default=None, description="Filter by whether a canonical registered instrument is assigned.")
     project_mfid_is_null: Optional[bool] = Field(default=None, description="Filter by whether a canonical primary project is assigned.")
 
@@ -493,8 +503,9 @@ class DatasetListQuery(ResourceCollectionQuery):
             raise ValueError("measurement_is_null=true cannot be combined with measurement")
         if self.data_format_is_null is True and self.data_format is not None:
             raise ValueError("data_format_is_null=true cannot be combined with data_format")
-        if self.owner_id_is_null is True and (self.owner_id is not None or owner_orcid is not None or self.owner_ref):
-            raise ValueError("owner_id_is_null=true cannot be combined with an exact owner filter")
+        fold_owner_is_null(self)
+        if self.owner_is_null is True and (self.owner_id is not None or owner_orcid is not None or self.owner_ref):
+            raise ValueError("owner_is_null=true cannot be combined with an owner filter")
         if self.instrument_mfid_is_null is True and (self.instrument_mfid is not None or self.instrument_id is not None):
             raise ValueError("instrument_mfid_is_null=true cannot be combined with an instrument filter")
         if self.project_mfid_is_null is True and (self.project_id is not None or self.project_mfid is not None):
@@ -523,7 +534,8 @@ class SampleListQuery(ResourceCollectionQuery):
     description: Optional[str] = None
     timestamp: Optional[str] = None
     sample_type_is_null: Optional[bool] = Field(default=None, description="Filter by whether sample_type is null.")
-    owner_id_is_null: Optional[bool] = Field(default=None, description="Filter by whether the record has an owner.")
+    owner_is_null: Optional[bool] = Field(default=None, description="Filter by whether the record has an owner.")
+    owner_id_is_null: Optional[bool] = Field(default=None, deprecated=True, description="Deprecated: use owner_is_null.")
     project_mfid_is_null: Optional[bool] = Field(default=None, description="Filter by whether a canonical primary project is assigned.")
 
     @model_validator(mode="after")
@@ -533,8 +545,9 @@ class SampleListQuery(ResourceCollectionQuery):
             raise ValueError("owner_id and owner_orcid must identify the same owner")
         if self.sample_type_is_null is True and self.sample_type is not None:
             raise ValueError("sample_type_is_null=true cannot be combined with sample_type")
-        if self.owner_id_is_null is True and (self.owner_id is not None or owner_orcid is not None or self.owner_ref):
-            raise ValueError("owner_id_is_null=true cannot be combined with an exact owner filter")
+        fold_owner_is_null(self)
+        if self.owner_is_null is True and (self.owner_id is not None or owner_orcid is not None or self.owner_ref):
+            raise ValueError("owner_is_null=true cannot be combined with an owner filter")
         if self.project_mfid_is_null is True and (self.project_id is not None or self.project_mfid is not None):
             raise ValueError("project_mfid_is_null=true cannot be combined with a project filter")
         return self
@@ -631,7 +644,8 @@ class DatasetFacetQuery(ResourceFacetQuery):
     session_name_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether session_name is null.")
     measurement_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether measurement is null.")
     data_format_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether data_format is null.")
-    owner_id_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether they have an owner.")
+    owner_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether they have an owner.")
+    owner_id_is_null: Optional[bool] = Field(default=None, deprecated=True, description="Deprecated: use owner_is_null.")
     instrument_mfid_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by canonical instrument assignment.")
     project_mfid_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by canonical primary project assignment.")
 
@@ -643,8 +657,9 @@ class DatasetFacetQuery(ResourceFacetQuery):
             raise ValueError("measurement_is_null=true cannot be combined with measurement")
         if self.data_format_is_null is True and self.data_format is not None:
             raise ValueError("data_format_is_null=true cannot be combined with data_format")
-        if self.owner_id_is_null is True and (self.owner_id is not None or self.owner_ref):
-            raise ValueError("owner_id_is_null=true cannot be combined with an owner filter")
+        fold_owner_is_null(self)
+        if self.owner_is_null is True and (self.owner_id is not None or self.owner_ref):
+            raise ValueError("owner_is_null=true cannot be combined with an owner filter")
         if self.instrument_mfid_is_null is True and (self.instrument_mfid is not None or self.instrument_id is not None):
             raise ValueError("instrument_mfid_is_null=true cannot be combined with an instrument filter")
         if self.project_mfid_is_null is True and (self.project_id is not None or self.project_mfid is not None):
@@ -659,15 +674,17 @@ class SampleFacetQuery(ResourceFacetQuery):
     owner_ref: Optional[list[str]] = owner_ref_field()
     owner_id: Optional[str] = Field(default=None, min_length=1, deprecated=True, description=DEPRECATED_OWNER_ID_DESCRIPTION)
     sample_type_is_null: Optional[bool] = Field(default=None, description="Restrict contributing samples by whether sample_type is null.")
-    owner_id_is_null: Optional[bool] = Field(default=None, description="Restrict contributing samples by whether they have an owner.")
+    owner_is_null: Optional[bool] = Field(default=None, description="Restrict contributing samples by whether they have an owner.")
+    owner_id_is_null: Optional[bool] = Field(default=None, deprecated=True, description="Deprecated: use owner_is_null.")
     project_mfid_is_null: Optional[bool] = Field(default=None, description="Restrict contributing samples by canonical primary project assignment.")
 
     @model_validator(mode="after")
     def validate_facet_filters(self):
         if self.sample_type_is_null is True and self.sample_type is not None:
             raise ValueError("sample_type_is_null=true cannot be combined with sample_type")
-        if self.owner_id_is_null is True and (self.owner_id is not None or self.owner_ref):
-            raise ValueError("owner_id_is_null=true cannot be combined with an owner filter")
+        fold_owner_is_null(self)
+        if self.owner_is_null is True and (self.owner_id is not None or self.owner_ref):
+            raise ValueError("owner_is_null=true cannot be combined with an owner filter")
         if self.project_mfid_is_null is True and (self.project_id is not None or self.project_mfid is not None):
             raise ValueError("project_mfid_is_null=true cannot be combined with a project filter")
         return self

@@ -406,7 +406,7 @@ def list_samples(
                 q = q.where(getattr(Sample, key) == value)
             for column, value in (
                 (Sample.sample_type, params.sample_type_is_null),
-                (Sample.owner_user_id, params.owner_id_is_null),
+                (Sample.owner_user_id, params.owner_is_null),
                 (Sample.project_mfid, params.project_mfid_is_null),
             ):
                 if value is not None:

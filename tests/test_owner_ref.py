@@ -60,7 +60,7 @@ def test_owner_filter_is_repeatable_with_or(client, db_engine, auth_as):
     assert owned("bob", CAROL) == {ids["bob"], ids["carol"]}
     assert owned("nobody-like-this") == set()
     assert client.get("/datasets", params={"owner_id": "bob"}).json()["items"][0]["unique_id"] == ids["bob"]
-    assert client.get("/datasets", params=[("owner_ref", "bob"), ("owner_id_is_null", "true")]).status_code == 422
+    assert client.get("/datasets", params=[("owner_ref", "bob"), ("owner_is_null", "true")]).status_code == 422
     facets = client.get("/datasets/facets", params=[("field", "owner"), ("owner_ref", "bob"), ("owner_ref", "carol")])
     assert facets.status_code == 200, facets.text
     assert sum(bucket["count"] for bucket in facets.json()["items"]) == 2
@@ -83,3 +83,16 @@ def test_transfer_takes_new_owner_ref(client, db_engine, auth_as):
     assert resp.status_code == 200, resp.text
     assert resp.json()["new_owner"]["unique_id"] == BOB
     assert client.post(f"/resources/{dataset}/transfer_ownership", json={}).status_code == 422
+
+
+def test_owner_is_null_with_its_deprecated_alias(client, db_engine, auth_as):
+    _people(db_engine)
+    _as(auth_as, db_engine, ALICE)
+    owned = _dataset(client, "owned", "bob")["unique_id"]
+    for name in ("owner_is_null", "owner_id_is_null"):
+        resp = client.get("/datasets", params={name: "false"})
+        assert resp.status_code == 200, resp.text
+        assert owned in {item["unique_id"] for item in resp.json()["items"]}
+    assert client.get("/datasets", params={"owner_is_null": "true", "owner_id_is_null": "false"}).status_code == 422
+    assert client.get("/samples", params={"owner_is_null": "true"}).status_code == 200
+    assert client.get("/datasets/facets", params={"field": "owner", "owner_is_null": "false"}).status_code == 200

@@ -24,7 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Deprecated
 
-- Request names `owner`, `owner_orcid`, `project_lead*` and `new_owner`, replaced by `owner_ref` and `new_owner_ref`; the `owner_id` filter, replaced by the repeatable `owner_ref`.
+- Request names `owner`, `owner_orcid`, `project_lead*` and `new_owner`, replaced by `owner_ref` and `new_owner_ref`; the `owner_id` filter, replaced by the repeatable `owner_ref`; `owner_id_is_null`, replaced by `owner_is_null`.
 - Response fields `owner_orcid`, `lead`, `project_lead_orcid`, and on datasets and samples `project_id`, `instrument_id` and `instrument_name`, replaced by the nested `owner`, `project` and `instrument`.
 
 ### Changed

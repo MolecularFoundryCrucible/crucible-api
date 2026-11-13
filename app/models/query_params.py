@@ -100,8 +100,8 @@ INSTRUMENT_SORT_DESCRIPTION = (
     "instrument changed, recorded at most hourly. Omit to keep the default newest-first order."
 )
 INSTRUMENT_MEMBERS_DESCRIPTION = (
-    "Include people and projects holding a role on the instrument record. "
-    "Returned only to callers who hold a role on the instrument and to platform administrators."
+    "Include the instrument's members, highest role first. "
+    "Returned only to members and to platform administrators."
 )
 
 

@@ -17,12 +17,12 @@ The forms do not overlap: an email contains `@`, an ORCID matches `NNNN-NNNN-NNN
 
 | Suffix | Accepts | Examples |
 |---|---|---|
-| `x_id` | The stable identity of a user, or the slug of a project or instrument | `owner_id`, `project_id`, `instrument_id` |
+| `x_id` | The stable identity of a user, or the slug of a project or instrument | `project_id`, `instrument_id` |
 | `x_mfid`, `{mfid}` | The MFID only | `project_mfid`, `instrument_mfid`, `{dataset_mfid}` |
-| `x_ref`, `{x_ref}` | Any reference form for that entity, resolved by shape | `member_ref`, `{user_ref}`, `{project_ref}` |
-| Bare noun | An expanded object, in responses only | `owner`, `lead`, `members` |
+| `x_ref`, `{x_ref}` | Any reference form for that entity, resolved by shape | `owner_ref`, `member_ref`, `{user_ref}`, `{project_ref}` |
+| Bare noun | An expanded object, in responses only | `owner`, `project`, `instrument`, `members` |
 
-The `_id` suffix does not name an MFID in current fields. Response fields that did so are deprecated and returned alongside their `_mfid` replacement. Some request fields predate this rule and take a user reference under a bare name: `owner` and `new_owner` in request bodies, `project_lead`, and `accessible_to_user`.
+The `_id` suffix does not name an MFID in current fields. Response fields that did so are deprecated and returned alongside their `_mfid` replacement. A request field that names a user ends in `_ref` (`owner_ref`, `new_owner_ref`, `member_ref`), and a response returns the user as `owner`, a `UserPublicRead`. Older names remain as deprecated aliases: `owner`, `owner_orcid`, `project_lead`, `project_lead_orcid`, `project_lead_email`, `project_lead_username` and `new_owner` in request bodies, and the `owner_id` filter.
 
 ## Path segments
 
@@ -60,7 +60,7 @@ Projects and instruments are named by a pair of optional fields. Either may be s
 | `GET /datasets`, `GET /samples`, their facet and search routes | `project_id`, `project_mfid` |
 | `GET /datasets`, `GET /datasets/facets` | `instrument_id`, `instrument_mfid` |
 
-User references in bodies (`owner`, `new_owner`, `project_lead`) and the exact owner filter `owner_id` accept a `unique_id`, linked ORCID, username or email. The access selectors `accessible_to_user` and `accessible_to_project` accept any form of their entity.
+User references in bodies (`owner_ref`, `new_owner_ref`) and the owner filter `owner_ref` accept a `unique_id`, linked ORCID, username or email. The access selectors `accessible_to_user` and `accessible_to_project` accept any form of their entity.
 
 Responses that reference a project or instrument include both the slug and the MFID, for example `project_id` and `project_mfid`, or a nested reference with `unique_id` and the slug.
 

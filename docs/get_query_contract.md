@@ -10,13 +10,23 @@ Repeated values of one filter use OR semantics unless stated otherwise; differen
 
 ## Filters
 
-These filters apply to the dataset, sample, project and instrument collections where each is declared:
+These filters apply to the dataset, sample, project and instrument collections where each is declared.
+
+### Combining filters
+
+1. Different parameters combine with AND.
+2. Repeated values of one parameter combine with OR when the parameter matches something a record has once: owner, status, MFID, project, instrument, role, affiliation.
+3. Repeated values combine with AND when the parameter asks for a relationship a record can have with many users or projects at once: `member_ref`, `accessible_to_user`, `accessible_to_project`. Their descriptions say "every listed".
+4. No parameter switches between AND and OR, and an OR across different parameters (owned by one user or with another as a member) cannot be expressed with filters.
+
+### Filter reference
+
 
 - `accessible_to_user` and `accessible_to_project` (at most 10 values each, AND semantics) keep records that every listed user or project can access. Ordinary callers may select only themselves and projects where they hold standing; platform contributors and administrators may select any user or project.
-- `affiliation` relates each result to the caller: `owner` and `member` on datasets and samples, `owner` on projects, `owner` and `maintainer` on instruments. `member` matches records reached through the caller's own grants, so records visible only because they are public are excluded. `affiliation` combines with an exact owner filter as an intersection: `affiliation=member&owner_id=...` returns the records the caller reaches through their own grants that this owner holds.
+- `affiliation` relates each result to the caller: `owner`, `member` and, on datasets, `instrument`; `owner` on projects; `owner`, `maintainer` and `member` on instruments. `member` matches records reached through the caller's own grants, so records visible only because they are public, or only through instrument membership, are excluded; `instrument` matches datasets read as a member of their instrument. `affiliation` combines with the owner filter as an intersection: `affiliation=member&owner_ref=...` returns the records the caller reaches through their own grants that this owner holds.
 - `mfid` (at most 100 values) selects records by MFID for batch lookups. MFIDs the caller cannot read, missing MFIDs and records pending deletion are omitted, and results keep the collection's order, so clients key them by MFID. On projects it finds projects the caller is not a member of; on instruments it searches every status unless `status` is given. On datasets and samples `unique_id` is a deprecated alias of `mfid` (header `Deprecation: @1792540800`); sending both returns 422.
-- `owner_id` is the exact owner filter and accepts a `unique_id`, a linked ORCID, a username or an email. Deprecated aliases: `owner_orcid` on datasets and samples, `owner` on instruments. An alias combined with `owner_id` must name the same owner (422).
-- `project_id` and `project_mfid` select one project on datasets, samples, their facets and search routes; `project_scope=assigned|shared|all` (default `assigned`) chooses the relationship and requires one of them. Datasets also accept `instrument_id` and `instrument_mfid`; `instrument_name` is deprecated.
+- `owner_ref` (at most 10 values, OR semantics) selects records owned by any listed user, on datasets, samples, instruments, projects and their facet and search routes. Each value is a `unique_id`, a linked ORCID, a username or an email, resolved by its form; an unknown user matches nothing. Deprecated single-value aliases: `owner_id`, `owner_orcid` on datasets and samples, `owner` on instruments.
+- `project_id` and `project_mfid` select one project on datasets, samples, their facets and search routes; `project_scope=assigned|shared|all` (default `assigned`) chooses the relationship and requires one of them. Datasets also accept `instrument_id` and `instrument_mfid`.
 - `visibility=all|public|private` restricts datasets and samples by public visibility.
 - `creation_time_gte`, `creation_time_lte`, `modification_time_gte` and `modification_time_lte` are inclusive. A value without an offset is read as UTC. A lower bound after its upper bound returns 422.
 - Datasets and samples expose `*_is_null` filters for the faceted nullable fields (for example `measurement_is_null`, `owner_id_is_null`, `project_mfid_is_null`). Omission does not constrain nullability, `true` selects null values and `false` non-null values. `true` combined with a value for the same field returns 422.
@@ -24,7 +34,7 @@ These filters apply to the dataset, sample, project and instrument collections w
 - Projects and instruments accept `active_since`. Activity is recorded at most hourly.
 - Instruments default to `status=active` unless `status`, `instrument_id` or `mfid` is given.
 
-`include_metadata`, `include_links`, `include_owner` and `include_members` change the representation only, never the rows or the cursor. `include_members` on a collection requires an exact `project_id` or `instrument_id`. Project and instrument items include `role`: the caller's project membership role, or the caller's effective role on the instrument record. Public access is not a role, and bound instrument service accounts receive `null`.
+`include_metadata`, `include_links`, `include_owner` and `include_members` change the representation only, never the rows or the cursor. `include_owner` defaults to true. `include_members` on a collection requires an exact `project_id` or `instrument_id`. Every item includes `role`: the caller's effective role on the record (for projects and instruments, their membership role). Public access is not a role, and bound instrument service accounts receive `null`. Items carry `capabilities` only on detail routes and `GET /resources/{mfid}`.
 
 ## Sorting
 
@@ -96,7 +106,11 @@ Facet routes accept `sort=value|label|count` (default `value`) and `direction=as
 
 ## Singleton routes
 
-Singleton routes accept only representation parameters such as `include_metadata`, `include_links`, `include_owner`, `include_members` and the deprecated sample `include_datasets` (replaced by `include_links`).
+Singleton routes accept only representation parameters such as `include_metadata`, `include_links`, `include_owner`, `include_members` and the deprecated sample `include_datasets` (replaced by `include_links`, default false).
+
+## Related records
+
+`GET /datasets/{id}/parents|children`, `GET /samples/{id}/parents|children` and a sample's embedded `datasets` return full dataset and sample items with `links` always null, so a relationship never nests further. `include_links` lists a record's relationships as `LinkedResource` references (MFID, type, name, direction, relationship type).
 
 ## Removed routes
 

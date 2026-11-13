@@ -12,11 +12,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Every instrument member reads the datasets assigned to the instrument, at `viewer` and never more; the migration makes today's owners, admins and editors members.
 - Transferring an instrument keeps the previous owner as an `admin` member, and a service account cannot own an instrument.
 - `instrument_name` is no longer an input: dataset create and update return 422 for a name (`null` is ignored), and the `instrument_name` filter on `GET /datasets` returns 422; use `instrument_id` or `instrument_mfid`.
+- Records have one shape: `owner` (a `UserPublicRead`) on every record and by default on lists and search, project `resource_type`, `role` on datasets and samples, a typed `deletion_request`, and the project member shape for instrument `members`.
+- Parent and child routes and a sample's embedded `datasets` return full responses without nested links; sample `include_datasets` defaults to false.
+- `capabilities.can_delete` follows direct deletion (owners only): true for dataset and sample owners, false for project and instrument admins who are not the owner.
 
 ### Added
 
 - `affiliation=instrument` on dataset lists, facets and search, for datasets read through instrument membership; `affiliation=member` on instruments.
 - `python -m app.cli instruments check [--commit]` reports, and repairs, instrument grants that do not match membership and dataset assignment.
+- `owner_ref` names a user in create bodies, `new_owner_ref` in ownership transfer; the owner filter `owner_ref` is repeatable and exists on projects too.
+
+### Deprecated
+
+- Request names `owner`, `owner_orcid`, `project_lead*` and `new_owner`, replaced by `owner_ref` and `new_owner_ref`; the `owner_id` filter, replaced by the repeatable `owner_ref`.
+- Response fields `owner_orcid`, `lead`, `project_lead_orcid`, and on datasets and samples `project_id`, `instrument_id` and `instrument_name`, replaced by the nested `owner`, `project` and `instrument`.
 
 ### Changed
 

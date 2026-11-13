@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.cli import db
-from app.services.instrument_members import grant_problems, repair_grants
+from app.services.instrument_members import datasets_without_id_record, grant_problems, repair_grants
 from app.tables import AccessGroup, Dataset, Instrument, Resource, ResourceACL, User, UserAccessGroupLink
 
 PG_URL = os.getenv("CRUCIBLE_TEST_PG_URL")
@@ -44,6 +44,7 @@ def _seed(engine):
         for mfid, instrument in (("ds-1", "inst-1"), ("ds-2", "inst-1"), ("ds-3", "inst-2")):
             add(Resource(mfid=mfid, resource_type="dataset"))
             add(Dataset(unique_id=mfid, dataset_name=mfid, instrument_mfid=instrument))
+        add(Dataset(unique_id="no-record", dataset_name="no-record", instrument_mfid="inst-1"))
         add(Resource(mfid="gone", resource_type="dataset"))
         for mfid, operator in (("ds-1", "inst-1"), ("ds-3", "inst-1"), ("gone", "inst-1")):
             add(ResourceACL(mfid=mfid, accessgroup_id=operators[operator], read=True, write=True, permission="contributor"))
@@ -88,6 +89,7 @@ def test_upgrade_moves_maintainers_into_members_and_downgrade_restores_them():
             assert tuple(read_write) == (True, False)
         with Session(engine) as session:
             assert set(grant_problems(session).values()) == {0}
+            assert datasets_without_id_record(session) == 1
 
         _alembic(engine, command.downgrade, "3b8e5d1f7c24")
         with engine.connect() as connection:

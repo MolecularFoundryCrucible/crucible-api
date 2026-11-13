@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete
 from sqlmodel import Session, select
 
-from app.models.access import AccessGrantRead, EntryCapabilities
+from app.models.access import EntryCapabilities
 from app.models.access_groups import AccessGroupMemberRead
 from app.tables import AccessGroup, ResourceACL, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, Principal, Role, effective_role
@@ -104,21 +104,6 @@ def load_members(session: Session, principal: Principal, instrument_mfid: str) -
     """The instrument's members, highest role first, with what `principal` may do to each."""
     return [
         AccessGroupMemberRead.model_validate(user, update={"role": role.db_value, "capabilities": capabilities})
-        for user, role, capabilities in _members_with_capabilities(session, principal, instrument_mfid)
-    ]
-
-
-def load_member_grants(session: Session, principal: Principal, instrument_mfid: str) -> list[AccessGrantRead]:
-    """The members in the shape of `members` on instrument responses."""
-    return [
-        AccessGrantRead(
-            principal_id=user.unique_id,
-            principal_type="user",
-            permission=role.db_value,
-            slug=user.username,
-            display_name=f"{user.first_name} {user.last_name}".strip() or None,
-            capabilities=capabilities,
-        )
         for user, role, capabilities in _members_with_capabilities(session, principal, instrument_mfid)
     ]
 

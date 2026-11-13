@@ -212,7 +212,7 @@ class DatasetDetailQuery(StrictQueryModel):
 
 class SampleDetailQuery(DatasetDetailQuery):
     include_datasets: bool = Field(
-        default=True,
+        default=False,
         description=(
             "Include legacy embedded dataset objects. Set false and use include_links or "
             "GET /datasets?sample_mfid=... for efficient relationship access."
@@ -337,7 +337,7 @@ class ResourceCollectionQuery(StrictQueryModel):
     )] = None
     include_metadata: bool = False
     include_links: bool = False
-    include_owner: bool = False
+    include_owner: bool = True
     include_total: Optional[bool] = Field(
         default=None,
         description=(
@@ -814,7 +814,7 @@ class InstrumentListQuery(StrictQueryModel):
         description=INSTRUMENT_AFFILIATION_DESCRIPTION,
     )
     include_metadata: bool = False
-    include_owner: bool = False
+    include_owner: bool = True
     include_members: bool = Field(
         default=False,
         description=INSTRUMENT_MEMBERS_DESCRIPTION + " Requires an exact instrument_id filter.",
@@ -1014,6 +1014,7 @@ class SearchQuery(StrictQueryModel):
 
 
 class ResourceSearchQuery(SearchQuery):
+    include_owner: bool = True
     affiliation: Optional[list[ResourceAffiliation]] = Field(
         default=None,
         min_length=1,
@@ -1064,5 +1065,5 @@ class InstrumentSearchQuery(SearchQuery):
         max_length=5,
         description=INSTRUMENT_AFFILIATION_DESCRIPTION,
     )
-    include_owner: bool = False
+    include_owner: bool = True
 

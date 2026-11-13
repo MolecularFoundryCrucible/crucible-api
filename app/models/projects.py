@@ -1,11 +1,10 @@
-import warnings
 from enum import Enum
 from typing import List, Literal, Optional
 from pydantic import MISSING, ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.fields import NonBlankStr
-from app.models.resource import ResourceCapabilities
+from app.models.resource import ActiveDeletionRequestRead, ResourceCapabilities
 from app.models.timestamps import UtcDatetime
 from app.models.users import UserPublicRead
 
@@ -62,29 +61,25 @@ class ProjectRead(SQLModel):
     unique_id: str
     project_id: str
     organization: str
-    project_lead_orcid: Optional[str] = None
+    project_lead_orcid: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use owner.unique_id.")
     status: Optional[str] = None
     title: Optional[str] = None
     proposal_sync: bool = False
     capabilities: Optional[ResourceCapabilities] = None
-
-    @model_validator(mode="after")
-    def warn_missing_lead(self):
-        if not self.project_lead_orcid:
-            warnings.warn(f"Project '{self.project_id}' has no project_lead_orcid", stacklevel=2)
-        return self
+    resource_type: Optional[str] = "project"
 
 
 class ProjectWithLead(ProjectRead):
-    '''ProjectRead extended with a public-safe lead profile. Project metadata and
+    '''ProjectRead extended with the owner's public profile. Project metadata and
     members remain restricted to project members and platform administrators.'''
-    lead: Optional[UserPublicRead] = None
+    owner: Optional[UserPublicRead] = None
+    lead: Optional[UserPublicRead] = Field(default=None, deprecated=True, description="Deprecated: use owner.")
     scientific_metadata: Optional[dict] = None
     creation_time: Optional[UtcDatetime] = None
     modification_time: Optional[UtcDatetime] = None
     last_activity_at: Optional[UtcDatetime] = None
     members: Optional[List[AccessGroupMemberRead]] = None
-    deletion_request: Optional[dict] = None
+    deletion_request: Optional[ActiveDeletionRequestRead] = None
     role: Optional[str] = Field(
         default=None,
         description=(
@@ -92,6 +87,16 @@ class ProjectWithLead(ProjectRead):
             "on GET /users/{user_id}/projects it is that user's role. Null when not a member."
         ),
     )
+
+
+    @model_validator(mode="after")
+    def owner_and_lead_match(self):
+        values = self.__dict__
+        if values.get("owner") is None and values.get("lead") is not None:
+            values["owner"] = values["lead"]
+        elif values.get("lead") is None and values.get("owner") is not None:
+            values["lead"] = values["owner"]
+        return self
 
 
 class ProjectReferenceRead(SQLModel):

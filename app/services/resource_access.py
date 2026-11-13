@@ -118,6 +118,28 @@ def record_role(principal: Principal, acl_rows) -> Role | None:
     return effective_role(principal, [(gid, role) for gid, role in acl_rows if gid not in public_ids])
 
 
+def record_roles(session: Session, principal: Principal, mfids) -> dict[str, str]:
+    """The caller's effective role on each record, ignoring public access, from one grant query."""
+    from app.tables import ResourceACL
+
+    mfids = list(dict.fromkeys(mfids))
+    group_ids = {m.id for m in principal.groups}
+    if not mfids or not group_ids:
+        return {}
+    rows_by_mfid: dict = {}
+    for mfid, group_id, permission in session.exec(
+        select(ResourceACL.mfid, ResourceACL.accessgroup_id, ResourceACL.permission)
+        .where(ResourceACL.mfid.in_(mfids), ResourceACL.accessgroup_id.in_(group_ids))
+    ).all():
+        if permission is not None:
+            rows_by_mfid.setdefault(mfid, []).append((group_id, Role.from_db(permission)))
+    return {
+        mfid: role.db_value
+        for mfid, rows in rows_by_mfid.items()
+        if (role := record_role(principal, rows)) is not None
+    }
+
+
 def may_view_members(session: Session, principal: Principal, mfid: str) -> bool:
     """Platform administrators and callers holding any role on the resource
     other than through public access."""

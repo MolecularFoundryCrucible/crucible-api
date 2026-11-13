@@ -4,7 +4,9 @@ from sqlmodel import SQLModel
 
 from app.general_utils import fold_owner_ref, refuse_public_change
 from app.general_utils import blank_to_none, is_valid_mfid
-from app.models.datasets import DatasetRead
+from app.models.access import AccessPermission
+from app.models.resource import RECORD_ROLE_DESCRIPTION, ActiveDeletionRequestRead
+from app.models.datasets import DatasetResponse
 from app.models.fields import NonBlankStr
 from app.models.links import LinkedResource
 from app.models.projects import ProjectReferenceRead, ProjectRelation
@@ -109,8 +111,8 @@ class SampleRead(SQLModel):
     unique_id: str
     sample_name: str
     sample_type: Optional[str] = None
-    owner_orcid: Optional[str] = None
-    project_id: Optional[str] = None
+    owner_orcid: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use owner.unique_id.")
+    project_id: Optional[str] = Field(default=None, deprecated=True, description="Deprecated: use project.project_id.")
     project: Optional[ProjectReferenceRead] = None
     description: Optional[str] = None
     timestamp: Optional[str] = None
@@ -123,13 +125,14 @@ class SampleResponse(SampleRead):
     creation_time: Optional[UtcDatetime] = None
     modification_time: Optional[UtcDatetime] = None
     scientific_metadata: Optional[dict] = None
-    datasets: Optional[List[DatasetRead]] = Field(
+    datasets: Optional[List[DatasetResponse]] = Field(
         default=None,
         deprecated=True,
         description="Deprecated embedded dataset expansion. Use include_links or GET /datasets?sample_mfid={sample_mfid}.",
     )
-    deletion_request: Optional[dict] = None
+    deletion_request: Optional[ActiveDeletionRequestRead] = None
     links: Optional[List[LinkedResource]] = None
     owner: Optional[UserPublicRead] = None
     capabilities: Optional[ResourceCapabilities] = None
     project_relation: Optional[ProjectRelation] = None
+    role: Optional[AccessPermission] = Field(default=None, description=RECORD_ROLE_DESCRIPTION)

@@ -12,6 +12,8 @@ from sqlalchemy.orm import selectinload
 
 from sqlmodel import and_, Session, select
 
+from app.services.related_records import dataset_responses
+from app.services.resource_access import record_roles
 from app.services.instrument_members import grant_dataset as grant_instrument_members, revoke_dataset as revoke_instrument_members
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
@@ -42,7 +44,7 @@ from app.models.datasets import (
     KeywordRead,
     AssociatedFileCreate, AssociatedFileRead,
     DatasetCreate, DatasetInstrumentAssign, DatasetInstrumentRead,
-    DatasetRead, DatasetResponse, DatasetUpdate, file_etag,
+    DatasetResponse, DatasetUpdate, file_etag,
     ThumbnailCreate, ThumbnailPreviewRead, ThumbnailRead, ThumbnailUpdate,
 )
 from app.models.instrument import InstrumentReferenceRead
@@ -646,6 +648,7 @@ def list_datasets(
                     )
 
         owners = owners_of(session, (row[0] for row in results))
+        roles = record_roles(session, auth_res, [row[0].unique_id for row in results])
 
         items = []
         for row in results:
@@ -682,6 +685,7 @@ def list_datasets(
                 "scientific_metadata": sci_md,
                 "links": links,
                 **owner_fields(dataset, owners, include_owner),
+                "role": roles.get(dataset.unique_id),
                 "project_relation": (
                     "assigned" if dataset.project_mfid == filter_project_mfid else "shared"
                 ) if filter_project_mfid is not None else None,
@@ -760,9 +764,11 @@ def search_datasets(
         ).limit(limit)
         results = session.exec(query).all()
         owners = owners_of(session, (row[0] for row in results))
+        roles = record_roles(session, auth_res, [row[0].unique_id for row in results])
         items = [DatasetResponse.model_validate({
             **dataset.model_dump(),
-            **owner_fields(dataset, owners),
+            **owner_fields(dataset, owners, params.include_owner),
+            "role": roles.get(dataset.unique_id),
             **dataset_instrument_fields(dataset, InstrumentReferenceRead(
                 unique_id=instrument_mfid,
                 instrument_id=instrument_id,
@@ -900,11 +906,12 @@ def unlink_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_data
         return {"message": f"Successfully unlinked {parent_dataset_id} -> {child_dataset_id}"}
 
 
-@router.get("/datasets/{child_dataset_mfid}/parents", response_model=PaginatedResponse[DatasetRead])
+@router.get("/datasets/{child_dataset_mfid}/parents", response_model=PaginatedResponse[DatasetResponse])
 def list_parent_datasets(child_dataset_id: ChildDatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                          limit: int = Query(default=100, ge=1, le=1000),
                          offset: int = Query(default=0, ge=0),
-                         relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
+                         relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None),
+                         include_owner: bool = True):
     '''
     Returns a paginated list of parent datasets for a given dataset.
 
@@ -931,24 +938,16 @@ def list_parent_datasets(child_dataset_id: ChildDatasetMfid, auth_res: Annotated
             query = query.where(DatasetLink.relationship_type == relationship_type)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         parents = session.exec(query.offset(offset).limit(limit)).all()
-        instrument_references = resolve_instrument_mfids_to_references((d.instrument_mfid for d in parents), session)
-        project_references = resolve_project_mfids_to_references((d.project_mfid for d in parents), session)
-        owners = owners_of(session, parents)
-        items = [DatasetRead.model_validate({
-            **d.model_dump(),
-            **owner_fields(d, owners),
-            **dataset_instrument_fields(d, instrument_references.get(d.instrument_mfid)),
-            "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else None,
-            "project": project_references.get(d.project_mfid),
-        }) for d in parents]
+        items = dataset_responses(session, auth_res, parents, include_owner)
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.get("/datasets/{parent_dataset_mfid}/children", response_model=PaginatedResponse[DatasetRead])
+@router.get("/datasets/{parent_dataset_mfid}/children", response_model=PaginatedResponse[DatasetResponse])
 def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                         limit: int = Query(default=100, ge=1, le=1000),
                         offset: int = Query(default=0, ge=0),
-                        relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
+                        relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None),
+                        include_owner: bool = True):
     '''
     Returns a paginated list of child datasets for a given parent dataset.
 
@@ -975,16 +974,7 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
             query = query.where(DatasetLink.relationship_type == relationship_type)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         children = session.exec(query.offset(offset).limit(limit)).all()
-        instrument_references = resolve_instrument_mfids_to_references((d.instrument_mfid for d in children), session)
-        project_references = resolve_project_mfids_to_references((d.project_mfid for d in children), session)
-        owners = owners_of(session, children)
-        items = [DatasetRead.model_validate({
-            **d.model_dump(),
-            **owner_fields(d, owners),
-            **dataset_instrument_fields(d, instrument_references.get(d.instrument_mfid)),
-            "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else None,
-            "project": project_references.get(d.project_mfid),
-        }) for d in children]
+        items = dataset_responses(session, auth_res, children, include_owner)
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 

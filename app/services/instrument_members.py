@@ -175,11 +175,13 @@ GRANT_CHECKS = {
         WHERE g.group_type = 'instrument_member' AND g.group_name <> acl.mfid || :suffix
           AND NOT EXISTS (SELECT 1 FROM dataset d WHERE d.unique_id = acl.mfid AND d.instrument_mfid || :suffix = g.group_name)""",
     "datasets_missing_operator_grant": """
-        SELECT count(*) FROM dataset d WHERE d.instrument_mfid IS NOT NULL AND NOT EXISTS (
+        SELECT count(*) FROM dataset d WHERE d.instrument_mfid IS NOT NULL
+          AND EXISTS (SELECT 1 FROM idtype record WHERE record.mfid = d.unique_id) AND NOT EXISTS (
             SELECT 1 FROM resourceacl acl JOIN accessgroup g ON g.id = acl.accessgroup_id
             WHERE acl.mfid = d.unique_id AND g.group_type = 'instrument' AND g.group_name = d.instrument_mfid)""",
     "datasets_missing_member_grant": """
-        SELECT count(*) FROM dataset d WHERE d.instrument_mfid IS NOT NULL AND NOT EXISTS (
+        SELECT count(*) FROM dataset d WHERE d.instrument_mfid IS NOT NULL
+          AND EXISTS (SELECT 1 FROM idtype record WHERE record.mfid = d.unique_id) AND NOT EXISTS (
             SELECT 1 FROM resourceacl acl JOIN accessgroup g ON g.id = acl.accessgroup_id
             WHERE acl.mfid = d.unique_id AND g.group_type = 'instrument_member' AND g.group_name = d.instrument_mfid || :suffix)""",
     "person_or_project_grants_on_instruments": """
@@ -190,6 +192,15 @@ GRANT_CHECKS = {
             SELECT 1 FROM resourceacl acl JOIN accessgroup g ON g.id = acl.accessgroup_id
             WHERE acl.mfid = i.unique_id AND g.group_type = 'instrument_member' AND acl.permission = 'owner')""",
 }
+
+
+def datasets_without_id_record(session: Session) -> int:
+    """Datasets with no row in idtype. They cannot hold grants, so the checks above skip them."""
+    from sqlalchemy import text
+
+    return session.execute(text(
+        "SELECT count(*) FROM dataset d WHERE NOT EXISTS (SELECT 1 FROM idtype record WHERE record.mfid = d.unique_id)"
+    )).scalar()
 
 
 def grant_problems(session: Session) -> dict[str, int]:
@@ -230,6 +241,7 @@ REPAIR_STATEMENTS = (
                        WHERE d.unique_id = resourceacl.mfid AND g.id = resourceacl.accessgroup_id)""",
     """INSERT INTO resourceacl (mfid, accessgroup_id, read, write, permission)
        SELECT d.unique_id, members.id, true, false, 'viewer' FROM dataset d
+       JOIN idtype record ON record.mfid = d.unique_id
        JOIN accessgroup members ON members.group_name = d.instrument_mfid || :suffix AND members.group_type = 'instrument_member'
        WHERE NOT EXISTS (SELECT 1 FROM resourceacl acl WHERE acl.mfid = d.unique_id AND acl.accessgroup_id = members.id)""",
     """DELETE FROM resourceacl WHERE accessgroup_id IN (SELECT id FROM accessgroup WHERE group_type = 'instrument')
@@ -237,6 +249,7 @@ REPAIR_STATEMENTS = (
                        WHERE d.unique_id = resourceacl.mfid AND g.id = resourceacl.accessgroup_id)""",
     """INSERT INTO resourceacl (mfid, accessgroup_id, read, write, permission)
        SELECT d.unique_id, operator_group.id, true, true, 'contributor' FROM dataset d
+       JOIN idtype record ON record.mfid = d.unique_id
        JOIN accessgroup operator_group ON operator_group.group_name = d.instrument_mfid AND operator_group.group_type = 'instrument'
        WHERE NOT EXISTS (SELECT 1 FROM resourceacl acl WHERE acl.mfid = d.unique_id AND acl.accessgroup_id = operator_group.id)""",
 )

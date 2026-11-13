@@ -15,7 +15,7 @@ def _run_check(args: argparse.Namespace) -> int:
     from sqlmodel import Session
 
     from app.api.dependencies import get_engine
-    from app.services.instrument_members import grant_problems, repair_grants
+    from app.services.instrument_members import datasets_without_id_record, grant_problems, repair_grants
 
     with Session(get_engine()) as session:
         problems = grant_problems(session)
@@ -25,4 +25,7 @@ def _run_check(args: argparse.Namespace) -> int:
             session.commit()
             problems = grant_problems(session)
             print(json.dumps(problems, indent=2))
+        orphans = datasets_without_id_record(session)
+        if orphans:
+            print(f"{orphans} datasets have no id record and can hold no grants; they are not counted above.")
     return 1 if any(problems.values()) else 0

@@ -49,6 +49,7 @@ def upgrade():
         INSERT INTO resourceacl (mfid, accessgroup_id, read, write, permission)
         SELECT d.unique_id, members.id, true, false, 'viewer'
         FROM dataset d
+        JOIN idtype record ON record.mfid = d.unique_id
         JOIN accessgroup members ON members.group_name = d.instrument_mfid || :suffix AND members.group_type = 'instrument_member'
         ON CONFLICT DO NOTHING
     """)
@@ -62,6 +63,7 @@ def upgrade():
         INSERT INTO resourceacl (mfid, accessgroup_id, read, write, permission)
         SELECT d.unique_id, operator_group.id, true, true, 'contributor'
         FROM dataset d
+        JOIN idtype record ON record.mfid = d.unique_id
         JOIN accessgroup operator_group ON operator_group.group_name = d.instrument_mfid AND operator_group.group_type = 'instrument'
         ON CONFLICT DO NOTHING
     """)

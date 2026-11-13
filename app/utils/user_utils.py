@@ -289,12 +289,12 @@ def owner_unique_id(session, record) -> Optional[str]:
     return owner.unique_id if owner is not None else None
 
 
-def owned_by(session, owner_user_id_column, value: str):
-    """SQL test that the owner named by `value` holds the record; matches nothing for an unknown person."""
+def owned_by_any(session, owner_user_id_column, values):
+    """SQL test that one of the owners named by `values` holds the record; unknown people match nothing."""
     from sqlalchemy import false
 
-    owner = person_by_reference(session, value)
-    return owner_user_id_column == owner.id if owner is not None else false()
+    ids = [owner.id for value in values if (owner := person_by_reference(session, value)) is not None]
+    return owner_user_id_column.in_(ids) if ids else false()
 
 
 def resolve_user(session, orcid: Optional[str] = None, email: Optional[str] = None, username: Optional[str] = None) -> User:

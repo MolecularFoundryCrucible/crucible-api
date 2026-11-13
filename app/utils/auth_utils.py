@@ -306,16 +306,17 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                           can_delete: bool | Callable[[], bool] = False,
                           request_deletion_with: Optional[Permission] = None,
                           deletion_requested: Optional[bool] = None,
-                          holds_files: bool = False) -> ResourceCapabilities:
+                          holds_files: bool = False,
+                          grant_roles: Sequence[Role] = (Role.ADMIN, Role.EDITOR, Role.CONTRIBUTOR, Role.VIEWER)) -> ResourceCapabilities:
     if acl_rows is None:
         acl_rows = fetch_acl_rows(session, mfid)
     actor_role = effective_role(principal, acl_rows)
 
     max_grant_role = None
     if principal.is_platform_admin:
-        max_grant_role = Role.ADMIN.db_value
+        max_grant_role = grant_roles[0].db_value
     elif not principal.is_service_account:
-        for target in (Role.ADMIN, Role.EDITOR, Role.CONTRIBUTOR, Role.VIEWER):
+        for target in grant_roles:
             if can_grant(
                 actor_role,
                 target,
@@ -326,9 +327,9 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                 break
 
     may_delete = (
-        _has_resource_permission(principal, acl_rows, Permission.DELETE)
-        or _has_resource_permission(principal, acl_rows, Permission.HARD_DELETE)
-    ) and (can_delete() if callable(can_delete) else can_delete)
+        _has_resource_permission(principal, acl_rows, Permission.HARD_DELETE)
+        and (can_delete() if callable(can_delete) else can_delete)
+    )
 
     if request_deletion_with is None:
         may_request_deletion = may_delete

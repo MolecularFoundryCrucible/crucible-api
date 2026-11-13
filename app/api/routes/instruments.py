@@ -10,23 +10,23 @@ from app.general_utils import get_utc_datetime
 from app.models.access import EntryCapabilities
 from app.models.access_groups import AccessGroupMemberRead
 from app.tables import (
-    AccessGroup, Instrument, Resource, ResourceACL, ScientificMetadataBinary, User, UserAccessGroupLink)
+    AccessGroup, Instrument, Resource, ScientificMetadataBinary, User, UserAccessGroupLink)
 from app.models.instrument import InstrumentCreate, InstrumentMembershipRole, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
     InstrumentAffiliation, InstrumentDetailQuery, InstrumentListQuery,
     InstrumentSearchQuery, InstrumentStatus)
 from app.models.users import UserPublicRead
+from app.services.capabilities import record_capabilities
 from app.services.instrument_members import (
-    create_members_group, ensure_members_group, load_member_grants, load_members, member_filter, member_link,
+    create_members_group, ensure_members_group, load_members, member_filter, member_link,
     require_members_group)
-from app.services.resource_access import may_view_members, record_role
+from app.services.resource_access import may_view_members, record_roles
 from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
 from app.utils.auth_utils import (
-    authorize_user, fetch_acl_rows, forget_cached_keys, require_grant, require_permission, resource_capabilities)
+    authorize_user, fetch_acl_rows, forget_cached_keys, require_grant, require_permission)
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
-from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.instrument_utils import assert_instrument_id_available, get_instrument_or_404
 from app.utils.permissions import AccessGroupType, GroupMembership, Permission, Principal, Role, has_permission
 from app.utils.search_utils import (
@@ -36,7 +36,8 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import record_resource, add_or_update, assert_not_pending_deletion, touch_resource_modification_time, deletion_filter_for
-from app.utils.user_utils import owned_by, resolve_create_owner, resolve_service_account_reference, resolve_user_by_identifier
+from app.models.query_params import requested_owners
+from app.utils.user_utils import owned_by_any, resolve_create_owner, resolve_service_account_reference, resolve_user_by_identifier
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
@@ -85,12 +86,7 @@ def _instrument_affiliation_filter(principal, affiliation):
 
 
 def _instrument_capabilities(session, principal, instrument):
-    return resource_capabilities(
-        session,
-        principal,
-        instrument.unique_id,
-        can_delete=lambda: not has_deletion_blockers(session, "instrument", instrument.unique_id),
-    )
+    return record_capabilities(session, principal, "instrument", instrument.unique_id)
 
 
 def _instrument_response(instrument, resource=None, scientific_metadata=None, owner=None,
@@ -108,29 +104,10 @@ def _instrument_response(instrument, resource=None, scientific_metadata=None, ow
     })
 
 
-def _instrument_roles(session, principal, instrument_mfids) -> dict:
-    """Caller's effective role on each instrument record, from one ACL query."""
-    group_ids = {m.id for m in principal.groups}
-    if not instrument_mfids or not group_ids:
-        return {}
-    acl_by_mfid: dict = {}
-    for mfid, group_id, permission in session.exec(
-        select(ResourceACL.mfid, ResourceACL.accessgroup_id, ResourceACL.permission)
-        .where(ResourceACL.mfid.in_(instrument_mfids), ResourceACL.accessgroup_id.in_(group_ids))
-    ).all():
-        if permission is not None:
-            acl_by_mfid.setdefault(mfid, []).append((group_id, Role.from_db(permission)))
-    return {
-        mfid: role.db_value
-        for mfid, acl_rows in acl_by_mfid.items()
-        if (role := record_role(principal, acl_rows)) is not None
-    }
-
-
 def _instrument_members(session, principal, instrument):
     if not may_view_members(session, principal, instrument.unique_id):
         return None
-    return load_member_grants(session, principal, instrument.unique_id)
+    return load_members(session, principal, instrument.unique_id)
 
 
 def _instrument_owners(session, instruments) -> dict[int, User]:
@@ -172,7 +149,7 @@ def list_instruments(
     limit = params.limit
     cursor = params.cursor
     offset = params.offset
-    owner_ref = params.owner_id or param_values["owner"]
+    owners = requested_owners(params, param_values["owner"])
     if instrument_id is None and params.mfid is None and params.status is None:
         param_values["status"] = "active"
     filters = [
@@ -209,8 +186,8 @@ def list_instruments(
             statement = statement.where(f)
         if params.affiliation:
             statement = statement.where(_instrument_affiliation_filter(auth_res, params.affiliation))
-        if owner_ref is not None:
-            statement = statement.where(owned_by(session, Instrument.owner_user_id, owner_ref))
+        if owners:
+            statement = statement.where(owned_by_any(session, Instrument.owner_user_id, owners))
 
         total = (
             session.exec(select(func.count()).select_from(statement.with_only_columns(Instrument.id).subquery())).one()
@@ -220,7 +197,7 @@ def list_instruments(
         page = execute_resource_page(session, statement, pagination)
         rows = page.rows
         owners = _instrument_owners(session, (row[0] for row in rows))
-        roles = _instrument_roles(session, auth_res, [row[0].unique_id for row in rows])
+        roles = record_roles(session, auth_res, [row[0].unique_id for row in rows])
 
         items = []
         for row in rows:
@@ -267,8 +244,8 @@ def search_instruments(
             base = base.where(Instrument.status == params.status)
         if params.affiliation:
             base = base.where(_instrument_affiliation_filter(auth_res, params.affiliation))
-        if params.owner_id is not None:
-            base = base.where(owned_by(session, Instrument.owner_user_id, params.owner_id))
+        if owners := requested_owners(params):
+            base = base.where(owned_by_any(session, Instrument.owner_user_id, owners))
         fields = (
             Instrument.instrument_name,
             Instrument.instrument_type,

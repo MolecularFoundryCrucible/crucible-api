@@ -540,7 +540,7 @@ def test_access_selectors_are_repeated_openapi_arrays():
     assert dataset_properties["project"]["anyOf"][0]["$ref"] == "#/components/schemas/ProjectReferenceRead"
     assert dataset_properties["owner"]["anyOf"][0]["$ref"] == "#/components/schemas/UserPublicRead"
     assert dataset_properties["project_relation"]["anyOf"][0]["enum"] == ["assigned", "shared"]
-    for schema_name in ("SampleRead", "SampleResponse"):
+    for schema_name in ("SampleResponse",):
         sample_properties = schema["components"]["schemas"][schema_name]["properties"]
         assert sample_properties["project"]["anyOf"][0]["$ref"] == "#/components/schemas/ProjectReferenceRead"
     sample_response_properties = schema["components"]["schemas"]["SampleResponse"]["properties"]
@@ -563,4 +563,4 @@ def test_access_selectors_are_repeated_openapi_arrays():
             parameter["name"]: parameter
             for parameter in schema["paths"][path]["get"]["parameters"]
         }
-        assert parameters["include_datasets"]["schema"]["default"] is True
+        assert parameters["include_datasets"]["schema"]["default"] is False

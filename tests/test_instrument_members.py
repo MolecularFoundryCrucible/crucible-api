@@ -69,12 +69,12 @@ class TestMembersRoutes:
         _as(auth_as, db_engine, STRANGER)
         assert client.get(f"/instruments/{mfid}/users").status_code == 403
 
-    def test_include_members_keeps_its_shape(self, client, db_engine, auth_as):
+    def test_include_members_uses_the_member_shape(self, client, db_engine, auth_as):
         mfid, _ = _world(client, db_engine, auth_as)
         _as(auth_as, db_engine, OWNER)
         members = client.get(f"/instruments/{mfid}", params={"include_members": True}).json()["members"]
-        assert [(m["principal_id"], m["principal_type"], m["permission"]) for m in members] == [
-            (OWNER, "user", "owner"), (ADMIN, "user", "admin"), (EDITOR, "user", "editor"), (VIEWER, "user", "viewer")]
+        assert _roles(members) == [(OWNER, "owner"), (ADMIN, "admin"), (EDITOR, "editor"), (VIEWER, "viewer")]
+        assert members == client.get(f"/instruments/{mfid}/users").json()["items"]
         assert members[0]["capabilities"] == {"can_remove": False, "can_change_role": False, "assignable_roles": []}
         assert members[1]["capabilities"]["assignable_roles"] == ["viewer", "editor", "admin"]
 

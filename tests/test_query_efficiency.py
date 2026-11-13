@@ -232,7 +232,7 @@ def test_grant_principals_resolve_in_constant_queries(db_engine, people, project
 
 @pytest.mark.parametrize("members", [2, 12])
 def test_instrument_members_load_in_constant_queries(db_engine, members):
-    from app.services.instrument_members import load_member_grants
+    from app.services.instrument_members import load_members
     from app.tables import Instrument, Resource, User
     from app.utils.permissions import Principal, Role
     from tests.instrument_members_seed import seed_instrument_members
@@ -248,7 +248,7 @@ def test_instrument_members_load_in_constant_queries(db_engine, members):
         seed_instrument_members(session, "inst-many", people)
         session.commit()
         with _statement_count(db_engine) as statements:
-            grants = load_member_grants(session, Principal(user_id="0000-0011-0000-0000"), "inst-many")
+            grants = load_members(session, Principal(user_id="0000-0011-0000-0000"), "inst-many")
     assert len(grants) == members
     assert len(statements) <= 3
 

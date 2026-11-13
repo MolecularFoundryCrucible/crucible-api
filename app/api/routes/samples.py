@@ -7,6 +7,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from sqlalchemy import exists, func, join
 from sqlmodel import and_, Session, select
 
+from app.services.related_records import dataset_responses, sample_responses
+from app.services.resource_access import record_roles
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ChildSampleMfid, ParentSampleMfid, SampleMfid
 from app.general_utils import get_utc_datetime
@@ -14,19 +16,17 @@ from app.tables import (
     Dataset, DatasetSampleLink,
     Project, Resource, Sample, SampleLink, ScientificMetadataBinary,
 )
-from app.models.datasets import DatasetRead
 from app.models.facets import FacetResponse
 from app.models.links import LinkedResource, SampleLinkRead
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
     UNIQUE_ID_FILTER_DEPRECATION, ResourceSearchQuery, SampleDetailQuery, SampleFacetQuery, SampleListQuery)
 from app.models.projects import ProjectReferenceRead, ProjectScope
-from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
+from app.models.samples import SampleCreate, SampleResponse, SampleUpdate
 
 from app.utils.auth_utils import (
     authorize_user, permission_filter, project_scope_filter,
     require_permission, resource_affiliation_filter)
-from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import reject_lineage_cycle, reject_self_link, require_link_create_permissions
 from app.utils.permissions import Principal, Permission, Role, has_global_permission
 from app.utils.project_utils import (
@@ -45,7 +45,8 @@ from app.utils.search_utils import (
 from app.utils.sql_utils import is_public, public_grant_exists, record_resource, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
 
 from app.utils.gcs_record_utils import write_record, sample_record
-from app.utils.user_utils import owned_by, owner_fields, owner_unique_id, owners_of, resolve_create_owner
+from app.models.query_params import requested_owners
+from app.utils.user_utils import owned_by_any, owner_fields, owner_unique_id, owners_of, resolve_create_owner
 from app.models.response_schemas import MessageResponse
 from app.services.resource_details import ResourceDetailOptions, load_sample_detail
 from app.services.resource_facets import list_sample_facets
@@ -350,15 +351,15 @@ def list_samples(
         )
         if param_values[key] is not None
     }
-    owner_id = params.owner_id or param_values["owner_orcid"]
+    owners = requested_owners(params, param_values["owner_orcid"])
     result_filters = params.normalized_result_filters(
         exclude={
             "anchor_mfid", "cursor", "offset", "limit", "sort", "direction",
             "include_metadata", "include_links", "include_datasets", "include_owner",
-            "include_total", "owner_orcid",
+            "include_total", "owner_orcid", "owner_ref",
         },
     )
-    result_filters["owner_id"] = owner_id
+    result_filters["owner_id"] = owners
     pagination = prepare_resource_pagination(
         params=params,
         query_params=request.query_params,
@@ -399,13 +400,13 @@ def list_samples(
                 )
             if params.mfid is not None:
                 q = q.where(Sample.unique_id.in_(params.mfid))
-            if owner_id is not None:
-                q = q.where(owned_by(session, Sample.owner_user_id, owner_id))
+            if owners:
+                q = q.where(owned_by_any(session, Sample.owner_user_id, owners))
             for key, value in exact_filters.items():
                 q = q.where(getattr(Sample, key) == value)
             for column, value in (
                 (Sample.sample_type, params.sample_type_is_null),
-                (Sample.owner_user_id, params.owner_id_is_null),
+                (Sample.owner_user_id, params.owner_is_null),
                 (Sample.project_mfid, params.project_mfid_is_null),
             ):
                 if value is not None:
@@ -477,24 +478,15 @@ def list_samples(
                     .where(deletion_filter_for(Dataset))
                     .order_by(DatasetSampleLink.sample_id, Dataset.unique_id)
                 ).all()
-                instrument_references = resolve_instrument_mfids_to_references(
-                    [ds.instrument_mfid for _, ds in sample_dataset_rows], session)
-                ds_project_references = resolve_project_mfids_to_references(
-                    [ds.project_mfid for _, ds in sample_dataset_rows], session)
-                dataset_owners = owners_of(session, (ds for _, ds in sample_dataset_rows))
-                for sid, ds in sample_dataset_rows:
+                embedded = dataset_responses(session, auth_res, (ds for _, ds in sample_dataset_rows))
+                for (sid, ds), embedded_dataset in zip(sample_dataset_rows, embedded):
                     datasets_by_sample.setdefault(sid, []).append(
                         LinkedResource(unique_id=ds.unique_id, resource_type="dataset", name=ds.dataset_name, direction="undirected")
                     )
-                    dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate({
-                        **ds.model_dump(),
-                        **owner_fields(ds, dataset_owners),
-                        **dataset_instrument_fields(ds, instrument_references.get(ds.instrument_mfid)),
-                        "project_id": ds_project_references[ds.project_mfid].project_id if ds.project_mfid in ds_project_references else None,
-                        "project": ds_project_references.get(ds.project_mfid),
-                    }))
+                    dataset_reads_by_sample.setdefault(sid, []).append(embedded_dataset)
 
         owners = owners_of(session, (row[0] for row in rows))
+        roles = record_roles(session, auth_res, [row[0].unique_id for row in rows])
 
         items = []
         for row in rows:
@@ -529,6 +521,7 @@ def list_samples(
                 "datasets": compat_datasets,
                 "links": links,
                 **owner_fields(samp, owners, include_owner),
+                "role": roles.get(samp.unique_id),
                 "project_relation": (
                     "assigned" if samp.project_mfid == filter_project_mfid else "shared"
                 ) if filter_project_mfid is not None else None,
@@ -598,17 +591,19 @@ def search_samples(
             ))
         if params.affiliation:
             query = query.where(resource_affiliation_filter(auth_res, Sample, params.affiliation))
-        if params.owner_id is not None:
-            query = query.where(owned_by(session, Sample.owner_user_id, params.owner_id))
+        if owners := requested_owners(params):
+            query = query.where(owned_by_any(session, Sample.owner_user_id, owners))
         query = query.order_by(
             trigram_rank(normalized_q, (Sample.sample_name,)).desc(),
             Sample.unique_id.desc(),
         ).limit(limit)
         results = session.exec(query).all()
         owners = owners_of(session, (row[0] for row in results))
+        roles = record_roles(session, auth_res, [row[0].unique_id for row in results])
         items = [SampleResponse.model_validate({
             **samp.model_dump(),
-            **owner_fields(samp, owners),
+            **owner_fields(samp, owners, params.include_owner),
+            "role": roles.get(samp.unique_id),
             "project_id": resolved_project_id,
             "project": ProjectReferenceRead(
                 unique_id=project_mfid,
@@ -651,11 +646,12 @@ def read_sample(
         )
 
 
-@router.get("/samples/{child_sample_mfid}/parents", response_model=PaginatedResponse[SampleRead])
+@router.get("/samples/{child_sample_mfid}/parents", response_model=PaginatedResponse[SampleResponse])
 def list_parent_samples(child_sample_id: ChildSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                         limit: int = Query(default=100, ge=1, le=1000),
                         offset: int = Query(default=0, ge=0),
-                        relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
+                        relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None),
+                        include_owner: bool = True):
     '''
     Returns a paginated list of parent samples for a given child sample.
 
@@ -679,22 +675,16 @@ def list_parent_samples(child_sample_id: ChildSampleMfid, auth_res: Annotated[Pr
             query = query.where(SampleLink.relationship_type == relationship_type)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
-        project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
-        owners = owners_of(session, rows)
-        items = [SampleRead.model_validate({
-            **s.model_dump(),
-            **owner_fields(s, owners),
-            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else None,
-            "project": project_references.get(s.project_mfid),
-        }) for s in rows]
+        items = sample_responses(session, auth_res, rows, include_owner)
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.get("/samples/{parent_sample_mfid}/children", response_model=PaginatedResponse[SampleRead])
+@router.get("/samples/{parent_sample_mfid}/children", response_model=PaginatedResponse[SampleResponse])
 def list_child_samples(parent_sample_id: ParentSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                        limit: int = Query(default=100, ge=1, le=1000),
                        offset: int = Query(default=0, ge=0),
-                       relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
+                       relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None),
+                       include_owner: bool = True):
     '''
     Returns a paginated list of child samples for a given parent sample.
 
@@ -718,13 +708,6 @@ def list_child_samples(parent_sample_id: ParentSampleMfid, auth_res: Annotated[P
             query = query.where(SampleLink.relationship_type == relationship_type)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
-        project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
-        owners = owners_of(session, rows)
-        items = [SampleRead.model_validate({
-            **s.model_dump(),
-            **owner_fields(s, owners),
-            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else None,
-            "project": project_references.get(s.project_mfid),
-        }) for s in rows]
+        items = sample_responses(session, auth_res, rows, include_owner)
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 

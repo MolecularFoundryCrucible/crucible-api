@@ -39,7 +39,7 @@ User and project grants on an instrument record through `PUT` and `DELETE /resou
 
 ## Reading members
 
-`GET /instruments/{instrument_ref}?include_members=true` and the exact slug lookup `GET /instruments?instrument_id={slug}&include_members=true` return `members`, a list of `AccessGrantRead` entries (`principal_type` `user`, `permission` the member's role), highest role first, with `capabilities` for the caller. `include_members=true` on `GET /instruments` without `instrument_id` returns 422.
+`GET /instruments/{instrument_ref}?include_members=true` and the exact slug lookup `GET /instruments?instrument_id={slug}&include_members=true` return `members`, the same `AccessGroupMemberRead` entries as `GET /instruments/{instrument_ref}/users`, highest role first, with `capabilities` for the caller. `include_members=true` on `GET /instruments` without `instrument_id` returns 422.
 
 `members` is returned to members and platform administrators; other callers, including bound service accounts and callers who read the instrument only through public access, receive `members: null`.
 

@@ -9,6 +9,7 @@ class AccessPrincipalType(str, Enum):
     SERVICE_ACCOUNT = "service_account"
     PROJECT = "project"
     INSTRUMENT = "instrument"
+    INSTRUMENT_MEMBERS = "instrument_members"
     PUBLIC = "public"
     SYSTEM = "system"
     UNKNOWN = "unknown"

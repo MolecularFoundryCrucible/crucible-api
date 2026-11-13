@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from sqlmodel import and_, Session, select
 
+from app.services.instrument_members import grant_dataset as grant_instrument_members, revoke_dataset as revoke_instrument_members
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, feature_disabled_response
@@ -48,7 +49,7 @@ from app.models.instrument import InstrumentReferenceRead
 from app.models.links import DatasetLinkRead, LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
-    UNIQUE_ID_FILTER_DEPRECATION, DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, ResourceSearchQuery)
+    UNIQUE_ID_FILTER_DEPRECATION, DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, DatasetSearchQuery)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.services import multipart
 from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
@@ -242,6 +243,7 @@ def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
                     detail=f"Instrument '{instrument.instrument_name}' has no operator group provisioned")
             sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True,
                                     session=session, permission=Role.CONTRIBUTOR)
+            grant_instrument_members(session, ds.unique_id, instrument.unique_id)
 
         session.commit()
         session.refresh(ds)
@@ -439,9 +441,11 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
                 if stale is not None:
                     session.delete(stale)
                     session.flush()
+            revoke_instrument_members(session, dsid, previous_instrument.unique_id)
 
         sql_create_resource_acl(new_ag, dsid, read=True, write=True,
                                 session=session, permission=Role.CONTRIBUTOR)
+        grant_instrument_members(session, dsid, instrument.unique_id)
 
         ds.instrument_mfid = instrument.unique_id
         session.add(ds)
@@ -739,7 +743,7 @@ def _dataset_base_query(principal):
 @router.get("/datasets/search", response_model=PaginatedResponse[DatasetResponse])
 def search_datasets(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    params: Annotated[ResourceSearchQuery, Query()],
+    params: Annotated[DatasetSearchQuery, Query()],
 ):
     '''
     Search readable datasets by name and return results ordered by match quality.

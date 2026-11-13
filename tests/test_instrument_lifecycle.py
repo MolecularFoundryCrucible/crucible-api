@@ -36,7 +36,7 @@ INSTRUMENT_UPDATE_ROUTE_REQUIRED = (
 
 
 class TestCreateInstrument:
-    def test_creates_operator_group_without_a_grant_on_the_record(self, client, db_engine, auth_as):
+    def test_creates_operator_group_and_members_group(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             owner = _user(session, "admin-1")
             owner_group_id = session.exec(select(AccessGroup.id).where(
@@ -69,9 +69,15 @@ class TestCreateInstrument:
             assert ag.group_type == AccessGroupType.INSTRUMENT.value
             assert session.exec(select(ResourceACL).where(
                 ResourceACL.accessgroup_id == ag.id, ResourceACL.mfid == mfid)).one_or_none() is None
-            owner_acl = session.exec(select(ResourceACL).where(
-                ResourceACL.accessgroup_id == owner_group_id, ResourceACL.mfid == mfid)).one()
-            assert owner_acl.permission == Role.OWNER.db_value
+            assert session.exec(select(ResourceACL).where(
+                ResourceACL.accessgroup_id == owner_group_id, ResourceACL.mfid == mfid)).one_or_none() is None
+            members = session.exec(select(AccessGroup).where(AccessGroup.group_name == f"{mfid}:members")).one()
+            assert members.group_type == AccessGroupType.INSTRUMENT_MEMBER.value
+            record_grants = session.exec(select(ResourceACL.accessgroup_id, ResourceACL.permission).where(ResourceACL.mfid == mfid)).all()
+            assert record_grants == [(members.id, Role.OWNER.db_value)]
+            links = session.exec(select(UserAccessGroupLink.user_id, UserAccessGroupLink.role).where(
+                UserAccessGroupLink.accessgroup_id == members.id)).all()
+            assert links == [(owner.id, Role.OWNER.db_value)]
 
     def test_rejects_duplicate_instrument_id(self, client, db_engine, auth_as):
         with Session(db_engine) as session:

@@ -183,9 +183,9 @@ def auth_as():
            auth_as("0000-...-0002", groups=[("proj_x", 5, Role.EDITOR)])
            auth_as("0000-...-0003", platform_role=PlatformRole.ADMIN)
 
-    A group may be given as (name, id) or (name, id, role); the standing
-    defaults to owner so existing tests keep the access they had under the
-    pre-role model.
+    A group may be given as (name, id), (name, id, role) or
+    (name, id, role, group_type); the standing defaults to owner so existing
+    tests keep the access they had under the pre-role model.
     """
     def _set(user_id, groups=None, platform_role=PlatformRole.NONE,
              is_service_account=False, credential="api_key", authenticated_at=None):
@@ -193,7 +193,8 @@ def auth_as():
             groups = [("test_group", 1)]
         memberships = tuple(
             GroupMembership(id=g[1], group_name=g[0],
-                            role=g[2] if len(g) > 2 else Role.OWNER)
+                            role=g[2] if len(g) > 2 else Role.OWNER,
+                            group_type=g[3] if len(g) > 3 else None)
             for g in groups
         )
         principal = Principal(

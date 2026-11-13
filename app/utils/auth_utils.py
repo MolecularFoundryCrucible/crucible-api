@@ -21,7 +21,7 @@ from app.auth.tokens import ACCESS_PREFIX, DEVICE_CODE, InvalidGrant, access_tok
 from app.auth.api_keys import DEFAULT_KEY_NAME, find_api_key, replace_plain_keys, status_of, store_key
 from app.services.activity import record_caller_activity
 from app.utils.permissions import (
-    PUBLIC_GROUP_NAME, SESSION, THRESHOLDS, GroupMembership, Permission, PlatformRole,
+    PUBLIC_GROUP_NAME, SESSION, THRESHOLDS, AccessGroupType, GroupMembership, Permission, PlatformRole,
     Principal, PrivilegeMode, PrivilegeModeSource, Role, can_grant,
     effective_role, has_global_permission, has_permission,
     resolve_authorization_context)
@@ -233,15 +233,15 @@ def load_principal(session, user_id: Optional[int]) -> Principal:
     # One query against the link rows rather than user.accessgroups, because the
     # standing lives on the link, not on the group.
     rows = session.exec(
-        select(AccessGroup.id, AccessGroup.group_name, UserAccessGroupLink.role)
+        select(AccessGroup.id, AccessGroup.group_name, UserAccessGroupLink.role, AccessGroup.group_type)
         .join(UserAccessGroupLink,
               UserAccessGroupLink.accessgroup_id == AccessGroup.id)
         .where(UserAccessGroupLink.user_id == user.id)
     ).all()
 
     groups = [
-        GroupMembership(id=gid, group_name=name, role=_standing(role))
-        for gid, name, role in rows
+        GroupMembership(id=gid, group_name=name, role=_standing(role), group_type=group_type)
+        for gid, name, role, group_type in rows
     ]
 
     # Inject the virtual public group. Membership is never stored — every
@@ -255,7 +255,7 @@ def load_principal(session, user_id: Optional[int]) -> Principal:
     public_id = _public_group_id(session)
     if public_id is not None and not any(g.id == public_id for g in groups):
         groups.append(GroupMembership(id=public_id, group_name=PUBLIC_GROUP_NAME,
-                                      role=Role.VIEWER))
+                                      role=Role.VIEWER, group_type=AccessGroupType.SYSTEM.value))
 
     # Materialize to plain, immutable data so the cached value is safe to share
     # across threads and doesn't depend on the closed session.
@@ -386,18 +386,19 @@ GRANTABLE_ROLES = (Role.VIEWER, Role.CONTRIBUTOR, Role.EDITOR, Role.ADMIN)
 
 
 def entry_capabilities(principal: Principal, actor: Optional[Role], current: Optional[Role], *,
-                       floor: Role, is_self: bool = False, fixed: bool = False) -> dict:
+                       floor: Role, is_self: bool = False, fixed: bool = False,
+                       roles: Sequence[Role] = GRANTABLE_ROLES) -> dict:
     """The capabilities object for one member or grant, decided by the same rule as require_grant."""
 
     if fixed or current is Role.OWNER:
         return {"can_remove": False, "can_change_role": False, "assignable_roles": []}
     if principal.is_platform_admin:
-        assignable = list(GRANTABLE_ROLES)
+        assignable = list(roles)
         may_remove = True
     elif principal.is_service_account:
         assignable, may_remove = [], False
     else:
-        assignable = [role for role in GRANTABLE_ROLES if can_grant(actor, role, current, floor=floor)]
+        assignable = [role for role in roles if can_grant(actor, role, current, floor=floor)]
         may_remove = can_grant(actor, current or Role.VIEWER, current, floor=floor)
     return {
         "can_remove": may_remove or is_self,
@@ -504,11 +505,24 @@ def owner_affiliation_filter(principal: Principal, resource_model):
 
 
 def member_affiliation_filter(principal: Principal, resource_model):
-    """Resources the caller reaches through one of their own grants, not only because they are public."""
+    """Resources the caller reaches through one of their own grants, not only because they are public
+    or through instrument membership."""
+    group_ids = [m.id for m in principal.groups
+                 if m.group_name != PUBLIC_GROUP_NAME and m.group_type != AccessGroupType.INSTRUMENT_MEMBER.value
+                 and m.role >= Role.VIEWER]
+    return _group_grant_filter(group_ids, resource_model)
+
+
+def instrument_affiliation_filter(principal: Principal, resource_model):
+    """Datasets the caller reads as a member of the instrument they are assigned to."""
+    group_ids = [m.id for m in principal.groups if m.group_type == AccessGroupType.INSTRUMENT_MEMBER.value]
+    return _group_grant_filter(group_ids, resource_model)
+
+
+def _group_grant_filter(group_ids, resource_model):
     from sqlalchemy import exists, false
     from app.tables import ResourceACL
 
-    group_ids = [m.id for m in principal.groups if m.group_name != PUBLIC_GROUP_NAME and m.role >= Role.VIEWER]
     if not group_ids:
         return false()
     return (
@@ -525,32 +539,12 @@ def member_affiliation_filter(principal: Principal, resource_model):
 
 def resource_affiliation_filter(principal: Principal, resource_model, affiliation):
     from sqlalchemy import or_
-    from app.models.query_params import ResourceAffiliation
     predicates = {
-        ResourceAffiliation.OWNER: owner_affiliation_filter,
-        ResourceAffiliation.MEMBER: member_affiliation_filter,
+        "owner": owner_affiliation_filter,
+        "member": member_affiliation_filter,
+        "instrument": instrument_affiliation_filter,
     }
-    return or_(*(predicates[value](principal, resource_model) for value in dict.fromkeys(affiliation)))
-
-
-def maintainer_affiliation_filter(principal: Principal, resource_model):
-    """Resources where the caller's own identity holds editor or admin."""
-    from sqlalchemy import exists
-    from app.tables import AccessGroup, ResourceACL
-    from app.utils.permissions import AccessGroupType
-
-    return (
-        exists()
-        .where(
-            ResourceACL.mfid == resource_model.unique_id,
-            ResourceACL.permission.in_((Role.EDITOR.db_value, Role.ADMIN.db_value)),
-            ResourceACL.accessgroup_id == AccessGroup.id,
-            AccessGroup.group_type == AccessGroupType.IDENTITY.value,
-            AccessGroup.id.in_(_own_identity_group_ids(principal)),
-        )
-        .select_from(ResourceACL, AccessGroup)
-        .correlate(resource_model)
-    )
+    return or_(*(predicates[value.value](principal, resource_model) for value in dict.fromkeys(affiliation)))
 
 
 def project_member_filter(user_id: str, project_model, roles: Optional[Iterable[Role]] = None):

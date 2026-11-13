@@ -21,7 +21,7 @@ def _as(auth_as, db_engine, user_id):
         principal = load_principal(session, internal_id(session, user_id))
     auth_as(
         user_id,
-        groups=[(g.group_name, g.id, g.role) for g in principal.groups],
+        groups=[(g.group_name, g.id, g.role, g.group_type) for g in principal.groups],
         platform_role=principal.platform_role,
         is_service_account=principal.is_service_account,
     )
@@ -36,8 +36,9 @@ def _setup(client, db_engine, auth_as):
     resp = client.post("/instruments", json={"instrument_id": "xrd-1", "instrument_name": "XRD", "location": "b30"})
     assert resp.status_code == 200, resp.text
     mfid = resp.json()["unique_id"]
-    assert client.put(f"/resources/{mfid}/access/users/{EDITOR}", json={"permission": "editor"}).status_code == 200
-    assert client.put(f"/resources/{mfid}/access/users/{ADMIN}", json={"permission": "admin"}).status_code == 200
+    _as(auth_as, db_engine, OWNER)
+    assert client.post(f"/instruments/{mfid}/users/{EDITOR}", params={"role": "editor"}).status_code == 200
+    assert client.post(f"/instruments/{mfid}/users/{ADMIN}", params={"role": "admin"}).status_code == 200
     assert client.post(f"/instruments/{mfid}/service_accounts/{SA}").status_code == 200
     return mfid
 
@@ -193,6 +194,7 @@ class TestMaintainerAffiliation:
         mfid = _setup(client, db_engine, auth_as)
         _as(auth_as, db_engine, EDITOR)
         own = self._second_instrument(client)
+        _as(auth_as, db_engine, EDITOR)
         items = client.get("/instruments", params=[("affiliation", "owner"), ("affiliation", "maintainer")]).json()["items"]
         assert {i["unique_id"] for i in items} == {mfid, own}
 
@@ -200,10 +202,10 @@ class TestMaintainerAffiliation:
         params = InstrumentSearchQuery(q="xrd", affiliation=["maintainer"])
         assert params.affiliation == [InstrumentAffiliation.MAINTAINER]
 
-    def test_maintainer_does_not_grant_access_to_instrument_datasets(self, client, db_engine, auth_as):
-        _setup(client, db_engine, auth_as)
-        _as(auth_as, db_engine, OWNER)
-        dsid = client.post("/datasets", json={"dataset_name": "raw", "instrument_id": "xrd-1"}).json()["unique_id"]
-        for user_id in (EDITOR, ADMIN):
+    def test_member_affiliation_matches_any_role(self, client, db_engine, auth_as):
+        mfid = _setup(client, db_engine, auth_as)
+        assert client.post(f"/instruments/{mfid}/users/{STRANGER}", params={"role": "viewer"}).status_code == 200
+        for user_id in (OWNER, ADMIN, EDITOR, STRANGER):
             _as(auth_as, db_engine, user_id)
-            assert client.get(f"/datasets/{dsid}").status_code == 403
+            items = client.get("/instruments", params={"affiliation": "member"}).json()["items"]
+            assert [i["unique_id"] for i in items] == [mfid]

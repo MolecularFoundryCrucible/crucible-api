@@ -4,7 +4,7 @@ This page covers how a dataset's instrument is set at creation, how it is change
 
 ## Assignment at creation
 
-`POST /datasets` accepts `instrument_mfid`, `instrument_id` (the slug), or both; when both are given they must identify the same instrument (422 otherwise). An unknown instrument returns 404, and an instrument pending deletion returns 409 `pending_deletion`. The instrument's operator group receives `contributor` on the new dataset.
+`POST /datasets` accepts `instrument_mfid`, `instrument_id` (the slug), or both; when both are given they must identify the same instrument (422 otherwise). An unknown instrument returns 404, and an instrument pending deletion returns 409 `pending_deletion`. The instrument's operator group receives `contributor` and its members group `viewer` on the new dataset.
 
 Assignment requires no role on the instrument. When a service account creates a dataset for an instrument it is not bound to, the dataset is created and the server logs a warning.
 
@@ -21,8 +21,8 @@ Content-Type: application/json
 
 - The body takes `instrument_id`, `instrument_mfid`, or a matching pair; conflicting identifiers return 422 and `instrument_name` is rejected. The same 404 and 409 apply as at creation.
 - Requires `admin` on the dataset (`manage_acl`).
-- One transaction updates the dataset's instrument, removes the outgoing instrument's operator group grant, grants the new operator group `contributor`, and updates the dataset's modification time. Other grants are unchanged.
-- Resubmitting the current instrument changes nothing except ensuring that its `contributor` grant exists.
+- One transaction updates the dataset's instrument, removes the outgoing instrument's operator and members group grants, grants the new operator group `contributor` and members group `viewer`, and updates the dataset's modification time. Other grants are unchanged.
+- Resubmitting the current instrument changes nothing except ensuring that its two grants exist.
 - The response (`DatasetInstrumentRead`) contains `dataset_mfid`, `instrument`, `previous_instrument` and `previous_instrument_name`.
 
 An instrument cannot be removed from a dataset: there is no `DELETE` route for it.

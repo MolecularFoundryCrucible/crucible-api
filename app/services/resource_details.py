@@ -30,7 +30,8 @@ from app.utils.auth_utils import (
     require_permission,
     resource_capabilities,
 )
-from app.services.resource_access import load_member_grants, may_view_members, record_role, with_grant_capabilities
+from app.services.instrument_members import load_member_grants as load_instrument_member_grants
+from app.services.resource_access import may_view_members, record_role
 from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
@@ -305,7 +306,7 @@ def load_instrument_detail(
             deletion_requested=deletion_request is not None,
         ),
         "deletion_request": _deletion_request_payload(deletion_request),
-        "members": with_grant_capabilities(session, principal, resource_id, load_member_grants(session, resource_id))
+        "members": load_instrument_member_grants(session, principal, resource_id)
         if options.include_members and may_view_members(session, principal, resource_id) else None,
         "role": role.db_value if (role := record_role(principal, acl_rows)) is not None else None,
     })

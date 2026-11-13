@@ -29,6 +29,7 @@ An access group (`AccessGroup`) has a `group_name` and a `group_type`. Membershi
 | `identity` | The `unique_id` of one user or service account | Only that identity, always at `owner`. Created with the user and never joined. |
 | `project` | The project's MFID | Project members, each at their project role. |
 | `instrument` | The instrument's MFID | Service accounts bound to the instrument (the operator group). |
+| `instrument_member` | The instrument's MFID followed by `:members` | The instrument's members, each at their instrument role. |
 | `system` | A reserved name; `public` is the only one in use | No members are stored. Every caller is placed in `public` at `viewer` when the principal is built. |
 | `custom` | A name chosen by a platform administrator | Manually managed groups created with `POST /access_groups`. None are created automatically. |
 
@@ -58,6 +59,7 @@ Two mechanisms are outside the formula: platform roles and the service-account c
 | Owner's identity group | `owner` | Always |
 | Project group | `admin` | A project is given |
 | Instrument operator group | `contributor` | A dataset is assigned to an instrument |
+| Instrument members group | `viewer` | A dataset is assigned to an instrument |
 | `public` | `viewer` | The request specifies `public: true` |
 
 - The owner is the caller unless `owner` names another identity. Only a caller with platform role `contributor` or `admin` may create a record for another identity.
@@ -94,7 +96,7 @@ A project has two identifiers. The MFID (`unique_id`) is immutable and is used f
 
 ## Instruments and service accounts
 
-- An instrument has two independent mechanisms: grants on the instrument record (owner and maintainers) and the operator group of bound service accounts, which receives `contributor` on every dataset assigned to the instrument. Managing an instrument gives no access to its datasets. See [instrument access](instrument_access.md).
+- An instrument has two groups. Its members group holds the instrument record's `owner` grant, so a member's role on the instrument is their membership role, and `viewer` on every dataset assigned to the instrument, so every member reads those datasets and never more. Its operator group of bound service accounts holds `contributor` on the same datasets. See [instrument access](instrument_access.md).
 - A service account is a user with `is_service_account` set. The flag grants nothing. New service accounts receive platform role `contributor`, which permits reading and creating everywhere, including creating records owned by a named researcher.
 - A service account without platform role `admin` is capped at `contributor` on every record, regardless of its grants or group roles. It cannot edit, delete, manage grants, transfer ownership, hold a project role above `contributor`, or register instruments.
 - Granting a service account administrator rights (`PATCH /service_accounts/{service_account_ref}`) requires a human administrator in a recently authenticated browser session, never an API key. The change is recorded in the sign-in history as `role_changed`.
@@ -114,7 +116,7 @@ A record is public when it has a grant for the `public` group, and that is the o
 
 ## Changing access
 
-Grants on a dataset, sample or instrument:
+Grants on a dataset or sample (projects and instruments are shared through membership; on them only `GET` and the public routes apply):
 
 | Route | Requires | Notes |
 |---|---|---|
@@ -138,10 +140,10 @@ The same cap applies: both the new role and the member's current role must be at
 
 Ownership and project are not editable fields. `PATCH` rejects them, and two routes in `app/api/routes/resources.py` perform the change in one transaction. Both return a preview unless called with `?confirm=true`.
 
-- `POST /resources/{mfid}/transfer_ownership` requires `owner`. For a dataset, sample or instrument, the previous owner's grant is removed and the new owner's identity group receives `owner`, because a remaining grant on a personal group would have no meaning. For a project, the previous lead is demoted to `admin` and remains a member, and the new lead is added to the group if needed. The owner columns on the record are updated in the same step.
+- `POST /resources/{mfid}/transfer_ownership` requires `owner`. For a dataset or sample, the previous owner's grant is removed and the new owner's identity group receives `owner`, because a remaining grant on a personal group would have no meaning. For a project or instrument, the previous owner is demoted to `admin` and remains a member, and the new owner is added to the group if needed; an instrument cannot be owned by a service account. The owner columns on the record are updated in the same step.
 - `POST /resources/{mfid}/project` (datasets and samples) requires `admin` on the record and `contributor` in the target project. The previous project's grant is removed, the new project receives `admin`, and `project_mfid` is updated.
 
-A move or transfer revokes nothing other than the one grant it replaces. Explicit shares with users or other projects, the public grant, the instrument grant and the owner (on a move) are all retained. After a move, review the grant list if the old project's members were also given access by another grant. `PUT /datasets/{dataset_mfid}/instrument` follows the same rule: it removes only the outgoing instrument's grant.
+A move or transfer revokes nothing other than the one grant it replaces. Explicit shares with users or other projects, the public grant, the instrument grant and the owner (on a move) are all retained. After a move, review the grant list if the old project's members were also given access by another grant. `PUT /datasets/{dataset_mfid}/instrument` follows the same rule: it moves only the outgoing instrument's two grants.
 
 ## Non-obvious rules
 

@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import List, Optional
 from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
@@ -7,6 +8,12 @@ from app.models.access import AccessGrantRead, AccessPermission
 from app.models.resource import ResourceCapabilities
 from app.models.timestamps import UtcDatetime
 from app.models.users import UserPublicRead
+
+
+class InstrumentMembershipRole(str, Enum):
+    VIEWER = "viewer"
+    EDITOR = "editor"
+    ADMIN = "admin"
 
 
 class InstrumentCreate(SQLModel):

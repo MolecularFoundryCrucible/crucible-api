@@ -57,6 +57,7 @@ class AccessGroupType(str, Enum):
     IDENTITY = "identity"
     PROJECT = "project"
     INSTRUMENT = "instrument"
+    INSTRUMENT_MEMBER = "instrument_member"
     CUSTOM = "custom"
     SYSTEM = "system"
 
@@ -92,6 +93,7 @@ class GroupMembership:
     id: int
     group_name: str
     role: Role
+    group_type: Optional[str] = None
 
 
 API_KEY = "api_key"

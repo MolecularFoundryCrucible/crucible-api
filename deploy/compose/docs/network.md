@@ -2,10 +2,27 @@
 
 Part of the [Docker Compose installation guide](../README.md). Commands run in `deploy/compose`.
 
-By default the server answers only on the local host, over plain HTTP. Other hosts reach it by a single name, over HTTPS, with a certificate that browsers and Python already trust. Any name that every client resolves to the server works, including a hostname assigned by the institution; a separately registered domain is not required. Choose the name once and keep it: the Hub, nano-crucible, sign-in and every upload or download link include it, and moving to another server later only requires pointing the name at the new host.
+By default the server answers only on the local host, over plain HTTP. Other computers reach it by a name, over HTTPS.
+
+## Setups
+
+There are three setups. Set every value from one column in `.env`: a mix leaves the server unreachable from other computers, or makes sign-in and file links point to an address that does not answer.
+
+| Setting | Local host only (default) | HTTPS on a network | Behind another reverse proxy |
+|---|---|---|---|
+| `CRUCIBLE_SITE_ADDRESS` | `:80` | `crucible.mylab.org` | `:80` |
+| `CRUCIBLE_HTTP_PORT` | `8080` | `80` | `8080` |
+| `CRUCIBLE_HTTPS_PORT` | `8443` (unused) | `443` | `8443` (unused) |
+| `CRUCIBLE_BIND_ADDRESS` | `127.0.0.1` | `0.0.0.0` | An address the proxy reaches |
+| `CRUCIBLE_PUBLIC_URL` | unset | `https://crucible.mylab.org` | `https://crucible.mylab.org` |
+| `CRUCIBLE_HTTP_HOSTS` | unset | unset | `crucible.mylab.org` |
+| Certificate | None | Obtained by Caddy (see [Certificates](#certificates)) | Held by the other proxy |
+| Described in | [Quick start](../README.md#quick-start) | [Public address](#public-address) | [Behind an institutional reverse proxy](#behind-an-institutional-reverse-proxy) |
 
 ## Choosing the name
 
+- Any name that every client resolves to the server works, including a hostname assigned by the institution; a registered domain is not required.
+- Choose it once and keep it. The Hub, nano-crucible, sign-in and every upload or download link contain it; moving to another server later only requires pointing the name at the new host.
 - The name must point at a fixed address: a static address or a DHCP reservation registered under the name. If a DHCP lease changes, the name, the certificate and every client point at the wrong host.
 - Publish only an IPv4 (`A`) record while `CRUCIBLE_BIND_ADDRESS=0.0.0.0`. Docker then publishes the ports on IPv4 only, and clients that prefer an IPv6 (`AAAA`) record fail to connect.
 - A registered name and a fixed address do not open the institution's border firewall. Ask IT whether incoming connections from the internet are allowed: the answer decides the certificate option below and who can reach the server.
@@ -22,11 +39,14 @@ CRUCIBLE_BIND_ADDRESS=0.0.0.0
 CRUCIBLE_PUBLIC_URL=https://crucible.mylab.org
 ```
 
-Then run `docker compose up -d --wait`.
+Then run `docker compose up -d --wait`, and verify from another host:
+
+```bash
+curl https://crucible.mylab.org/api/v3/health/ready
+```
 
 - `CRUCIBLE_SITE_ADDRESS` is the bare name, without `https://` or a port.
 - With rootless Docker, ports below 1024 require `sudo sysctl net.ipv4.ip_unprivileged_port_start=80`.
-- Leave `CRUCIBLE_HTTP_HOSTS` unset. It allows plain HTTP for the names it lists and is only for running [behind another reverse proxy](#behind-an-institutional-reverse-proxy) that already provides HTTPS.
 - Users outside the lab network should connect through the institution's VPN rather than through a server exposed to the internet, unless external collaborators need access.
 
 ## Certificates
@@ -150,7 +170,7 @@ Each rule is inserted at the top, so the `RETURN` rules come before the `DROP` r
 
 ## Behind an institutional reverse proxy
 
-When an institutional reverse proxy or load balancer already terminates HTTPS and forwards to this host, keep Caddy on plain HTTP, listen on an address the proxy can reach, and name the host it forwards for:
+When an institutional reverse proxy or load balancer already provides HTTPS and forwards to this host, keep Caddy on plain HTTP (`CRUCIBLE_SITE_ADDRESS=:80`, the default), listen on an address the proxy can reach, and list in `CRUCIBLE_HTTP_HOSTS` the name it forwards for. This is the only setup that uses `CRUCIBLE_HTTP_HOSTS`.
 
 ```bash
 CRUCIBLE_BIND_ADDRESS=10.0.0.5
@@ -228,7 +248,7 @@ server {
 
 HTTPS terminates at Caddy. Behind it, Caddy, the API and the Hub communicate over plain HTTP, and those connections carry API keys, sign-in tokens and cookies, and, when the Hub exchanges a sign-in, the shared client secret.
 
-On a single host this is the usual setup and is safe as configured here: the database is on an internal network that only the API joins, every container drops the Linux capabilities that would allow it to intercept other containers' traffic and cannot gain new privileges, and nothing else should be attached to the `crucible` network. This is not a zero-trust architecture, in which every connection is encrypted and authenticated (NIST SP 800-207).
+On a single host this is the usual setup and is safe as configured here: the database is on an internal network that only the API joins, every container drops the Linux capabilities that would allow it to intercept other containers' traffic and cannot gain new privileges, and nothing else should be attached to the `crucible` network.
 
 Any connection that leaves the host requires encryption: the Hub refuses plain HTTP to the API except to a container name or a private address, and the connection to a Hub on a separate host must use an encrypted private network (see [Crucible Hub](hub.md#hub-on-a-separate-host)).
 

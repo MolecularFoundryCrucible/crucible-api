@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from sqlalchemy import desc, func, join, or_, text, Text, true
+from sqlalchemy import desc, false, func, join, or_, text, Text, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import attributes, selectinload
 from sqlalchemy.sql import and_, exists
@@ -36,7 +36,10 @@ from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
-from app.models.query_params import RESOURCE_AFFILIATION_DESCRIPTION, ResourceAffiliation, ResourceDetailQuery, ResourceEmbeddingListQuery
+from app.models.query_params import (
+    OWNER_REF_DESCRIPTION, OWNER_REF_MAX, RESOURCE_AFFILIATION_DESCRIPTION, ResourceAffiliation, ResourceDetailQuery,
+    ResourceEmbeddingListQuery,
+)
 from app.models.response_schemas import DetailResponse
 from app.services.resource_access import access_grant_read, access_grant_reads, may_view_members, with_grant_capabilities
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
@@ -45,6 +48,7 @@ from app.utils.auth_utils import (
     caller_row,
     fetch_acl_rows,
     permission_filter,
+    project_member_filter,
     require_grant,
     require_permission,
     require_platform_admin,
@@ -62,7 +66,7 @@ from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_a
 from app.utils.gcs_record_utils import dataset_record, sample_record, write_metadata, write_record
 from app.utils.link_utils import fetch_readable_links
 from app.utils.project_utils import resolve_project_identifiers, resolve_project_reference
-from app.utils.user_utils import identity_group_of, identity_group_owner, close_pending_join_requests, owner_fields, owner_unique_id, owners_of, resolve_user_by_identifier
+from app.utils.user_utils import identity_group_of, identity_group_owner, close_pending_join_requests, owner_fields, owner_unique_id, owners_of, person_by_reference, resolve_user_by_identifier
 from app.utils.cursor_utils import (
     CursorError,
     filter_fingerprint,
@@ -258,6 +262,23 @@ def search_resource_chunks(
         )
 
 
+def _metadata_owned_by_any(session, refs):
+    """Metadata of records owned by any of the people named by `refs`; unknown people match nothing."""
+    people = [person for ref in refs if (person := person_by_reference(session, ref)) is not None]
+    if not people:
+        return false()
+    ids = [person.id for person in people]
+    owned = [
+        ScientificMetadataBinary.unique_id.in_(select(model.unique_id).where(model.owner_user_id.in_(ids)))
+        for model in (Dataset, Sample, Instrument)
+    ]
+    projects = and_(
+        Resource.resource_type == "project",
+        or_(*(project_member_filter(person.unique_id, ScientificMetadataBinary, roles=(Role.OWNER,)) for person in people)),
+    )
+    return or_(*owned, projects)
+
+
 @router.get("/resources/metadata/search", response_model=PaginatedResponse[ResourceSearchResult])
 def search_resource_metadata_v2(
     auth_res: Annotated[Principal, Depends(authorize_user)],
@@ -269,6 +290,7 @@ def search_resource_metadata_v2(
         max_length=5,
         description=RESOURCE_AFFILIATION_DESCRIPTION + " Applies to dataset and sample results; project and instrument results are not narrowed.",
     ),
+    owner_ref: Optional[List[str]] = Query(default=None, min_length=1, max_length=OWNER_REF_MAX, description=OWNER_REF_DESCRIPTION),
 ):
     """
     Search resources by scientific metadata content using full-text search.
@@ -301,6 +323,7 @@ def search_resource_metadata_v2(
                     Resource.resource_type.notin_(("dataset", "sample")),
                     resource_affiliation_filter(auth_res, ScientificMetadataBinary, affiliation),
                 ) if affiliation else true(),
+                _metadata_owned_by_any(session, owner_ref) if owner_ref else true(),
             ))
             .order_by(desc("rank"))
             .limit(limit)

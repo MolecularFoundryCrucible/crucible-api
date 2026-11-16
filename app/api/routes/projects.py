@@ -34,7 +34,7 @@ from app.utils.project_utils import (
     resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
-from app.models.query_params import ProjectDetailQuery, ProjectListQuery, SearchQuery
+from app.models.query_params import ProjectDetailQuery, ProjectListQuery, ProjectSearchQuery
 from app.models.projects import (
     ProjectCreate, ProjectMembershipRole, ProjectRead, ProjectUpdate, ProjectWithLead)
 from app.models.users import UserPublicRead
@@ -48,6 +48,12 @@ from app.services.resource_details import (
 router = APIRouter(tags=["projects"])
 RESERVED_PROJECT_ID = {"code": "project_id_reserved", "message": "This project_id is reserved; only an administrator can create or rename a project with it"}
 
+
+
+def _owned_by_any(session, refs):
+    """Projects whose owner is any of the people named by `refs`; unknown people match nothing."""
+    owners = [person.unique_id for ref in refs if (person := person_by_reference(session, ref)) is not None]
+    return or_(*(project_member_filter(owner, Project, roles=(Role.OWNER,)) for owner in owners)) if owners else false()
 
 
 def _validate_service_account_project_role(user: User, role: Role) -> None:
@@ -209,8 +215,7 @@ def list_projects(
         if params.affiliation:
             base = base.where(project_owner_affiliation_filter(auth_res, Project))
         if params.owner_ref:
-            owners = [person.unique_id for ref in params.owner_ref if (person := person_by_reference(session, ref)) is not None]
-            base = base.where(or_(*(project_member_filter(owner, Project, roles=(Role.OWNER,)) for owner in owners)) if owners else false())
+            base = base.where(_owned_by_any(session, params.owner_ref))
         base = base.where(deletion_filter_for(Project))
         if params.active_since is not None:
             base = base.where(Project.last_activity_at >= params.active_since)
@@ -275,7 +280,7 @@ def _resolve_member_selectors(session, caller: Principal, user_refs) -> list[str
 @router.get("/projects/search", response_model=PaginatedResponse[ProjectWithLead])
 def search_projects(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    params: Annotated[SearchQuery, Query()],
+    params: Annotated[ProjectSearchQuery, Query()],
 ):
     '''
     Search projects by title or project_id across all projects, not just ones the
@@ -297,6 +302,8 @@ def search_projects(
         query = query.where(deletion_filter_for(Project))
         if params.affiliation:
             query = query.where(project_owner_affiliation_filter(auth_res, Project))
+        if params.owner_ref:
+            query = query.where(_owned_by_any(session, params.owner_ref))
         query = query.order_by(
             trigram_rank(normalized_q, fields).desc(),
             Project.unique_id.desc(),

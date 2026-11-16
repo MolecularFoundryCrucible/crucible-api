@@ -96,3 +96,28 @@ def test_owner_is_null_with_its_deprecated_alias(client, db_engine, auth_as):
     assert client.get("/datasets", params={"owner_is_null": "true", "owner_id_is_null": "false"}).status_code == 422
     assert client.get("/samples", params={"owner_is_null": "true"}).status_code == 200
     assert client.get("/datasets/facets", params={"field": "owner", "owner_is_null": "false"}).status_code == 200
+
+
+def test_project_search_filters_by_owner(client, db_engine, auth_as, monkeypatch):
+    from sqlalchemy import func, literal, or_
+
+    import app.api.routes.projects as projects_routes
+
+    def apply_search(query, tokens, fields, prefix_fields=()):
+        for token in tokens:
+            query = query.where(or_(*(func.lower(field).contains(token) for field in fields)))
+        return query
+
+    monkeypatch.setattr(projects_routes, "configure_trigram_search", lambda session, threshold: None)
+    monkeypatch.setattr(projects_routes, "apply_trigram_search", apply_search)
+    monkeypatch.setattr(projects_routes, "trigram_rank", lambda query, fields: literal(1))
+    _people(db_engine)
+    _as(auth_as, db_engine, ALICE)
+    for owner in ("bob", "carol"):
+        assert client.post("/projects", json={"project_id": f"search-{owner}", "organization": "MF", "owner_ref": owner}).status_code == 200
+    schema = client.get("/openapi.json").json()["paths"]["/projects/search"]["get"]["parameters"]
+    assert "owner_ref" in {p["name"] for p in schema}
+    found = client.get("/projects/search", params={"q": "search", "owner_ref": "carol"})
+    assert found.status_code == 200, found.text
+    assert [p["project_id"] for p in found.json()["items"]] == ["search-carol"]
+    assert client.get("/projects/search", params={"q": "search", "owner_ref": "nobody-here"}).json()["items"] == []

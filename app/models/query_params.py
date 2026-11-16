@@ -1030,6 +1030,10 @@ class SearchQuery(StrictQueryModel):
     limit: int = Field(default=20, ge=1, le=50)
 
 
+class ProjectSearchQuery(SearchQuery):
+    owner_ref: Optional[list[str]] = owner_ref_field()
+
+
 class ResourceSearchQuery(SearchQuery):
     include_owner: bool = True
     affiliation: Optional[list[ResourceAffiliation]] = Field(

@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- The Compose bundle runs Hub 1.8.0 instead of its pre-release 1.8.0-alpha.1.
+
 ## [4.0.0] - 2026-11-17
 
 Crucible authenticates users itself, instruments gain members who read their datasets, and records share one response shape. This release contains everything listed under 4.0.0a1 below, and the following. Upgrading: `docs/upgrading/3.3-to-4.0.md`.

@@ -1,3 +1,4 @@
+import pathlib
 import json
 
 from app.api.routes import misc
@@ -122,8 +123,11 @@ def test_liveness_remains_minimal():
 
 
 def test_api_version_uses_project_metadata(monkeypatch):
+    import tomllib
+
     monkeypatch.delenv("API_VERSION", raising=False)
-    assert api_version() == "4.0.0a1"
+    declared = tomllib.loads((pathlib.Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
+    assert api_version() == declared
 
 
 HEAD = misc._migration_scripts().get_current_head()

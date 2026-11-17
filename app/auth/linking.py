@@ -1,11 +1,9 @@
 """Linking another sign-in method to an account, and removing one. A link is started by the Hub
 with the person's session, finished in their browser at the provider, and written only when the
 same person confirms it, so neither side of a forged request can attach a login to an account."""
-import base64
-import hashlib
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, update
 from sqlmodel import Session, select
@@ -16,8 +14,10 @@ from app.auth.identity import IdentityTaken, ensure_identity, find_identity
 from app.config import ORCID_ISSUERS, OidcProvider, get_settings
 from app.tables import LoginCode, LoginTransaction, User, UserIdentity
 from app.models.identities import IdentityRead
-from app.auth.login_transactions import LoginConfig, LoginRefused, InvalidLoginRequest, _aware, _digest, check_login_request
+from app.auth.login_transactions import LoginConfig, LoginRefused, InvalidLoginRequest, check_login_request
 from app.auth.tokens import InvalidGrant, access_token_family, revoke_all_tokens
+from authlib.oauth2.rfc7636 import create_s256_code_challenge
+from app.auth.common import as_utc, now_or, sha256_hex
 
 LINK_LIFETIME = timedelta(minutes=10)
 START_LIFETIME = timedelta(seconds=120)
@@ -64,10 +64,6 @@ class LinkPreview:
     status: str
 
 
-def _now(value: datetime | None) -> datetime:
-    return value if value is not None else datetime.now(timezone.utc)
-
-
 def require_linking_available() -> None:
     if not get_settings().auth.identity_lookup:
         raise LinkingUnavailable
@@ -79,7 +75,7 @@ def begin_link(engine, config: LoginConfig, user_id: int, client_id: str, sessio
     within LINK_START_WINDOW."""
     require_linking_available()
     check_login_request(config, client_id, callback_uri, hub_state, challenge)
-    current = _now(now)
+    current = now_or(now)
     start = secrets.token_urlsafe(32)
     with Session(engine) as session, session.begin():
         session.exec(select(User.id).where(User.id == user_id).with_for_update()).one()
@@ -90,8 +86,8 @@ def begin_link(engine, config: LoginConfig, user_id: int, client_id: str, sessio
             raise TooManyLinks
         session.add(LoginTransaction(
             session_family_id=session_family_id,
-            state_hash=_digest(start),
-            start_hash=_digest(start),
+            state_hash=sha256_hex(start),
+            start_hash=sha256_hex(start),
             purpose="link",
             user_id=user_id,
             client_id=client_id,
@@ -112,17 +108,17 @@ def open_link(engine, start: str, *, now: datetime | None = None) -> tuple[Login
     cookie, returning the transaction, the state and the secret."""
     if not start or len(start) > 128:
         raise InvalidLoginRequest
-    current = _now(now)
+    current = now_or(now)
     state = secrets.token_urlsafe(32)
     browser_secret = secrets.token_urlsafe(32)
     with Session(engine) as session, session.begin():
-        transaction = session.exec(select(LoginTransaction).where(LoginTransaction.start_hash == _digest(start)).with_for_update()).one_or_none()
+        transaction = session.exec(select(LoginTransaction).where(LoginTransaction.start_hash == sha256_hex(start)).with_for_update()).one_or_none()
         if transaction is None or transaction.purpose != "link" or transaction.browser_secret_hash is not None:
             raise InvalidLoginRequest
-        if transaction.consumed_at is not None or current >= _aware(transaction.expires_at) or current >= _aware(transaction.created_at) + START_LIFETIME:
+        if transaction.consumed_at is not None or current >= as_utc(transaction.expires_at) or current >= as_utc(transaction.created_at) + START_LIFETIME:
             raise InvalidLoginRequest
-        transaction.state_hash = _digest(state)
-        transaction.browser_secret_hash = _digest(browser_secret)
+        transaction.state_hash = sha256_hex(state)
+        transaction.browser_secret_hash = sha256_hex(browser_secret)
         session.add(transaction)
         session.flush()
         session.expunge(transaction)
@@ -136,8 +132,8 @@ def _label(provider: OidcProvider, subject: str, claims_label: str | None) -> st
 def create_link_code(engine, transaction: LoginTransaction, provider: OidcProvider, subject: str, auth_time: datetime | None, label: str | None, *, now: datetime | None = None) -> str:
     """After the provider callback: a single-use code naming the login, for the Hub to preview and
     confirm. Refuses a login whose provider did not ask the person to sign in again."""
-    current = _now(now)
-    if auth_time is None or auth_time < _aware(transaction.created_at) - AUTH_TIME_LEEWAY:
+    current = now_or(now)
+    if auth_time is None or auth_time < as_utc(transaction.created_at) - AUTH_TIME_LEEWAY:
         raise LoginRefused("login_required")
     code = secrets.token_urlsafe(48)
     with Session(engine) as session, session.begin():
@@ -145,7 +141,7 @@ def create_link_code(engine, transaction: LoginTransaction, provider: OidcProvid
         if user is None or user.disabled_at is not None or user.is_service_account:
             raise LoginRefused("access_denied")
         session.add(LoginCode(
-            code_hash=_digest(code),
+            code_hash=sha256_hex(code),
             purpose="link",
             user_id=user.id,
             user_unique_id=user.unique_id,
@@ -176,25 +172,21 @@ def link_status(session: Session, user: User, issuer: str, subject: str) -> str:
     return AVAILABLE
 
 
-def _challenge(verifier: str) -> str:
-    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
-
-
 def _link_grant(session: Session, code: str, verifier: str, client_id: str, callback_uri: str, session_token: str, current: datetime, *, lock: bool) -> tuple[LoginCode, User]:
     if not code or len(code) > 128 or not 43 <= len(verifier) <= 128 or not verifier.isascii():
         raise InvalidGrant
-    query = select(LoginCode).where(LoginCode.code_hash == _digest(code))
+    query = select(LoginCode).where(LoginCode.code_hash == sha256_hex(code))
     grant = session.exec(query.with_for_update() if lock else query).one_or_none()
-    if grant is None or grant.purpose != "link" or grant.consumed_at is not None or current >= _aware(grant.expires_at):
+    if grant is None or grant.purpose != "link" or grant.consumed_at is not None or current >= as_utc(grant.expires_at):
         raise InvalidGrant
-    if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, _challenge(verifier)):
+    if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, create_s256_code_challenge(verifier)):
         raise InvalidGrant
     family = access_token_family(session, session_token, now=current)
     if family.user_id != grant.user_id or family.client_id != client_id or grant.session_family_id is None or family.id != grant.session_family_id:
         raise InvalidGrant
     from app.utils.auth_utils import STEP_UP_MAX_AGE
 
-    if family.auth_time is None or current - _aware(family.auth_time) > timedelta(seconds=STEP_UP_MAX_AGE):
+    if family.auth_time is None or current - as_utc(family.auth_time) > timedelta(seconds=STEP_UP_MAX_AGE):
         raise LinkSessionStale
     return grant, session.get(User, grant.user_id)
 
@@ -202,7 +194,7 @@ def _link_grant(session: Session, code: str, verifier: str, client_id: str, call
 def preview_link(engine, code: str, verifier: str, client_id: str, callback_uri: str, session_token: str, *, now: datetime | None = None) -> LinkPreview:
     """What a link code would add, for the Hub's confirmation page. Changes nothing."""
     require_linking_available()
-    current = _now(now)
+    current = now_or(now)
     with Session(engine) as session:
         grant, user = _link_grant(session, code, verifier, client_id, callback_uri, session_token, current, lock=False)
         return LinkPreview(grant.issuer, grant.subject, grant.label, link_status(session, user, grant.issuer, grant.subject))
@@ -212,7 +204,7 @@ def confirm_link(engine, code: str, verifier: str, client_id: str, callback_uri:
     """Write the link, only for the person who started it. Raises LinkRefused with the status when
     the login cannot be added."""
     require_linking_available()
-    current = _now(now)
+    current = now_or(now)
     with Session(engine) as session, session.begin():
         grant, user = _link_grant(session, code, verifier, client_id, callback_uri, session_token, current, lock=True)
         grant.consumed_at = current
@@ -266,7 +258,7 @@ def unlink_identity(session: Session, user: User, identity_id: int, *, actor: Us
     in, a password included, ends their other Hub sessions and cancels links still in progress."""
     from app.tables import LocalCredential
 
-    current = _now(now)
+    current = now_or(now)
     methods = sign_in_methods(session, user)
     identity = next((method for method in methods if method.id == identity_id), None)
     if identity is None:
@@ -309,7 +301,7 @@ def holdings(session: Session, user: User) -> list[str]:
     """What an account holds besides its own identity group, as reasons it must not be emptied."""
 
     from app.tables import (
-        AccessGroupJoinRequest, ApiKey, ApiToken, Dataset, DeletionRequest, Instrument, PostprocessingRun, Project, ResourceACL, Sample, UploadSession,
+        AccessGroupJoinRequest, ApiKey, Dataset, DeletionRequest, Instrument, PostprocessingRun, Project, ResourceACL, Sample, UploadSession,
         UserAccessGroupLink,
     )
     from app.utils.user_utils import identity_group_of
@@ -335,8 +327,6 @@ def holdings(session: Session, user: User) -> list[str]:
         count = session.exec(query).one()
         if name == "other logins":
             count -= 1
-        if name == "used API keys":
-            count = max(count, session.exec(select(func.count()).select_from(ApiToken).where(ApiToken.user_id == user.id, ApiToken.last_used_at != None)).one())  # noqa: E711
         if count:
             reasons.append(f"{count} {name}")
     return reasons
@@ -345,9 +335,7 @@ def holdings(session: Session, user: User) -> list[str]:
 def move_identity(session: Session, identity: UserIdentity, target: User, *, now: datetime | None = None) -> User:
     """Move a login off an account that holds nothing else, onto the right account, and switch the
     emptied account off. This is not a merge: it refuses when the source holds anything."""
-    from app.tables import ApiToken
-
-    current = _now(now)
+    current = now_or(now)
     source = session.get(User, identity.user_id, with_for_update=True)
     if source.id == target.id:
         raise MoveRefused(["the login already belongs to that account"])
@@ -360,8 +348,6 @@ def move_identity(session: Session, identity: UserIdentity, target: User, *, now
         raise MoveRefused([f"the source account holds {reason}" for reason in reasons])
     identity.user_id = target.id
     session.add(identity)
-    for token in session.exec(select(ApiToken).where(ApiToken.user_id == source.id)).all():
-        session.delete(token)
     from app.auth.api_keys import revoke_user_keys
 
     revoke_user_keys(session, source.id, now=current)

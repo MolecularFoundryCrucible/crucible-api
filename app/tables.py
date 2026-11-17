@@ -264,7 +264,7 @@ class User(SQLModel, table=True):
     email: Optional[str]
     unique_id: str = Field(sa_column=Column("orcid", String, index=True, unique=True))
     is_service_account: Optional[bool] = Field(default=False)
-    username: Optional[str] = Field(default=None, max_length=32)
+    username: str = Field(max_length=32)
     # Platform-wide bypass, deliberately not a group. Postgres enum platform_role.
     platform_role: Optional[str] = Field(default="none")
     last_active_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))

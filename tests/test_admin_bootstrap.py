@@ -5,7 +5,8 @@ import pytest
 from sqlmodel import Session, select
 
 from app.cli.__main__ import main
-from app.tables import AccessGroup, ApiToken, User, UserAccessGroupLink
+from app.auth.api_keys import key_hash
+from app.tables import AccessGroup, ApiKey, ApiToken, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 
@@ -32,8 +33,8 @@ def test_create_admin_creates_user_group_and_key(db_engine, capsys):
         assert group.group_type == AccessGroupType.IDENTITY.value
         link = session.exec(select(UserAccessGroupLink).where(UserAccessGroupLink.accessgroup_id == group.id)).one()
         assert (link.user_id, link.role) == (user.id, Role.OWNER.db_value)
-        tokens = session.exec(select(ApiToken).where(ApiToken.user_unique_id == user.unique_id)).all()
-        assert [token.token for token in tokens] == [output["api_key"]]
+        assert [key.key_hash for key in session.exec(select(ApiKey).where(ApiKey.user_id == user.id)).all()] == [key_hash(output["api_key"])]
+        assert session.exec(select(ApiToken)).all() == []
 
 
 def test_orcid_becomes_the_identifier(db_engine, capsys):
@@ -116,12 +117,12 @@ def test_terminal_interrupted_creates_nothing(db_engine, monkeypatch, capsys, in
 
 
 def test_user_and_key_are_created_together(db_engine, monkeypatch):
-    from app.utils import auth_utils
+    from app.auth import api_keys
 
-    def failing(orcid, session):
+    def failing(*args, **kwargs):
         raise RuntimeError("key storage failed")
 
-    monkeypatch.setattr(auth_utils, "add_apikey", failing)
+    monkeypatch.setattr(api_keys, "create_key", failing)
     with pytest.raises(RuntimeError):
         _create("--first-name", "A", "--last-name", "B")
     with Session(db_engine) as session:

@@ -10,7 +10,7 @@ from app.tables import (
     AuthEvent, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User, UserIdentity,
 )
 from app.utils import auth_utils
-from app.utils.auth_utils import add_apikey
+from app.auth.api_keys import create_key
 from app.auth.login_transactions import LoginRefused, create_handoff_code, create_login, consume_login, exchange_handoff_code
 from app.auth.tokens import InvalidGrant, access_token_family, issue_tokens, refresh_tokens
 from app.utils.permissions import PlatformRole
@@ -52,7 +52,7 @@ def set_disabled(db_engine, unique_id=ORCID, value=NOW):
 
 def api_key_for(db_engine, unique_id=ORCID):
     with Session(db_engine) as session, session.begin():
-        return add_apikey(person_row(session, unique_id), session)
+        return create_key(session, person_row(session, unique_id))[1]
 
 
 def authorize(token):
@@ -170,7 +170,7 @@ def test_admin_disables_and_everything_stops_at_once(client, auth_as, db_engine)
         authorize(key)
     with Session(db_engine) as session:
         assert session.exec(select(TokenFamily)).one().revoked_at is not None
-        event = session.exec(select(AuthEvent)).one()
+        event = session.exec(select(AuthEvent).where(AuthEvent.event != "api_key_created")).one()
         admin_id = session.exec(select(User.id).where(User.unique_id == ADMIN)).one()
         assert (event.event, event.user_unique_id, event.actor_user_id) == ("disabled", ORCID, admin_id)
     with pytest.raises(InvalidGrant):
@@ -191,7 +191,7 @@ def test_enable_restores_sign_in_but_not_old_sessions(client, auth_as, db_engine
     with pytest.raises(InvalidGrant):
         refresh_tokens(db_engine, pair.refresh_token, "crucible-hub")
     with Session(db_engine) as session:
-        assert [row for row in session.exec(select(AuthEvent.event).order_by(AuthEvent.id))] == ["disabled", "enabled"]
+        assert [row for row in session.exec(select(AuthEvent.event).where(AuthEvent.event != "api_key_created").order_by(AuthEvent.id))] == ["disabled", "enabled"]
 
 
 def test_disable_twice_keeps_the_first_time_and_one_event(client, auth_as, db_engine):

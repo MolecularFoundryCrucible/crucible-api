@@ -731,10 +731,10 @@ def test_user_list_query_model_defaults():
 
 PAGINATION_USERS = [
     ("0000-0009-0000-0001", "Ann", "Smith", "ann", "ann@x.com"),
-    ("0000-0009-0000-0002", "bob", "smith", None, "Bob@x.com"),
+    ("0000-0009-0000-0002", "bob", "smith", "bob", "Bob@x.com"),
     ("0000-0009-0000-0003", "Ann", "Smith", "zed", None),
     ("0000-0009-0000-0004", "Dee", "Jones", "Dee", "dee@x.com"),
-    ("0000-0009-0000-0005", "eve", "SMITH", None, None),
+    ("0000-0009-0000-0005", "eve", "SMITH", "eve", None),
     ("0000-0009-0000-0006", "Fay", "Adams", "fay", "fay@x.com"),
     ("0000-0009-0000-0007", "Gus", "smith", "Ann", "gus@x.com"),
 ]

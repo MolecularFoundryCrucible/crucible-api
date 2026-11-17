@@ -15,17 +15,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Records have one shape: `owner` (a `UserPublicRead`) on every record and by default on lists and search, project `resource_type`, `role` on datasets and samples, a typed `deletion_request`, and the project member shape for instrument `members`.
 - Parent and child routes and a sample's embedded `datasets` return full responses without nested links; sample `include_datasets` defaults to false.
 - `capabilities.can_delete` follows direct deletion (owners only): true for dataset and sample owners, false for project and instrument admins who are not the owner.
+- Needs migration `119e02fa5b77`: every account without a username gets one generated from its name, and a username becomes required; the `username_required` refusal of `POST /account/password` is gone.
+- API keys from before 4.0 authenticate only after `python -m app.cli api-keys import --commit`; the server no longer reads or writes plain keys, and service-account keys are named keys with the `crucible_` prefix.
 
 ### Added
 
 - `affiliation=instrument` on dataset lists, facets and search, for datasets read through instrument membership; `affiliation=member` on instruments.
 - `python -m app.cli instruments check [--commit]` reports, and repairs, instrument grants that do not match membership and dataset assignment.
 - `owner_ref` names a user in create bodies, `new_owner_ref` in ownership transfer; the owner filter `owner_ref` is repeatable and exists on project lists and search and on metadata search too.
+- `python -m app.cli api-keys import [--commit]` copies API keys from before 4.0 into the hashed key table.
+- Settings `CRUCIBLE_AUTH_MAX_PENDING_ACCOUNTS` (100), `CRUCIBLE_AUTH_HASH_QUEUE` (8), `CRUCIBLE_AUTH_HASH_WAIT_SECONDS` (10), `CRUCIBLE_AUTH_ADDRESS_FREE_FAILURES` (10) and `CRUCIBLE_AUTH_LONGEST_ADDRESS_DELAY_SECONDS` (60); every sign-in limit is listed in `docs/sign_in_operations.md`.
 
 ### Deprecated
 
 - Request names `owner`, `owner_orcid`, `project_lead*` and `new_owner`, replaced by `owner_ref` and `new_owner_ref`; the `owner_id` filter, replaced by the repeatable `owner_ref`; `owner_id_is_null`, replaced by `owner_is_null`.
 - Response fields `owner_orcid`, `lead`, `project_lead_orcid`, and on datasets and samples `project_id`, `instrument_id` and `instrument_name`, replaced by the nested `owner`, `project` and `instrument`.
+- `older_routes` on API key items, always false.
 
 ### Changed
 
@@ -33,13 +38,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The pages that set a password (password link, registration) check the length rule and the confirmation as the user types, and their hints and messages are shorter.
 - With passwords enabled, the sign-in page is the username and password form, with the listed identity providers offered below it; the separate method-choice page remains only for several providers without passwords. `provider=` still goes straight to one method.
 - The sign-in pages served by the API (method choice, password sign-in, password link, registration, program and device approval, result pages) share one layout: a narrower card, larger controls, boxed error messages, request details as a list, and a full-width layout on phones.
+- Password registration is refused while `CRUCIBLE_AUTH_MAX_PENDING_ACCOUNTS` accounts wait for approval, and IPv6 clients are counted per /64 network.
+- Rotating a service account's key revokes every key it holds.
+
 ### Fixed
+
 - The instrument members migration also makes project members with a grant on an instrument its members, turns `contributor` into `editor`, and passes an instrument owned by a service account to its highest-ranking member; `instruments check` reports instruments left without an owner.
 - The `public` filter on `GET /datasets` and `GET /samples` reads the public grant, as responses do; on samples it returned 500.
 - The server checks every cursor signing key at startup, instead of answering list requests with 500.
 - Rewriting a stored dataset, sample or instrument record keeps an owner that matches no user, instead of erasing it.
+- `/oauth/authorize` without `redirect_uri` answers 400 instead of redirecting to a broken address.
+
 ### Security
+
 - Dependencies: `opentelemetry-api` 1.45.2, which fixes slow parsing of crafted `traceparent` headers.
+- A pepper given as `CRUCIBLE_AUTH_PEPPER_VERSION` is used; passwords were stored without it.
+- An attempt refused because its address is delayed no longer computes a password hash, at most `CRUCIBLE_AUTH_HASH_QUEUE` checks wait for a slot, and a check that finds no slot is not counted against the account.
 
 ## [4.0.0a1] - 2026-11-11
 

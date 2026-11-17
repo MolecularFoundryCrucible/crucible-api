@@ -187,3 +187,18 @@ def test_the_sign_in_methods_name_the_registration_page_only_while_it_is_open(cl
     monkeypatch.setenv("CRUCIBLE_AUTH_PASSWORD_ENABLED", "false")
     config.get_settings.cache_clear()
     assert all(method["kind"] == "oidc" for method in client.get("/auth/methods").json())
+
+
+def test_requests_are_refused_while_the_approval_list_is_full(client, setup, monkeypatch):
+    from datetime import datetime, timezone
+
+    from app import config
+
+    monkeypatch.setenv("CRUCIBLE_AUTH_MAX_PENDING_ACCOUNTS", "1")
+    config.get_settings.cache_clear()
+    with Session(setup) as session:
+        session.add(User(unique_id="waiting-one", username="waiting", first_name="W", last_name="O", pending_at=datetime.now(timezone.utc)))
+        session.commit()
+    answer = submit(client)
+    assert answer.status_code == 503 and "not being accepted" in answer.text, answer.text
+    assert person(setup, "rfranklin") is None

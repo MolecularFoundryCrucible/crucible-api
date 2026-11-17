@@ -4,7 +4,7 @@ up, and using one signs nobody in."""
 import hashlib
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Literal
 
 from sqlalchemy import delete, update
@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.tables import LocalCredential, PasswordToken, User
+from app.auth.common import as_utc, now_or
 
 Purpose = Literal["setup", "reset"]
 
@@ -32,14 +33,6 @@ class LiveLink:
     username: str | None
     person: str
     context: tuple[str | None, ...]
-
-
-def _now(value: datetime | None) -> datetime:
-    return value if value is not None else datetime.now(timezone.utc)
-
-
-def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 def link_token_hash(token: str) -> str:
@@ -63,7 +56,7 @@ def void_links(session: Session, user: User, *, now: datetime | None = None) -> 
     """Cancel this person's live link, in the caller's transaction."""
     session.execute(update(PasswordToken).where(
         PasswordToken.user_id == user.id, PasswordToken.consumed_at == None, PasswordToken.voided_at == None,  # noqa: E711
-    ).values(voided_at=_now(now)).execution_options(synchronize_session=False))
+    ).values(voided_at=now_or(now)).execution_options(synchronize_session=False))
 
 
 def issue_link(session: Session, user: User, purpose: Purpose, *, actor: User | None, lifetime: timedelta | None = None, now: datetime | None = None) -> tuple[str, datetime]:
@@ -71,7 +64,7 @@ def issue_link(session: Session, user: User, purpose: Purpose, *, actor: User | 
     token, shown once, and when it expires."""
     from app.auth.events import AuthEventType, record_event
 
-    current = _now(now)
+    current = now_or(now)
     session.exec(select(User.id).where(User.id == user.id).with_for_update()).one()
     check_link_target(user)
     void_links(session, user, now=current)
@@ -86,7 +79,7 @@ def issue_link(session: Session, user: User, purpose: Purpose, *, actor: User | 
 
 
 def _usable(row: PasswordToken | None, user: User | None, now: datetime) -> bool:
-    if row is None or user is None or row.consumed_at is not None or row.voided_at is not None or now >= _aware(row.expires_at):
+    if row is None or user is None or row.consumed_at is not None or row.voided_at is not None or now >= as_utc(row.expires_at):
         return False
     try:
         check_link_target(user)
@@ -102,10 +95,10 @@ def live_link(engine, token: str | None, *, now: datetime | None = None) -> Live
     with Session(engine) as session:
         row = session.get(PasswordToken, link_token_hash(token))
         user = session.get(User, row.user_id) if row is not None else None
-        if not _usable(row, user, _now(now)):
+        if not _usable(row, user, now_or(now)):
             return None
         person = " ".join(part for part in (user.first_name, user.last_name) if part) or user.username or user.unique_id
-        return LiveLink(row.token_hash, user.id, row.purpose, _aware(row.expires_at), user.username, person,
+        return LiveLink(row.token_hash, user.id, row.purpose, as_utc(row.expires_at), user.username, person,
                         (user.username, user.email, user.first_name, user.last_name))
 
 
@@ -116,7 +109,7 @@ def use_link(session: Session, token: str, password: str, *, now: datetime | Non
     from app.auth.passwords import store_password
     from app.auth.tokens import revoke_all_tokens
 
-    current = _now(now)
+    current = now_or(now)
     row = session.exec(select(PasswordToken).where(PasswordToken.token_hash == link_token_hash(token)).with_for_update()).one_or_none()
     user = session.exec(select(User).where(User.id == row.user_id).with_for_update()).one_or_none() if row is not None else None
     if not _usable(row, user, current):

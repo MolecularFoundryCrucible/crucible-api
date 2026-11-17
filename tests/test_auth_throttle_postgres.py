@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import pytest
+
+from app.config import get_settings
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlmodel import Session, SQLModel
@@ -67,7 +69,7 @@ def test_parallel_guesses_cannot_exceed_the_counter(pg_engine):
         address = session.get(LoginThrottle, throttle.address_hash("203.0.113.7"))
     checked = sum(decision.check_password for decision in decisions)
     assert checked == credential.failed_attempts == throttle.UNKNOWN_FREE_FAILURES + 1
-    assert address.consecutive_failures == throttle.ADDRESS_FREE_FAILURES + 1
+    assert address.consecutive_failures == get_settings().auth.address_free_failures + 1
 
 
 def test_parallel_known_browser_guesses_stop_exactly_at_the_limit(pg_engine):

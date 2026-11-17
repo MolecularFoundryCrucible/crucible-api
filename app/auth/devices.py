@@ -9,13 +9,14 @@ import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import update
 from sqlmodel import Session, select
 
 from app.config import get_secret
 from app.tables import DeviceAuthorization
+from app.auth.common import as_utc, now_or
 
 USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ"
 USER_CODE_LENGTH = 8
@@ -23,14 +24,6 @@ DEVICE_LIFETIME = timedelta(minutes=10)
 POLL_INTERVAL = 5
 SLOW_DOWN_STEP = 5
 INTERNAL_CLIENT_ID = "crucible-device-approval"
-
-
-def _now(value: datetime | None) -> datetime:
-    return value if value is not None else datetime.now(timezone.utc)
-
-
-def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 def device_code_hash(device_code: str) -> str:
@@ -56,7 +49,7 @@ def new_user_code() -> str:
 
 def create_device_authorization(engine, client_id: str, *, requested_from: str | None = None, now: datetime | None = None) -> tuple[str, str]:
     """A new device sign-in for this client: its device code and its user code, each shown once."""
-    current = _now(now)
+    current = now_or(now)
     for _ in range(5):
         device_code, user_code = secrets.token_urlsafe(48), new_user_code()
         with Session(engine) as session:
@@ -84,21 +77,21 @@ def pending_device(engine, user_code: str | None, *, now: datetime | None = None
     code = normalized_user_code(user_code)
     if code is None:
         return None
-    current = _now(now)
+    current = now_or(now)
     with Session(engine) as session:
         row = session.exec(select(DeviceAuthorization).where(DeviceAuthorization.user_code_hash == user_code_hash(code))).one_or_none()
-        if row is None or row.approved_at is not None or row.denied_at is not None or row.consumed_at is not None or current >= _aware(row.expires_at):
+        if row is None or row.approved_at is not None or row.denied_at is not None or row.consumed_at is not None or current >= as_utc(row.expires_at):
             return None
-        return PendingDevice(row.device_code_hash, row.client_id, _aware(row.created_at), f"{code[:4]}-{code[4:]}")
+        return PendingDevice(row.device_code_hash, row.client_id, as_utc(row.created_at), f"{code[:4]}-{code[4:]}")
 
 
 def device_by_hash(engine, device_hash: str, *, now: datetime | None = None) -> PendingDevice | None:
-    current = _now(now)
+    current = now_or(now)
     with Session(engine) as session:
         row = session.get(DeviceAuthorization, device_hash)
-        if row is None or row.approved_at is not None or row.denied_at is not None or row.consumed_at is not None or current >= _aware(row.expires_at):
+        if row is None or row.approved_at is not None or row.denied_at is not None or row.consumed_at is not None or current >= as_utc(row.expires_at):
             return None
-        return PendingDevice(row.device_code_hash, row.client_id, _aware(row.created_at), "", row.requested_from)
+        return PendingDevice(row.device_code_hash, row.client_id, as_utc(row.created_at), "", row.requested_from)
 
 
 def _waiting(device_hash: str, current: datetime) -> tuple:
@@ -112,14 +105,14 @@ def record_signed_in(engine, device_hash: str, *, user_id: int, auth_time: datet
     """Note who signed in to decide on this device sign-in. Only that person's decision is then
     accepted, so the signed form that carries it cannot name anyone else."""
     with Session(engine) as session, session.begin():
-        row = session.execute(update(DeviceAuthorization).where(*_waiting(device_hash, _now(now)))
+        row = session.execute(update(DeviceAuthorization).where(*_waiting(device_hash, now_or(now)))
                               .values(user_id=user_id, auth_time=auth_time).execution_options(synchronize_session=False).returning(DeviceAuthorization.device_code_hash)).first()
     return row is not None
 
 
 def decide(engine, device_hash: str, *, user_id: int, approve: bool, now: datetime | None = None) -> bool:
     """Record the decision of the person who signed in for it, once, while the device sign-in is still waiting."""
-    current = _now(now)
+    current = now_or(now)
     with Session(engine) as session, session.begin():
         row = session.execute(update(DeviceAuthorization).where(*_waiting(device_hash, current), DeviceAuthorization.user_id == user_id)
                               .values(**({"approved_at": current} if approve else {"denied_at": current}))

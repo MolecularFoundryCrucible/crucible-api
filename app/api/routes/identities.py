@@ -51,7 +51,7 @@ async def start_account_link(provider_key: Annotated[str, Path(max_length=32)], 
         raise HTTPException(status_code=400, detail="Unknown provider")
     try:
         code_verifier = await new_code_verifier(provider)
-        start = await run_in_threadpool(begin_link, get_engine(), config, auth_res.internal_user_id, auth_res.client_id, auth_res.session_family_id, provider, body.callback_uri, body.state, body.code_challenge, code_verifier=code_verifier)
+        start = await run_in_threadpool(lambda: begin_link(get_engine(), config, auth_res.internal_user_id, auth_res.client_id, auth_res.session_family_id, provider, body.callback_uri, body.state, body.code_challenge, code_verifier=code_verifier))
     except InvalidLoginRequest:
         raise HTTPException(status_code=400, detail="Invalid link request")
     except TooManyLinks:

@@ -214,3 +214,39 @@ def test_hash_not_in_user_read_or_any_response_schema():
 
     schemas = app.openapi()["components"]["schemas"]
     assert not [name for name, schema in schemas.items() if {"password_hash", "pepper_id"} & set(schema.get("properties", {}))]
+
+
+@pytest.mark.parametrize("way", ["variable", "file", "secret manager"])
+def test_the_pepper_is_used_however_it_is_given(monkeypatch, tmp_path, way):
+    monkeypatch.delenv("CRUCIBLE_AUTH_PEPPER")
+    if way == "variable":
+        monkeypatch.setenv("CRUCIBLE_AUTH_PEPPER", PEPPER)
+    elif way == "file":
+        (tmp_path / "pepper").write_text(PEPPER)
+        monkeypatch.setenv("CRUCIBLE_AUTH_PEPPER_FILE", str(tmp_path / "pepper"))
+    else:
+        version = "projects/p/secrets/pepper/versions/1"
+        monkeypatch.setenv("CRUCIBLE_AUTH_PEPPER_VERSION", version)
+        monkeypatch.setattr(config, "get_gcs_secret", lambda name: PEPPER if name == version else "")
+        monkeypatch.setattr(config, "_fetched_secrets", {})
+    config.get_settings.cache_clear()
+    assert passwords._current_pepper() == ("one", PEPPER.encode())
+    stored, pepper_id = hash_password(GOOD)
+    assert pepper_id == "one" and verify_password(GOOD, stored, pepper_id)[0]
+
+
+def test_a_pepper_identifier_without_its_secret_never_hashes_unpeppered(monkeypatch):
+    monkeypatch.delenv("CRUCIBLE_AUTH_PEPPER")
+    config.get_settings.cache_clear()
+    with pytest.raises(ConfigurationError, match="CRUCIBLE_AUTH_PEPPER"):
+        hash_password(GOOD)
+
+
+def test_secret_settings_are_read_only_through_the_secret_helpers():
+    import pathlib
+    import re
+
+    root = pathlib.Path(config.__file__).parent
+    readers = [str(path.relative_to(root)) for path in root.rglob("*.py")
+               if path.name != "config.py" and re.search(r"\.get_secret_value\(\)", path.read_text())]
+    assert readers == [], "read secrets with get_secret or optional_secret, which also handle NAME_FILE and NAME_VERSION"

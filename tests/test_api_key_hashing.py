@@ -32,24 +32,66 @@ def tokens(engine):
         return session.exec(select(ApiToken.token)).all()
 
 
-def test_new_key_is_written_to_both_tables_as_a_hash(db_engine, ada):
-    key = auth_utils.find_or_add_api_access(ada, db_engine)
+def _issue(engine, user_id):
+    from app.auth.api_keys import create_key
+
+    with Session(engine) as session:
+        key = create_key(session, session.get(User, user_id))[1]
+        session.commit()
+    return key
+
+
+def _plain(engine, user_id, token, created="2026-06-01", last_used=None):
+    with Session(engine) as session:
+        session.add(ApiToken(user_id=user_id, user_unique_id=ADA, access_group_id=ADA, token=token, token_created=created, last_used_at=last_used))
+        session.commit()
+
+
+def test_a_new_key_is_stored_only_as_a_hash(db_engine, ada):
+    key = _issue(db_engine, ada)
     [row] = keys(db_engine)
-    assert tokens(db_engine) == [key]
+    assert tokens(db_engine) == []
     assert (row.user_id, row.key_hash, row.key_last4) == (ada, hashlib.sha256(key.encode()).hexdigest(), key[-4:])
     assert row.revoked_at is None and row.expires_at.replace(tzinfo=timezone.utc) - row.created_at.replace(tzinfo=timezone.utc) == timedelta(days=365)
     assert key not in [value for value in row.model_dump().values() if isinstance(value, str)]
 
 
-def test_regenerated_key_is_gone_from_both_tables(db_engine, ada):
-    old = auth_utils.find_or_add_api_access(ada, db_engine)
-    new = auth_utils.find_or_add_api_access(ada, db_engine, regenerate=True)
-    assert tokens(db_engine) == [new]
+def test_a_key_from_before_4_0_authenticates_only_once_imported(db_engine, ada):
+    from app.auth.api_keys import find_api_key, import_plain_keys
+
+    used = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    _plain(db_engine, ada, "a" * 64, last_used=used)
+    _plain(db_engine, ada, "b" * 64, created="not a date")
+    with Session(db_engine) as session:
+        assert find_api_key(session, "a" * 64) is None
+        assert import_plain_keys(session) == {"to_copy": 1, "already_copied": 0, "skipped": 1}
+        assert keys(db_engine) == []
+        assert import_plain_keys(session, commit=True) == {"copied": 1, "already_copied": 0, "skipped": 1}
+        session.commit()
+        assert import_plain_keys(session, commit=True) == {"copied": 0, "already_copied": 1, "skipped": 1}
+        row = find_api_key(session, "a" * 64)
+    assert (row.user_id, row.created_at.date().isoformat(), row.last_used_at.replace(tzinfo=timezone.utc), row.name) == (ada, "2026-06-01", used, "Default key")
+
+
+def test_rotating_a_service_account_key_revokes_the_old_one(db_engine, ada):
+    from app.auth.api_keys import replace_keys
+
+    old = _issue(db_engine, ada)
+    _plain(db_engine, ada, "c" * 64)
+    with Session(db_engine) as session:
+        new = replace_keys(session, session.get(User, ada))
+        session.commit()
+    assert tokens(db_engine) == []
     assert [(row.key_last4, row.revoked_at is not None) for row in keys(db_engine)] == [(old[-4:], True), (new[-4:], False)]
 
 
-def test_revoked_key_is_gone_from_both_tables(client, auth_as, db_engine, ada):
-    auth_utils.find_or_add_api_access(ada, db_engine)
+def test_revoked_keys_are_gone_from_the_plain_table_too(client, auth_as, db_engine, ada):
+    from app.auth.api_keys import import_plain_keys
+
+    _plain(db_engine, ada, "d" * 64)
+    with Session(db_engine) as session:
+        import_plain_keys(session, commit=True)
+        session.commit()
     client.headers["Crucible-Privilege-Mode"] = "elevated"
     auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
     assert client.delete(f"/users/{ADA}/apikey").status_code == 204

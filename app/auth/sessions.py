@@ -3,13 +3,14 @@ laptop or a device), each a token family. Listing and ending them follows OWASP 
 (view, and end any or all after signing in again) and V7.4.5 (administrators can end one person's
 sessions or everyone's). There is no limit on how many a person may have (ASVS V7.1.2)."""
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import update
 from sqlmodel import Session, select
 
 from app.auth.clients import client_by_id
 from app.tables import TokenFamily, User
+from app.auth.common import as_utc, now_or
 
 
 @dataclass(frozen=True)
@@ -23,25 +24,17 @@ class ActiveSession:
     auth_time: datetime | None
 
 
-def _aware(value: datetime | None) -> datetime | None:
-    return value if value is None or value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-
-
-def _now(value: datetime | None) -> datetime:
-    return value if value is not None else datetime.now(timezone.utc)
-
-
 def _live(family: TokenFamily, now: datetime) -> bool:
     from app.auth.tokens import session_lifetimes
 
-    if family.revoked_at is not None or now >= _aware(family.expires_at) or client_by_id(family.client_id) is None:
+    if family.revoked_at is not None or now >= as_utc(family.expires_at) or client_by_id(family.client_id) is None:
         return False
-    return now < _aware(family.last_refreshed_at) + session_lifetimes(family.client_id)[1]
+    return now < as_utc(family.last_refreshed_at) + session_lifetimes(family.client_id)[1]
 
 
 def active_sessions(session: Session, user_id: int, *, now: datetime | None = None) -> list[ActiveSession]:
     """This person's sessions that can still be used, newest first."""
-    current = _now(now)
+    current = now_or(now)
     families = session.exec(select(TokenFamily).where(
         TokenFamily.user_id == user_id, TokenFamily.revoked_at == None, TokenFamily.expires_at > current,  # noqa: E711
     ).order_by(TokenFamily.created_at.desc(), TokenFamily.id.desc())).all()
@@ -51,8 +44,8 @@ def active_sessions(session: Session, user_id: int, *, now: datetime | None = No
             continue
         client = client_by_id(family.client_id)
         found.append(ActiveSession(
-            family.id, family.client_id, client.display_name, _aware(family.created_at), _aware(family.last_refreshed_at),
-            _aware(family.expires_at), _aware(family.auth_time),
+            family.id, family.client_id, client.display_name, as_utc(family.created_at), as_utc(family.last_refreshed_at),
+            as_utc(family.expires_at), as_utc(family.auth_time),
         ))
     return found
 
@@ -61,7 +54,7 @@ def end_session(session: Session, user: User, session_id: str, *, actor: User | 
     """End one of this person's sessions in the caller's transaction; False if it is not theirs or already over."""
     from app.auth.events import AuthEventType, record_event
 
-    current = _now(now)
+    current = now_or(now)
     family = session.exec(select(TokenFamily).where(TokenFamily.id == session_id, TokenFamily.user_id == user.id).with_for_update()).one_or_none()
     if family is None or not _live(family, current):
         return False
@@ -76,7 +69,7 @@ def end_sessions(session: Session, user: User, *, actor: User | None, keep: str 
     from app.auth.events import AuthEventType, record_event
     from app.auth.tokens import cancel_pending_sign_ins
 
-    current = _now(now)
+    current = now_or(now)
     conditions = [TokenFamily.user_id == user.id, TokenFamily.revoked_at == None]  # noqa: E711
     if keep is not None:
         conditions.append(TokenFamily.id != keep)
@@ -90,7 +83,7 @@ def end_sessions(session: Session, user: User, *, actor: User | None, keep: str 
 
 def end_everyones_sessions(engine, *, commit: bool, now: datetime | None = None) -> int:
     """For an administrator at the server, after a breach: end every session of every person."""
-    current = _now(now)
+    current = now_or(now)
     with Session(engine) as session, session.begin():
         if not commit:
             return len(session.exec(select(TokenFamily.id).where(TokenFamily.revoked_at == None)).all())  # noqa: E711

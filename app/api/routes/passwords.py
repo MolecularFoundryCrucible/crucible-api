@@ -105,7 +105,7 @@ def _write_password(engine, user_id: int, password: str, *, first: bool, keep_fa
 
     with hash_slot(), Session(engine) as session, session.begin():
         user = session.exec(select(User).where(User.id == user_id).with_for_update()).one()
-        if (session.get(LocalCredential, user.id) is None) != first or not user.username:
+        if (session.get(LocalCredential, user.id) is None) != first:
             raise _PasswordChanged
         store_password(session, user, password)
         if not first:
@@ -116,23 +116,19 @@ def _write_password(engine, user_id: int, password: str, *, first: bool, keep_fa
 @router.post("/account/password", status_code=204, tags=["account"], responses={
     401: {"description": "A session needs a recent sign-in (`insufficient_user_authentication`)"},
     403: {"description": "`hub_session_required` for an API key, `browser_sign_in_required` for a session approved with a device code"},
-    409: {"description": "`service_account`, `username_required` (set one with PATCH /account/profile first), or `password_changed` when another request changed it first"},
+    409: {"description": "`service_account`, or `password_changed` when another request changed it first"},
     **feature_disabled_response("passwords"),
     422: {"description": "Field errors in FastAPI's shape: `current_password_required` or `current_password_invalid` (counted against the account's attempt limit) on `current_password`, `password_rejected` with `ctx.reason` on `new_password`"},
     503: {"description": "The server is busy checking passwords"},
 })
 async def set_account_password(body: PasswordChange, request: Request, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Set a first password, or change yours, from a browser session with a recent sign-in. Changing
-    needs the current password and ends your other sessions, keeping this one. Passwords sign in with
-    the username, so an account without one sets it first with PATCH /account/profile. API keys are
-    never touched."""
+    needs the current password and ends your other sessions, keeping this one. API keys are never touched."""
     from app.auth.throttle import attempt_password
 
     _passwords_on()
-    engine = get_engine()
+    engine = await run_in_threadpool(get_engine)
     user, has_password = await run_in_threadpool(_caller_and_credential, engine, auth_res)
-    if not user.username:
-        raise HTTPException(status_code=409, detail={"code": "username_required", "message": "Passwords sign in with a username; set one with PATCH /account/profile first"})
     if has_password:
         if not body.current_password:
             raise _field_error("current_password", "current_password_required", "Give your current password to change it")
@@ -189,8 +185,12 @@ def remove_user_password(user_ref: UserRef, auth_res: Annotated[Principal, Depen
     return Response(status_code=204)
 
 
-def _serializer(purpose: str) -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(get_secret("CRUCIBLE_SECRET_KEY"), salt=f"crucible.password-link.{purpose}")
+def _serializer(key: str, purpose: str) -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(key, salt=f"crucible.password-link.{purpose}")
+
+
+async def _secret_key() -> str:
+    return await run_in_threadpool(get_secret, "CRUCIBLE_SECRET_KEY")
 
 
 def _cookie_path() -> str:
@@ -213,17 +213,17 @@ def _done(request: Request, heading: str, message: str, status: int = 200) -> Re
     return response
 
 
-def _form(request: Request, link, nonce: str, *, problem: str | None = None, status: int = 200) -> Response:
+def _form(request: Request, key: str, link, nonce: str, *, problem: str | None = None, status: int = 200) -> Response:
     return _page(request, "password_link_form.html", {
         "setup": link.purpose == "setup", "person": link.person, "username": link.username, "problem": problem,
         "min_length": get_settings().auth.password_min_length, "max_length": MAX_LENGTH,
-        "form_token": _serializer("form").dumps({"n": nonce}),
+        "form_token": _serializer(key, "form").dumps({"n": nonce}),
     }, status, form=True)
 
 
-def _browser(request: Request) -> dict | None:
+def _browser(request: Request, key: str) -> dict | None:
     try:
-        data = _serializer("cookie").loads(request.cookies.get(COOKIE, ""), max_age=BROWSER_LIFETIME)
+        data = _serializer(key, "cookie").loads(request.cookies.get(COOKIE, ""), max_age=BROWSER_LIFETIME)
     except BadData:
         return None
     return data if isinstance(data, dict) and isinstance(data.get("t"), str) and isinstance(data.get("n"), str) else None
@@ -237,12 +237,13 @@ async def password_link_page(request: Request, token: str | None = Query(default
     """Where a password link leads. Opening it does not use it up, so a mail scanner that follows
     the link changes nothing."""
     _require_passwords()
+    key = await _secret_key()
     if token is None:
-        browser = _browser(request)
+        browser = _browser(request, key)
         link = await run_in_threadpool(live_link, engine, browser["t"]) if browser else None
         if link is None:
             return _done(request, "Link not valid", NOT_VALID, 400)
-        return _form(request, link, browser["n"])
+        return _form(request, key, link, browser["n"])
     allowed, digest = await run_in_threadpool(begin_code_attempt, engine, client_address(request))
     link = await run_in_threadpool(live_link, engine, token) if allowed else None
     if link is None:
@@ -253,7 +254,7 @@ async def password_link_page(request: Request, token: str | None = Query(default
     except SignInUnavailable:
         return _done(request, "Unavailable", "Passwords cannot be set on this server right now.", 503)
     response = _browser_headers(RedirectResponse(f"{base}/oauth/password-link", status_code=303))
-    response.set_cookie(COOKIE, _serializer("cookie").dumps({"t": token, "n": secrets.token_urlsafe(24)}), max_age=BROWSER_LIFETIME, path=_cookie_path(),
+    response.set_cookie(COOKIE, _serializer(key, "cookie").dumps({"t": token, "n": secrets.token_urlsafe(24)}), max_age=BROWSER_LIFETIME, path=_cookie_path(),
                         secure=base.startswith("https://"), httponly=True, samesite="lax")
     return response
 
@@ -277,9 +278,10 @@ async def password_link_submitted(
 ) -> Response:
     """Set the password and use up the link. Two tabs cannot both succeed: the link's row is locked."""
     _require_passwords()
-    browser = _browser(request)
+    key = await _secret_key()
+    browser = _browser(request, key)
     try:
-        form = _serializer("form").loads(form_token, max_age=BROWSER_LIFETIME)
+        form = _serializer(key, "form").loads(form_token, max_age=BROWSER_LIFETIME)
     except BadData:
         form = None
     if browser is None or not isinstance(form, dict) or not secrets.compare_digest(str(form.get("n", "")), browser["n"]):
@@ -290,14 +292,14 @@ async def password_link_submitted(
         return _done(request, "Link not valid", NOT_VALID, 400)
     await run_in_threadpool(give_back, engine, digest)
     if password != confirm:
-        return _form(request, link, browser["n"], problem="Passwords do not match.", status=422)
+        return _form(request, key, link, browser["n"], problem="Passwords do not match.", status=422)
     problem = check_new_password(password, context=link.context)
     if problem is not None:
-        return _form(request, link, browser["n"], problem=problem.message, status=422)
+        return _form(request, key, link, browser["n"], problem=problem.message, status=422)
     try:
         await run_in_threadpool(_set_password, engine, browser["t"], password)
     except HashBusy:
-        return _form(request, link, browser["n"], problem="The server is busy. Try again in a moment.", status=503)
+        return _form(request, key, link, browser["n"], problem="The server is busy. Try again in a moment.", status=503)
     except LinkRefused:
         return _done(request, "Link not valid", NOT_VALID, 400)
     if link.purpose == "setup":
@@ -319,17 +321,17 @@ def _secure_cookies() -> bool:
         return False
 
 
-def _register_page(request: Request, nonce: str, values: dict | None = None, *, problem: str | None = None, status: int = 200) -> Response:
+def _register_page(request: Request, key: str, nonce: str, values: dict | None = None, *, problem: str | None = None, status: int = 200) -> Response:
     fields = {"first_name": "", "last_name": "", "email": "", "username": "", **(values or {})}
     return _page(request, "password_register_form.html", {
         **fields, "problem": problem, "min_length": get_settings().auth.password_min_length, "max_length": MAX_LENGTH,
-        "form_token": _serializer("register-form").dumps({"n": nonce}),
+        "form_token": _serializer(key, "register-form").dumps({"n": nonce}),
     }, status, form=True)
 
 
-def _register_browser(request: Request) -> str | None:
+def _register_browser(request: Request, key: str) -> str | None:
     try:
-        data = _serializer("register-cookie").loads(request.cookies.get(REGISTER_COOKIE, ""), max_age=BROWSER_LIFETIME)
+        data = _serializer(key, "register-cookie").loads(request.cookies.get(REGISTER_COOKIE, ""), max_age=BROWSER_LIFETIME)
     except BadData:
         return None
     return data.get("n") if isinstance(data, dict) and isinstance(data.get("n"), str) else None
@@ -347,9 +349,10 @@ def registration_form(request: Request) -> Response:
     """Where someone asks for an account with a password, when the server allows it
     (CRUCIBLE_AUTH_PASSWORD_REGISTRATION=approval). An administrator approves each one."""
     _require_registration()
+    key = get_secret("CRUCIBLE_SECRET_KEY")
     nonce = secrets.token_urlsafe(24)
-    response = _register_page(request, nonce)
-    response.set_cookie(REGISTER_COOKIE, _serializer("register-cookie").dumps({"n": nonce}), max_age=BROWSER_LIFETIME, path=_register_cookie_path(),
+    response = _register_page(request, key, nonce)
+    response.set_cookie(REGISTER_COOKIE, _serializer(key, "register-cookie").dumps({"n": nonce}), max_age=BROWSER_LIFETIME, path=_register_cookie_path(),
                         secure=_secure_cookies(), httponly=True, samesite="lax")
     return response
 
@@ -399,9 +402,10 @@ async def registration_submitted(
     from app.auth.password_registration import RegistrationRefused
 
     _require_registration()
-    nonce = _register_browser(request)
+    key = await _secret_key()
+    nonce = _register_browser(request, key)
     try:
-        form = _serializer("register-form").loads(form_token, max_age=BROWSER_LIFETIME)
+        form = _serializer(key, "register-form").loads(form_token, max_age=BROWSER_LIFETIME)
     except BadData:
         form = None
     if nonce is None or not isinstance(form, dict) or not secrets.compare_digest(str(form.get("n", "")), nonce):
@@ -409,22 +413,22 @@ async def registration_submitted(
     values = {"first_name": first_name.strip(), "last_name": last_name.strip(), "email": email.strip(), "username": username.strip()}
     allowed, _ = await run_in_threadpool(begin_code_attempt, engine, client_address(request))
     if not allowed:
-        return _register_page(request, nonce, values, problem="Too many requests from your network. Wait a minute and try again.", status=429)
+        return _register_page(request, key, nonce, values, problem="Too many requests from your network. Wait a minute and try again.", status=429)
     if password != confirm:
-        return _register_page(request, nonce, values, problem="Passwords do not match.", status=422)
+        return _register_page(request, key, nonce, values, problem="Passwords do not match.", status=422)
     try:
         fields = await run_in_threadpool(lambda: _checked(engine, username=username, first_name=first_name, last_name=last_name, email=email))
     except RegistrationRefused as refused:
-        return _register_page(request, nonce, values, problem=refused.problem.message, status=refused.problem.status)
+        return _register_page(request, key, nonce, values, problem=refused.problem.message, status=refused.problem.status)
     problem = check_new_password(password, context=fields)
     if problem is not None:
-        return _register_page(request, nonce, values, problem=problem.message, status=422)
+        return _register_page(request, key, nonce, values, problem=problem.message, status=422)
     try:
         await run_in_threadpool(_create_account, engine, fields, password)
     except HashBusy:
-        return _register_page(request, nonce, values, problem="The server is busy. Try again in a moment.", status=503)
+        return _register_page(request, key, nonce, values, problem="The server is busy. Try again in a moment.", status=503)
     except RegistrationRefused as refused:
-        return _register_page(request, nonce, values, problem=refused.problem.message, status=refused.problem.status)
+        return _register_page(request, key, nonce, values, problem=refused.problem.message, status=refused.problem.status)
     response = _done(request, "Request sent", "Thank you. An administrator will review your request. Once it is approved, sign in with your username and password.")
     response.delete_cookie(REGISTER_COOKIE, path=_register_cookie_path())
     return response

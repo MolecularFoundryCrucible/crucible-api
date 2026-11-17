@@ -128,7 +128,7 @@ def _create(values: dict, allow_additional: bool) -> tuple[str, str, str]:
     from app.api.dependencies import get_engine
     from app.auth.identity import IdentityTaken
     from app.tables import AccessGroup, User, get_mfid_value
-    from app.utils.auth_utils import add_apikey
+    from app.auth.api_keys import DEFAULT_KEY_NAME, create_key
     from app.utils.user_utils import assert_profile_fields_available, commit_user, generate_unique_username, provision_user
 
     unique_id = values["orcid"] or get_mfid_value()
@@ -151,7 +151,7 @@ def _create(values: dict, allow_additional: bool) -> tuple[str, str, str]:
                 session, unique_id=unique_id, first_name=values["first_name"], last_name=values["last_name"],
                 email=values["email"], username=username, platform_role=PlatformRole.ADMIN,
             )
-            api_key = add_apikey(user, session)
+            api_key = create_key(session, user, name=DEFAULT_KEY_NAME)[1]
             commit_user(session)
         except IdentityTaken:
             raise Refused(f"ORCID {unique_id} is already linked to another user; nothing created") from None

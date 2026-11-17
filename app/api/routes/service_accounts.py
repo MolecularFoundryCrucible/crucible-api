@@ -16,9 +16,9 @@ from app.models.users import (
     ServiceAccountPlatformRoleUpdate,
     ServiceAccountRead,
 )
-from app.auth.api_keys import key_status, newest_key
+from app.auth.api_keys import DEFAULT_KEY_NAME, create_key, key_status, newest_key, replace_keys
 from app.auth.events import AuthEventType, record_event
-from app.utils.auth_utils import authorize_user, caller_row, find_or_add_api_access, forget_cached_keys, require_platform_admin, require_recent_authentication, require_recent_session
+from app.utils.auth_utils import authorize_user, caller_row, forget_cached_keys, require_platform_admin, require_recent_authentication, require_recent_session
 from app.utils.permissions import AccessGroupType, PlatformRole, Principal, Role
 from app.utils.user_utils import assert_username_available, resolve_service_account_reference, sql_add_user_to_access_group
 
@@ -176,11 +176,8 @@ def create_service_account(
             role=Role.OWNER,
             group_type=AccessGroupType.IDENTITY,
         )
+        api_key = create_key(session, user, name=DEFAULT_KEY_NAME)[1]
         session.commit()
-        user_id = user.id
-
-    # Generate API key (outside session — find_or_add_api_access opens its own)
-    api_key = find_or_add_api_access(user_id, get_engine(), regenerate=False)
     response.headers["Cache-Control"] = "no-store"
 
     return ServiceAccountRead(
@@ -206,10 +203,10 @@ def rotate_service_account_key(
 
     with Session(get_engine()) as session:
         user = resolve_service_account_reference(session, service_account_ref)
-        user_id, unique_id = user.id, user.unique_id
-        username = user.username
-
-    api_key = find_or_add_api_access(user_id, get_engine(), regenerate=True)
+        unique_id, username = user.unique_id, user.username
+        api_key = replace_keys(session, user)
+        session.commit()
+        forget_cached_keys(session, user.id)
     response.headers["Cache-Control"] = "no-store"
 
     return ServiceAccountRead(

@@ -1,9 +1,7 @@
-import base64
-import hashlib
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
 from sqlmodel import Session, select
@@ -14,6 +12,8 @@ from app.auth.clients import RegisteredClient, client_by_id, registered_clients,
 from app.config import ConfigurationError, OidcProvider, get_settings, optional_secret, trusted_redirect_uri
 from app.tables import LoginCode, LoginTransaction
 from app.auth.tokens import TokenPair, InvalidGrant, issue_tokens_in_session
+from authlib.oauth2.rfc7636 import create_s256_code_challenge
+from app.auth.common import as_utc, now_or, sha256_hex
 
 
 LOGIN_LIFETIME = timedelta(minutes=10)
@@ -86,18 +86,6 @@ def load_login_config() -> LoginConfig:
     return LoginConfig(clients, base)
 
 
-def _digest(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-
-
-def _now(value: datetime | None) -> datetime:
-    return value if value is not None else datetime.now(timezone.utc)
-
-
 def valid_challenge(value: str) -> bool:
     return bool(CHALLENGE_PATTERN.fullmatch(value))
 
@@ -112,14 +100,14 @@ def check_login_request(config: LoginConfig, client_id: str, callback_uri: str, 
 
 def create_login(engine, config: LoginConfig, client_id: str, callback_uri: str, hub_state: str, challenge: str, *, provider_key: str | None = None, code_verifier: str | None = None, required_user: str | None = None, now: datetime | None = None) -> tuple[str, str, str]:
     check_login_request(config, client_id, callback_uri, hub_state, challenge)
-    current = _now(now)
+    current = now_or(now)
     state = secrets.token_urlsafe(32)
     browser_secret = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
     with Session(engine) as session, session.begin():
         session.add(LoginTransaction(
-            state_hash=_digest(state),
-            browser_secret_hash=_digest(browser_secret),
+            state_hash=sha256_hex(state),
+            browser_secret_hash=sha256_hex(browser_secret),
             client_id=client_id,
             callback_uri=callback_uri,
             hub_state=hub_state,
@@ -137,12 +125,12 @@ def create_login(engine, config: LoginConfig, client_id: str, callback_uri: str,
 def consume_login(engine, state: str, browser_secret: str | None, *, now: datetime | None = None) -> LoginTransaction:
     if not browser_secret or not state or len(state) > 128 or len(browser_secret) > 128:
         raise InvalidLoginRequest
-    current = _now(now)
+    current = now_or(now)
     with Session(engine) as session, session.begin():
-        transaction = session.exec(select(LoginTransaction).where(LoginTransaction.state_hash == _digest(state)).with_for_update()).one_or_none()
-        if transaction is None or transaction.consumed_at is not None or current >= _aware(transaction.expires_at):
+        transaction = session.exec(select(LoginTransaction).where(LoginTransaction.state_hash == sha256_hex(state)).with_for_update()).one_or_none()
+        if transaction is None or transaction.consumed_at is not None or current >= as_utc(transaction.expires_at):
             raise InvalidLoginRequest
-        if transaction.browser_secret_hash is None or not secrets.compare_digest(transaction.browser_secret_hash, _digest(browser_secret)):
+        if transaction.browser_secret_hash is None or not secrets.compare_digest(transaction.browser_secret_hash, sha256_hex(browser_secret)):
             raise InvalidLoginRequest
         transaction.consumed_at = current
         session.add(transaction)
@@ -152,7 +140,7 @@ def consume_login(engine, state: str, browser_secret: str | None, *, now: dateti
 
 
 def create_handoff_code(engine, transaction: LoginTransaction, provider: OidcProvider, subject: str, given_name: str | None, family_name: str | None, *, auth_time: datetime | None = None, now: datetime | None = None) -> tuple[str, str]:
-    current = _now(now)
+    current = now_or(now)
     code = secrets.token_urlsafe(48)
 
     pending = []
@@ -165,7 +153,7 @@ def create_handoff_code(engine, transaction: LoginTransaction, provider: OidcPro
                 pending.append(True)
                 return
             session.add(LoginCode(
-                code_hash=_digest(code),
+                code_hash=sha256_hex(code),
                 user_id=user.id,
                 user_unique_id=user.unique_id,
                 client_id=transaction.client_id,
@@ -194,12 +182,12 @@ def peek_login(engine, state: str, browser_secret: str | None, *, now: datetime 
     the sign-in going. Raises InvalidLoginRequest like consume_login."""
     if not browser_secret or not state or len(state) > 128 or len(browser_secret) > 128:
         raise InvalidLoginRequest
-    current = _now(now)
+    current = now_or(now)
     with Session(engine) as session:
-        transaction = session.exec(select(LoginTransaction).where(LoginTransaction.state_hash == _digest(state))).one_or_none()
-        if transaction is None or transaction.consumed_at is not None or current >= _aware(transaction.expires_at) or transaction.provider_key != LOCAL_PROVIDER:
+        transaction = session.exec(select(LoginTransaction).where(LoginTransaction.state_hash == sha256_hex(state))).one_or_none()
+        if transaction is None or transaction.consumed_at is not None or current >= as_utc(transaction.expires_at) or transaction.provider_key != LOCAL_PROVIDER:
             raise InvalidLoginRequest
-        if transaction.browser_secret_hash is None or not secrets.compare_digest(transaction.browser_secret_hash, _digest(browser_secret)):
+        if transaction.browser_secret_hash is None or not secrets.compare_digest(transaction.browser_secret_hash, sha256_hex(browser_secret)):
             raise InvalidLoginRequest
         session.expunge(transaction)
     return transaction
@@ -211,19 +199,19 @@ def create_local_code(engine, state: str, browser_secret: str, user_id: int, *, 
     from app.auth.events import AuthEventType, record_event
     from app.tables import User
 
-    current = _now(now)
+    current = now_or(now)
     code = secrets.token_urlsafe(48)
     with Session(engine) as session, session.begin():
-        transaction = session.exec(select(LoginTransaction).where(LoginTransaction.state_hash == _digest(state)).with_for_update()).one_or_none()
-        if transaction is None or transaction.consumed_at is not None or current >= _aware(transaction.expires_at) or transaction.provider_key != LOCAL_PROVIDER:
+        transaction = session.exec(select(LoginTransaction).where(LoginTransaction.state_hash == sha256_hex(state)).with_for_update()).one_or_none()
+        if transaction is None or transaction.consumed_at is not None or current >= as_utc(transaction.expires_at) or transaction.provider_key != LOCAL_PROVIDER:
             raise InvalidLoginRequest
-        if transaction.browser_secret_hash is None or not secrets.compare_digest(transaction.browser_secret_hash, _digest(browser_secret)):
+        if transaction.browser_secret_hash is None or not secrets.compare_digest(transaction.browser_secret_hash, sha256_hex(browser_secret)):
             raise InvalidLoginRequest
         user = session.get(User, user_id)
         transaction.consumed_at = current
         session.add(transaction)
         session.add(LoginCode(
-            code_hash=_digest(code), user_id=user.id, user_unique_id=user.unique_id, client_id=transaction.client_id,
+            code_hash=sha256_hex(code), user_id=user.id, user_unique_id=user.unique_id, client_id=transaction.client_id,
             callback_uri=transaction.callback_uri, code_challenge=transaction.code_challenge,
             created_at=current, expires_at=current + code_lifetime(transaction.client_id), auth_time=current,
         ))
@@ -246,34 +234,32 @@ def error_destination(callback_uri: str, hub_state: str, error: str) -> str:
     return client_redirect(callback_uri, {"error": error, "state": hub_state})
 
 
+def _use_sign_in_code(session: Session, code: str, verifier: str, client_id: str, callback_uri: str, current: datetime) -> LoginCode:
+    """Use up a sign-in code in the caller's transaction, after checking its client, callback and
+    PKCE verifier; every failure is the same InvalidGrant."""
+    if not code or len(code) > 128 or not 43 <= len(verifier) <= 128 or not verifier.isascii():
+        raise InvalidGrant
+    grant = session.exec(select(LoginCode).where(LoginCode.code_hash == sha256_hex(code)).with_for_update()).one_or_none()
+    if grant is None or grant.purpose != "sign_in" or grant.consumed_at is not None or current >= as_utc(grant.expires_at):
+        raise InvalidGrant
+    if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, create_s256_code_challenge(verifier)):
+        raise InvalidGrant
+    grant.consumed_at = current
+    session.add(grant)
+    return grant
+
+
 def redeem_approval_code(engine, code: str, verifier: str, client_id: str, callback_uri: str, *, now: datetime | None = None) -> tuple[int, datetime | None]:
     """Use up a sign-in code issued to one of the API's own pages, with its PKCE verifier, and
     return who signed in and when, without issuing any session."""
-    if not code or len(code) > 128 or not 43 <= len(verifier) <= 128 or not verifier.isascii():
-        raise InvalidGrant
-    current = _now(now)
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
+    current = now_or(now)
     with Session(engine) as session, session.begin():
-        grant = session.exec(select(LoginCode).where(LoginCode.code_hash == _digest(code)).with_for_update()).one_or_none()
-        if grant is None or grant.purpose != "sign_in" or grant.consumed_at is not None or current >= _aware(grant.expires_at):
-            raise InvalidGrant
-        if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, challenge):
-            raise InvalidGrant
-        grant.consumed_at = current
-        session.add(grant)
-        return grant.user_id, _aware(grant.auth_time) if grant.auth_time else None
+        grant = _use_sign_in_code(session, code, verifier, client_id, callback_uri, current)
+        return grant.user_id, as_utc(grant.auth_time)
 
 
 def exchange_handoff_code(engine, code: str, verifier: str, client_id: str, callback_uri: str, *, now: datetime | None = None) -> TokenPair:
-    if not code or len(code) > 128 or not 43 <= len(verifier) <= 128 or not verifier.isascii():
-        raise InvalidGrant
-    current = _now(now)
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
+    current = now_or(now)
     with Session(engine) as session, session.begin():
-        grant = session.exec(select(LoginCode).where(LoginCode.code_hash == _digest(code)).with_for_update()).one_or_none()
-        if grant is None or grant.purpose != "sign_in" or grant.consumed_at is not None or current >= _aware(grant.expires_at):
-            raise InvalidGrant
-        if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, challenge):
-            raise InvalidGrant
-        grant.consumed_at = current
-        return issue_tokens_in_session(session, grant.user_id, client_id, now=current, auth_time=_aware(grant.auth_time) if grant.auth_time else None)
+        grant = _use_sign_in_code(session, code, verifier, client_id, callback_uri, current)
+        return issue_tokens_in_session(session, grant.user_id, client_id, now=current, auth_time=as_utc(grant.auth_time))

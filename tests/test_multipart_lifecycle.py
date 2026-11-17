@@ -585,7 +585,8 @@ def test_reference_client_resumes_after_lost_part_response(flow, tmp_path, monke
 def test_real_authentication_supports_both_credentials(use_engine, flow, monkeypatch, credential_kind):
     from uuid import uuid4
     from sqlmodel import SQLModel
-    from app.tables import ApiToken, TokenFamily, RefreshToken, AccessToken
+    from app.auth.api_keys import store_key
+    from app.tables import TokenFamily, RefreshToken, AccessToken
     from app.utils import auth_utils
     from app.auth.tokens import issue_tokens, refresh_tokens, revoke_tokens
     from app.api.main import app
@@ -596,7 +597,7 @@ def test_real_authentication_supports_both_credentials(use_engine, flow, monkeyp
     if credential_kind == "api_key":
         credential = uuid4().hex
         with Session(engine) as session:
-            session.add(ApiToken(token=credential, user_id=internal_id(session, "owner"), user_unique_id="owner", access_group_id="owner-group"))
+            store_key(session, internal_id(session, "owner"), credential)
             session.commit()
     else:
         SQLModel.metadata.create_all(engine, tables=[TokenFamily.__table__, RefreshToken.__table__, AccessToken.__table__])

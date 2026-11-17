@@ -13,7 +13,8 @@ from sqlmodel import Session, SQLModel, select
 
 import app.utils.auth_utils as auth_utils
 from app.auth.api_keys import newest_key, status_of
-from app.tables import ApiToken, AccessToken, LoginCode, RefreshToken, TokenFamily, User
+from app.auth.api_keys import create_key
+from app.tables import ApiKey, ApiToken, AccessToken, LoginCode, RefreshToken, TokenFamily, User
 from app.auth.tokens import access_token_family, issue_tokens, refresh_tokens, revoke_all_tokens
 
 ORCID = "0000-0002-1825-0097"
@@ -33,7 +34,7 @@ def person_with_key_and_hub_session(db_engine, use_engine):
         session.add(user)
         session.flush()
         user_id = user.id
-    key = auth_utils.find_or_add_api_access(user_id, db_engine)
+        key = create_key(session, user)[1]
     pair = issue_tokens(db_engine, user_id, "crucible-hub")
     with Session(db_engine) as session, session.begin():
         session.get(User, user_id).unique_id = MFID
@@ -49,7 +50,7 @@ def authorize(token):
 def test_new_keys_and_hub_sessions_name_the_person_by_internal_id(db_engine, person_with_key_and_hub_session):
     user_id, _, _ = person_with_key_and_hub_session
     with Session(db_engine) as session:
-        assert [(t.user_id, t.user_unique_id) for t in session.exec(select(ApiToken)).all()] == [(user_id, ORCID)]
+        assert [k.user_id for k in session.exec(select(ApiKey)).all()] == [user_id]
         assert [(f.user_id, f.user_unique_id) for f in session.exec(select(TokenFamily)).all()] == [(user_id, ORCID)]
 
 
@@ -60,7 +61,6 @@ def test_key_and_hub_session_still_work_after_unique_id_changes(db_engine, perso
     assert refresh_tokens(db_engine, pair.refresh_token, "crucible-hub").user_unique_id == MFID
     with Session(db_engine) as session:
         assert status_of(newest_key(session, user_id)) == "active"
-    assert auth_utils.find_or_add_api_access(user_id, db_engine) == key
 
 
 def test_revoking_hub_sessions_by_internal_id_after_unique_id_changes(db_engine, person_with_key_and_hub_session):

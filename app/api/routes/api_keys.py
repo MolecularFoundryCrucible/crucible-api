@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import UserRef
-from app.auth.api_keys import KEY_LIFETIME, MAX_ACTIVE_KEYS, TooManyKeys, active, create_key, plain_key_hashes, revoke_key, status_of
+from app.auth.api_keys import KEY_LIFETIME, MAX_ACTIVE_KEYS, TooManyKeys, active, create_key, revoke_key, status_of
 from app.models.api_keys import ApiKeyCreate, ApiKeyCreated, ApiKeyListItem, ApiKeyRename
 from app.tables import ApiKey
 from app.models.pagination import PaginatedResponse
@@ -25,8 +25,8 @@ _LIMIT = Query(50, ge=1, le=200)
 _CURSOR = Query(None, min_length=1, max_length=4096, description="Opaque continuation cursor from next_cursor.")
 
 
-def list_item(key: ApiKey, plain: set[str] = frozenset()) -> ApiKeyListItem:
-    return ApiKeyListItem(id=key.id, name=key.name, last4=key.key_last4, status=status_of(key), created_at=key.created_at, last_used_at=key.last_used_at, expires_at=key.expires_at, revoked_at=key.revoked_at, older_routes=key.key_hash in plain)
+def list_item(key: ApiKey) -> ApiKeyListItem:
+    return ApiKeyListItem(id=key.id, name=key.name, last4=key.key_last4, status=status_of(key), created_at=key.created_at, last_used_at=key.last_used_at, expires_at=key.expires_at, revoked_at=key.revoked_at)
 
 
 def _keys(session: Session, principal: Principal, user_id: int, state: State, limit: int, cursor: str | None) -> PaginatedResponse[ApiKeyListItem]:
@@ -49,8 +49,7 @@ def _keys(session: Session, principal: Principal, user_id: int, state: State, li
     if len(rows) > limit:
         last = page[-1]
         next_cursor = new_cursor(kind="api_key", sort="created", direction="desc", primary=last.created_at, unique_id=str(last.id), filters=digest, user_id=principal.user_id)
-    plain = plain_key_hashes(session, user_id)
-    return PaginatedResponse[ApiKeyListItem](total=total, limit=limit, items=[list_item(key, plain) for key in page], next_cursor=next_cursor)
+    return PaginatedResponse[ApiKeyListItem](total=total, limit=limit, items=[list_item(key) for key in page], next_cursor=next_cursor)
 
 
 def _revoke(session: Session, user_id: int, key_id: int, actor) -> None:
@@ -116,7 +115,7 @@ def rename_account_apikey(key_id: int, body: ApiKeyRename, auth_res: Annotated[P
         session.add(key)
         session.commit()
         session.refresh(key)
-        return list_item(key, plain_key_hashes(session, user.id))
+        return list_item(key)
 
 
 @router.get("/users/{user_ref}/apikeys", response_model=PaginatedResponse[ApiKeyListItem], responses={422: {"description": "Invalid cursor"}})

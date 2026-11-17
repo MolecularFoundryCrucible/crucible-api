@@ -73,10 +73,32 @@ Intended for small installations; an institution should use its own identity pro
 - Enable with `CRUCIBLE_AUTH_PASSWORD_ENABLED=true`, a secret `CRUCIBLE_AUTH_PEPPER` and its identifier `CRUCIBLE_AUTH_PEPPER_ID`. The server refuses to start without them, or over plain HTTP other than on `localhost`.
 - **Back up the pepper separately from the database.** A leaked database is unusable without it; losing it invalidates every password.
 - An administrator creates each user and issues a one-time link: `POST /users/{user_ref}/password-link`, or `python -m app.cli admin password-link USER`. Links are valid for `CRUCIBLE_AUTH_PASSWORD_LINK_HOURS` (24).
-- `CRUCIBLE_AUTH_PASSWORD_REGISTRATION=approval` allows users to request an account at `/oauth/register`. Each request awaits an administrator: `GET /users?pending=true`, then `POST /users/{user_ref}/approve` or `/reject`. Requests pending for 30 days are removed.
+- `CRUCIBLE_AUTH_PASSWORD_REGISTRATION=approval` allows users to request an account at `/oauth/register`. Each request awaits an administrator: `GET /users?pending=true`, then `POST /users/{user_ref}/approve` or `/reject`. Requests pending for 30 days are removed, and requests are refused while `CRUCIBLE_AUTH_MAX_PENDING_ACCOUNTS` accounts wait.
 - Passwords require 15 characters (`CRUCIBLE_AUTH_PASSWORD_MIN_LENGTH`), with no character class rules; common passwords and the user's own name or email are rejected.
-- Failed attempts are throttled, then blocked: an unknown browser is delayed after 4 failures and refused at 90; 10 failures from a known browser disable the password until an administrator issues a link. Failures are also counted per client address.
+- Failed attempts are throttled, then blocked, as listed under [Limits](#limits).
 - To rotate the pepper: supply a new pepper and identifier, list the old identifier in `CRUCIBLE_AUTH_PREVIOUS_PEPPER_IDS`, and keep its secret as `CRUCIBLE_AUTH_PREVIOUS_PEPPER_<ID>` until all users have signed in again.
+
+## Limits
+
+Each limit applies per account, per network address (an IPv4 address, or the /64 network of an IPv6 address), or per API worker. The adjustable ones are settings; the per-account limits are fixed, because loosening them weakens protection against password guessing.
+
+| Limit | Applies to | Value | Setting |
+|---|---|---|---|
+| Failures before an unknown browser is delayed | Account | 4; delays then double from 2 s to 15 min | Fixed |
+| Failures before an unknown browser is refused | Account | 90 | Fixed |
+| Failures from a known browser before the password is disabled | Account | 10; an administrator issues a new link | Fixed |
+| Failures in total before the password is disabled | Account | 100 | Fixed |
+| How long a browser stays known after a password sign-in | Browser | 90 days | `CRUCIBLE_AUTH_DEVICE_COOKIE_DAYS` |
+| Failed password and code attempts before an address is delayed | Address | 10, counted while failures come less than an hour apart | `CRUCIBLE_AUTH_ADDRESS_FREE_FAILURES` |
+| Longest delay for an address | Address | 60 s; delays double from 2 s | `CRUCIBLE_AUTH_LONGEST_ADDRESS_DELAY_SECONDS` |
+| Password checks at once | Worker | 2, each holding `CRUCIBLE_AUTH_ARGON2_MEMORY_KIB` of memory | `CRUCIBLE_AUTH_HASH_CONCURRENCY` |
+| Password checks waiting for a slot | Worker | 8; beyond that, a check is refused at once as busy | `CRUCIBLE_AUTH_HASH_QUEUE` |
+| Longest wait for a slot | Worker | 10 s, then the check is refused as busy | `CRUCIBLE_AUTH_HASH_WAIT_SECONDS` |
+| Accounts waiting for approval | Installation | 100; registration is refused while the list is full | `CRUCIBLE_AUTH_MAX_PENDING_ACCOUNTS` |
+| How long a waiting account is kept | Account | 30 days | Fixed |
+| Active API keys | Person | 10 | Fixed |
+
+A known browser is exempt from the address limit. An attempt refused because its address is delayed, or because no slot is free, is not counted against the account.
 
 ## Administrative commands
 
@@ -92,6 +114,7 @@ Run as `python -m app.cli <command>`. Commands that change data report the plann
 | `auth end-sessions --user REF` or `--all` | End sessions, for example during incident response |
 | `auth revoke-passwords` | Remove every password and end the associated sessions |
 | `auth rewrite-issuer` | Move identities to a provider's new issuer |
+| `api-keys import` | Copy API keys from before 4.0.0 into the hashed key table; until then they do not authenticate |
 | `identity backfill` | Record an identity for each user created before 4.0.0 |
 | `identity move` | Move an identity off an empty duplicate account |
 

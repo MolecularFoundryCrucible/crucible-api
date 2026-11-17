@@ -2,6 +2,7 @@ import atexit
 import json
 import os
 import tempfile
+from uuid import uuid4
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -51,7 +52,7 @@ for _name, _value in {
 
 import pytest
 from sqlmodel import SQLModel, create_engine
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.pool import StaticPool
 
 from app.api.main import app
@@ -66,6 +67,13 @@ from app.utils.auth_utils import authenticate_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
 import app.utils.gcs_record_utils as gcs_record_utils
 from fastapi.testclient import TestClient
+
+@event.listens_for(User, "before_insert")
+def _username_for_test_users(mapper, connection, user):
+    """Tests that do not care about usernames may leave one out; the database requires it."""
+    if user.username is None:
+        user.username = "u" + uuid4().hex[:20]
+
 
 TEST_TABLES = [
     User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__,

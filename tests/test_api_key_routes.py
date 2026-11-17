@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlmodel import Session, select
 
-from app.auth.api_keys import MAX_ACTIVE_KEYS, key_hash, store_key
+from app.auth.api_keys import MAX_ACTIVE_KEYS, store_key
 from app.tables import ApiKey, ApiToken, User
 from app.utils import auth_utils
 from app.utils.permissions import PlatformRole
@@ -120,13 +120,24 @@ def test_expired_key_is_refused_like_an_unknown_one(people):
     assert messages[0] == messages[1] == (401, "Invalid or expired API key.")
 
 
-def test_older_key_without_prefix_still_works_and_is_copied_on_first_use(people):
+def test_an_older_key_works_once_imported_and_is_listed_for_revoking(client, auth_as, people):
+    from app.auth.api_keys import import_plain_keys
+
+    plain_key_only(people, ADA, "a" * 64, datetime.now(timezone.utc).date().isoformat())
+    with pytest.raises(HTTPException):
+        authorize("a" * 64)
     with Session(people) as session:
-        session.add(ApiToken(token="a" * 64, user_id=user_id(people, ADA), user_unique_id=ADA, access_group_id=ADA, token_created=datetime.now(timezone.utc).date().isoformat()))
+        import_plain_keys(session, commit=True)
         session.commit()
     assert authorize("a" * 64).user_id == ADA
+    auth_as(ADA)
+    [listed] = client.get("/account/apikeys").json()["items"]
+    assert (listed["name"], listed["last4"], listed["older_routes"]) == ("Default key", "aaaa", False)
+    assert client.delete(f"/account/apikeys/{listed['id']}").status_code == 204
+    with pytest.raises(HTTPException):
+        authorize("a" * 64)
     with Session(people) as session:
-        assert session.exec(select(ApiKey.key_hash)).all() == [key_hash("a" * 64)]
+        assert session.exec(select(ApiToken)).all() == []
 
 
 def test_last_use_is_recorded_on_the_hashed_key(people):
@@ -168,15 +179,11 @@ def plain_key_only(engine, unique_id, token, created):
         session.commit()
 
 
-def test_status_counts_a_plain_key_not_yet_copied(client, auth_as, people):
+def test_status_ignores_a_plain_key_not_yet_imported(client, auth_as, people):
     plain_key_only(people, ADA, "p" * 64, datetime.now(timezone.utc).date().isoformat())
     client.headers["Crucible-Privilege-Mode"] = "elevated"
     as_hub(auth_as, ADMIN, role=PlatformRole.ADMIN)
-    assert client.get(f"/users/{ADA}").json()["api_key_status"]["valid"] is True
-    listed = {user["unique_id"]: user for user in client.get("/users", params={"limit": 50}).json()["items"]}
-    assert listed[ADA]["api_key_status"]["valid"] is True
-    with Session(people) as session:
-        assert session.exec(select(ApiKey)).all() == []
+    assert client.get(f"/users/{ADA}").json()["api_key_status"] is None
 
 
 def test_status_prefers_a_working_key_over_a_newer_expired_one(client, auth_as, people):
@@ -218,25 +225,14 @@ def test_pending_filter_is_a_declared_parameter(client, auth_as, people):
     assert response.status_code == 200 and "deprecation" not in response.headers
 
 
-def test_keys_can_be_renamed_and_the_older_routes_key_is_marked(client, auth_as, people):
+def test_keys_can_be_renamed(client, auth_as, people):
     as_hub(auth_as, ADA)
     named = create(client).json()
-    plain_key_only(people, ADA, "p" * 64, datetime.now(timezone.utc).date().isoformat())
-    authorize("p" * 64)
     auth_as(ADA)
-    listed = {item["name"]: item for item in client.get("/account/apikeys").json()["items"]}
-    assert (listed["laptop"]["older_routes"], listed["Default key"]["older_routes"]) == (False, True)
-    renamed = client.patch(f"/account/apikeys/{listed['Default key']['id']}", json={"name": "old scripts"}).json()
-    assert (renamed["name"], renamed["older_routes"]) == ("old scripts", True)
+    renamed = client.patch(f"/account/apikeys/{named['id']}", json={"name": "old scripts"}).json()
+    assert (renamed["name"], renamed["older_routes"]) == ("old scripts", False)
     auth_as(BOB)
     assert client.patch(f"/account/apikeys/{named['id']}", json={"name": "mine now"}).status_code == 404
-
-
-def test_a_copied_older_key_is_named(people):
-    plain_key_only(people, ADA, "q" * 64, datetime.now(timezone.utc).date().isoformat())
-    authorize("q" * 64)
-    with Session(people) as session:
-        assert session.exec(select(ApiKey.name)).all() == ["Default key"]
 
 
 def test_inactive_list_shows_when_a_key_was_revoked(client, auth_as, people):

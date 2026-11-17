@@ -9,7 +9,7 @@ from app.utils.permissions import AccessGroupType, PUBLIC_GROUP_NAME, PlatformRo
 
 def _setup(db_engine):
     with Session(db_engine) as session:
-        owner = User(first_name="A", last_name="Owner", email="a@x.com", unique_id="0000-0001-2345-6789")
+        owner = User(first_name="A", last_name="Owner", email="a@x.com", unique_id="0000-0001-2345-6789", username="a_owner")
         grantee = User(first_name="B", last_name="Grantee", email="b@x.com", unique_id="0000-0002-3456-7890")
         session.add(owner)
         session.add(grantee)
@@ -56,7 +56,7 @@ def test_list_resource_access_shows_canonical_grant(client, db_engine, auth_as):
         "principal_id": "0000-0001-2345-6789",
         "principal_type": "user",
         "permission": "owner",
-        "slug": None,
+        "slug": "a_owner",
         "display_name": "A Owner",
         "capabilities": {"can_remove": False, "can_change_role": False, "assignable_roles": []},
     }

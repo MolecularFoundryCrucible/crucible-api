@@ -97,7 +97,10 @@ def test_demoted_admin_key_loses_admin_rights_at_once(people, use_engine):
     use_engine(people)
     with Session(people) as session:
         user = session.exec(select(User).where(User.unique_id == OTHER_ADMIN)).one()
-        key = auth_utils.find_or_add_api_access(user.id, people)
+        from app.auth.api_keys import create_key
+
+        key = create_key(session, user)[1]
+        session.commit()
     from fastapi.security import HTTPAuthorizationCredentials
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=key)
     assert auth_utils._authorize_user(credentials).is_platform_admin

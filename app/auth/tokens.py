@@ -1,14 +1,14 @@
-import hashlib
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, update
 from sqlmodel import Session, select
 
 from app.auth.clients import client_by_id
 from app.tables import AccessToken, DeviceAuthorization, LoginCode, RefreshToken, TokenFamily, User
+from app.auth.common import as_utc, now_or, sha256_hex
 
 
 ACCESS_LIFETIME = timedelta(minutes=15)
@@ -56,7 +56,7 @@ def _holder(session: Session, family: TokenFamily) -> User | None:
 
 def revoke_all_tokens(session: Session, user_id: int, *, now: datetime | None = None, except_family_id: str | None = None) -> None:
     """End every Hub session of this person, or every one but `except_family_id`, in the caller's transaction."""
-    current = _now(now)
+    current = now_or(now)
     for family in session.exec(select(TokenFamily).where(TokenFamily.user_id == user_id, TokenFamily.revoked_at == None, TokenFamily.id != except_family_id).with_for_update()).all():  # noqa: E711
         family.revoked_at = current
         session.add(family)
@@ -76,28 +76,16 @@ def cancel_pending_sign_ins(session: Session, now: datetime, user_ids: list[int]
     session.execute(update(DeviceAuthorization).where(*devices).values(denied_at=now).execution_options(synchronize_session=False))
 
 
-def _now(value: datetime | None) -> datetime:
-    return value if value is not None else datetime.now(timezone.utc)
-
-
-def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-
-
-def _digest(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
 def _token(prefix: str) -> str:
     return prefix + secrets.token_urlsafe(48)
 
 
 def _issue_access(session: Session, family: TokenFamily, now: datetime) -> tuple[str, datetime]:
     token = _token(ACCESS_PREFIX)
-    expires_at = min(now + ACCESS_LIFETIME, _aware(family.expires_at))
+    expires_at = min(now + ACCESS_LIFETIME, as_utc(family.expires_at))
     session.add(
         AccessToken(
-            token_hash=_digest(token),
+            token_hash=sha256_hex(token),
             family_id=family.id,
             issued_at=now,
             expires_at=expires_at,
@@ -114,7 +102,7 @@ def issue_tokens(engine, user_id: int, client_id: str, *, now: datetime | None =
 def issue_tokens_in_session(
     session: Session, user_id: int, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None, grant_type: str = AUTHORIZATION_CODE,
 ) -> TokenPair:
-    current = _now(now)
+    current = now_or(now)
     user = session.get(User, user_id)
     if not _may_hold_tokens(user):
         raise InvalidGrant
@@ -134,7 +122,7 @@ def issue_tokens_in_session(
     refresh_token = _token(REFRESH_PREFIX)
     session.add(
         RefreshToken(
-            token_hash=_digest(refresh_token),
+            token_hash=sha256_hex(refresh_token),
             family_id=family.id,
             generation=0,
             issued_at=current,
@@ -156,7 +144,7 @@ def _reusable(session: Session, token: RefreshToken, now: datetime) -> bool:
     before the newest, so two processes refreshing at once, or a retry after a lost response, do not
     end the session. A token retired because a sibling was used gets no grace, so a copied token
     cannot keep renewing itself beside the owner's. Any older token still ends the session."""
-    if token.retired_at is not None or now - _aware(token.spent_at) > REUSE_GRACE:
+    if token.retired_at is not None or now - as_utc(token.spent_at) > REUSE_GRACE:
         return False
     newest = session.exec(select(func.max(RefreshToken.generation)).where(RefreshToken.family_id == token.family_id)).one()
     return token.generation == newest - 1
@@ -165,8 +153,8 @@ def _reusable(session: Session, token: RefreshToken, now: datetime) -> bool:
 def refresh_tokens(engine, refresh_token: str, client_id: str, *, now: datetime | None = None) -> TokenPair:
     if not refresh_token.startswith(REFRESH_PREFIX):
         raise InvalidGrant
-    current = _now(now)
-    token_hash = _digest(refresh_token)
+    current = now_or(now)
+    token_hash = sha256_hex(refresh_token)
     replayed = False
     result = None
     with Session(engine) as session, session.begin():
@@ -189,7 +177,7 @@ def refresh_tokens(engine, refresh_token: str, client_id: str, *, now: datetime 
         if token.spent_at is not None and not _reusable(session, token, current):
             family.revoked_at = current
             replayed = True
-        elif current >= _aware(family.expires_at) or current >= _aware(family.last_refreshed_at) + session_lifetimes(family.client_id)[1]:
+        elif current >= as_utc(family.expires_at) or current >= as_utc(family.last_refreshed_at) + session_lifetimes(family.client_id)[1]:
             family.revoked_at = current
         else:
             user = _holder(session, family)
@@ -207,7 +195,7 @@ def refresh_tokens(engine, refresh_token: str, client_id: str, *, now: datetime 
                 next_refresh = _token(REFRESH_PREFIX)
                 session.add(
                     RefreshToken(
-                        token_hash=_digest(next_refresh),
+                        token_hash=sha256_hex(next_refresh),
                         family_id=family.id,
                         generation=token.generation + 1,
                         issued_at=current,
@@ -218,9 +206,9 @@ def refresh_tokens(engine, refresh_token: str, client_id: str, *, now: datetime 
                     access_token=access_token,
                     refresh_token=next_refresh,
                     access_expires_at=access_expires_at,
-                    refresh_expires_at=_aware(family.expires_at),
+                    refresh_expires_at=as_utc(family.expires_at),
                     user_unique_id=user.unique_id,
-                    auth_time=_aware(family.auth_time) if family.auth_time else None,
+                    auth_time=as_utc(family.auth_time) if family.auth_time else None,
                 )
     if replayed or result is None:
         raise InvalidGrant
@@ -234,12 +222,12 @@ def access_token_user(session: Session, access_token: str, *, now: datetime | No
 def access_token_family(session: Session, access_token: str, *, now: datetime | None = None) -> TokenFamily:
     if not access_token.startswith(ACCESS_PREFIX):
         raise InvalidGrant
-    current = _now(now)
-    token = session.get(AccessToken, _digest(access_token))
-    if token is None or current >= _aware(token.expires_at):
+    current = now_or(now)
+    token = session.get(AccessToken, sha256_hex(access_token))
+    if token is None or current >= as_utc(token.expires_at):
         raise InvalidGrant
     family = session.get(TokenFamily, token.family_id)
-    if family is None or family.revoked_at is not None or current >= _aware(family.expires_at):
+    if family is None or family.revoked_at is not None or current >= as_utc(family.expires_at):
         raise InvalidGrant
     if client_by_id(family.client_id) is None:
         raise InvalidGrant
@@ -257,7 +245,7 @@ def revoke_tokens(engine, credential: str, client_id: str, *, now: datetime | No
     else:
         return
     with Session(engine) as session, session.begin():
-        token = session.get(model, _digest(credential))
+        token = session.get(model, sha256_hex(credential))
         if token is None:
             return
         family = session.exec(
@@ -266,4 +254,4 @@ def revoke_tokens(engine, credential: str, client_id: str, *, now: datetime | No
             .with_for_update()
         ).one_or_none()
         if family is not None and family.client_id == client_id and family.revoked_at is None:
-            family.revoked_at = _now(now)
+            family.revoked_at = now_or(now)

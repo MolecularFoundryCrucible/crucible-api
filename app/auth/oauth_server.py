@@ -23,18 +23,9 @@ from app.config import ConfigurationError, optional_secret
 from app.tables import AccessToken, LoginCode, RefreshToken, TokenFamily
 from app.auth.login_transactions import exchange_handoff_code
 from app.auth.tokens import ACCESS_PREFIX, REFRESH_PREFIX, TokenPair, InvalidGrant, refresh_tokens, revoke_tokens
+from app.auth.common import as_utc, sha256_hex
 
 AUTH_METHODS = ["client_secret_basic", "none"]
-
-
-def _digest(value: str) -> str:
-    import hashlib
-
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 class _FormPayload(BasicOAuth2Payload):
@@ -161,13 +152,13 @@ def token_body(pair: TokenPair, now: datetime | None = None) -> dict:
     body = {
         "access_token": pair.access_token,
         "token_type": "Bearer",
-        "expires_in": max(0, int((_aware(pair.access_expires_at) - current).total_seconds())),
+        "expires_in": max(0, int((as_utc(pair.access_expires_at) - current).total_seconds())),
         "refresh_token": pair.refresh_token,
-        "refresh_expires_in": max(0, int((_aware(pair.refresh_expires_at) - current).total_seconds())),
+        "refresh_expires_in": max(0, int((as_utc(pair.refresh_expires_at) - current).total_seconds())),
         "user_unique_id": pair.user_unique_id,
     }
     if pair.auth_time is not None:
-        body["auth_time"] = int(_aware(pair.auth_time).timestamp())
+        body["auth_time"] = int(as_utc(pair.auth_time).timestamp())
     return body
 
 
@@ -176,8 +167,8 @@ class CodeGrant(AuthorizationCodeGrant):
 
     def query_authorization_code(self, code, client):
         with Session(self.request.engine) as session:
-            grant = session.exec(select(LoginCode).where(LoginCode.code_hash == _digest(code))).one_or_none()
-        if grant is None or grant.purpose != "sign_in" or grant.consumed_at is not None or datetime.now(timezone.utc) >= _aware(grant.expires_at):
+            grant = session.exec(select(LoginCode).where(LoginCode.code_hash == sha256_hex(code))).one_or_none()
+        if grant is None or grant.purpose != "sign_in" or grant.consumed_at is not None or datetime.now(timezone.utc) >= as_utc(grant.expires_at):
             return None
         if grant.client_id != client.get_client_id():
             return None
@@ -220,7 +211,7 @@ class RefreshGrant(RefreshTokenGrant):
         if not refresh_token.startswith(REFRESH_PREFIX):
             return None
         with Session(self.request.engine) as session:
-            token = session.get(RefreshToken, _digest(refresh_token))
+            token = session.get(RefreshToken, sha256_hex(refresh_token))
             family = session.get(TokenFamily, token.family_id) if token is not None else None
         return _Credential(family.client_id, family.user_id) if family is not None else None
 
@@ -247,7 +238,7 @@ class Revocation(RevocationEndpoint):
         if model is None:
             return None
         with Session(engine) as session:
-            token = session.get(model, _digest(token_string))
+            token = session.get(model, sha256_hex(token_string))
             family = session.get(TokenFamily, token.family_id) if token is not None else None
         return _Credential(family.client_id, family.user_id, raw=token_string) if family is not None else None
 
@@ -296,7 +287,7 @@ class _DeviceCredential:
         return self.row
 
     def is_expired(self):
-        return datetime.now(timezone.utc) >= _aware(self.row.expires_at)
+        return datetime.now(timezone.utc) >= as_utc(self.row.expires_at)
 
 
 class DeviceGrant(DeviceCodeGrant):
@@ -329,7 +320,7 @@ class DeviceGrant(DeviceCodeGrant):
 
         current = datetime.now(timezone.utc)
         row = credential.row
-        too_soon = row.last_polled_at is not None and current - _aware(row.last_polled_at) < timedelta(seconds=row.interval)
+        too_soon = row.last_polled_at is not None and current - as_utc(row.last_polled_at) < timedelta(seconds=row.interval)
         values = {"last_polled_at": current}
         if too_soon:
             values["interval"] = Row.interval + SLOW_DOWN_STEP
@@ -351,7 +342,7 @@ class DeviceGrant(DeviceCodeGrant):
             if claimed is None:
                 raise InvalidGrantError()
             try:
-                pair = issue_tokens_in_session(session, claimed[0], self.request.client.get_client_id(), now=current, auth_time=_aware(claimed[1]) if claimed[1] else None, grant_type=DEVICE_CODE)
+                pair = issue_tokens_in_session(session, claimed[0], self.request.client.get_client_id(), now=current, auth_time=as_utc(claimed[1]) if claimed[1] else None, grant_type=DEVICE_CODE)
             except InvalidGrant:
                 raise InvalidGrantError() from None
         self.request.token_pair = pair

@@ -3,7 +3,6 @@ import logging
 import os
 import hashlib
 import threading
-import secrets
 import datetime
 from dataclasses import replace
 from cachetools import TTLCache
@@ -15,10 +14,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import get_secret
 from app.api.dependencies import get_engine
-from app.tables import ApiKey, ApiToken, User
+from app.tables import ApiKey, User
 from app.models.resource import ResourceCapabilities
 from app.auth.tokens import ACCESS_PREFIX, DEVICE_CODE, InvalidGrant, access_token_family
-from app.auth.api_keys import DEFAULT_KEY_NAME, find_api_key, replace_plain_keys, status_of, store_key
+from app.auth.api_keys import find_api_key, status_of
 from app.services.activity import record_caller_activity
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, SESSION, THRESHOLDS, AccessGroupType, GroupMembership, Permission, PlatformRole,
@@ -27,7 +26,7 @@ from app.utils.permissions import (
     resolve_authorization_context)
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_, or_
-from datetime import date, timedelta
+from datetime import timedelta
 
 # ====== Constants
 security = HTTPBearer()
@@ -87,45 +86,6 @@ def forget_cached_keys(session, user_id: int) -> None:
         forget_cached_key_hash(digest)
 
 
-# ====== Functions
-def find_or_add_api_access(user_id: int, engine, regenerate = False):
-
-    one_year_ago = (date.today()-timedelta(365)).isoformat()
-    with Session(engine) as session:
-        # The row lock is what keeps simultaneous requests from each adding a key.
-        user = session.exec(select(User).where(User.id == user_id).with_for_update()).one()
-        api_acct = session.exec(select(ApiToken).where(and_(ApiToken.user_id == user_id,
-                                                            ApiToken.token_created > one_year_ago))).one_or_none()
-
-        if api_acct is not None and regenerate == False:
-            return(api_acct.token)
-
-        elif api_acct is not None and regenerate == True:
-            replaced = replace_plain_keys(session, user_id)
-            new_token = generate_apikey(user, session)
-            for digest in replaced:
-                forget_cached_key_hash(digest)
-            return(new_token)
-
-        else:
-            new_token = generate_apikey(user, session)
-            return(new_token)
-
-
-def add_apikey(user, session) -> str:
-    """Add a new API key for this User row to the session without committing."""
-    new_token = secrets.token_hex(32)
-    session.add(ApiToken(user_id=user.id, user_unique_id=user.unique_id, access_group_id=user.unique_id, token=new_token, token_created=date.today().isoformat()))
-    store_key(session, user.id, new_token, name=DEFAULT_KEY_NAME)
-    return new_token
-
-
-def generate_apikey(user, session):
-    new_token = add_apikey(user, session)
-    session.commit()
-    return(new_token)
-
-    
 def get_secret_key() -> str:
     return get_secret("CRUCIBLE_SECRET_KEY")
 

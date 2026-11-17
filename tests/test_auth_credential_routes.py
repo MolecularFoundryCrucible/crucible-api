@@ -106,20 +106,18 @@ def test_a_malformed_request_is_not_answered_with_the_passwords_it_carried(clien
         assert all(set(error) == {"loc", "msg", "type"} for error in answer.json()["detail"])
 
 
-def test_a_first_password_needs_a_username_set_first(client, people):
+def test_a_first_password_needs_no_current_password(client, people):
     token = sign_in(people, NEWCOMER)
-    refused = change(client, token, new_password=NEW)
-    assert (refused.status_code, refused.json()["detail"]["code"]) == (409, "username_required")
-    assert client.patch("/account/profile", headers=bearer(token), json={"username": "grace_h"}).status_code == 200
     assert change(client, token, new_password=NEW).status_code == 204
     assert attempt_password(people, row(people, NEWCOMER).id, NEW, None)
     assert events(people)[-1] == ("password_set", row(people, NEWCOMER).id)
 
 
-def test_a_username_field_in_the_body_is_not_accepted_as_a_shortcut(client, people):
+def test_a_username_field_in_the_body_does_not_change_the_username(client, people):
     token = sign_in(people, NEWCOMER)
-    assert change(client, token, new_password=NEW, username="grace_h").status_code == 409
-    assert row(people, NEWCOMER).username is None
+    before = row(people, NEWCOMER).username
+    change(client, token, new_password=NEW, username="grace_h")
+    assert row(people, NEWCOMER).username == before
 
 
 def test_changing_needs_the_current_password_and_ends_the_other_sessions(client, people):

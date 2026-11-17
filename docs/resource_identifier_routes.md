@@ -36,6 +36,7 @@ The `_id` suffix does not name an MFID in current fields. Response fields that d
 | `{dataset_mfid}`, `{sample_mfid}`, `{parent_dataset_mfid}`, `{child_dataset_mfid}`, `{parent_sample_mfid}`, `{child_sample_mfid}`, `{mfid}`, `{entity_mfid}`, `{resource_mfid}`, `{file_mfid}` | MFID only |
 | `{file_id}` | File MFID |
 | `{group_name}` | Raw access-group name; used only by administrator routes under `/access_groups` and `/users/{user_ref}/access_groups` |
+| `{key_id}`, `{identity_id}` | The integer id of one of a person's API keys or linked sign-in methods, as listed by `/account/apikeys`, `/users/{user_ref}/apikeys` and `/account/identities`. These are not records and have no MFID; every route checks that the key or sign-in method belongs to the person named by the path or the caller. |
 
 The route resolves a reference once and uses the stable identifier for authorization and queries. An unknown reference returns 404. `GET /users/{user_ref}`, `GET /projects/{project_ref}` and `GET /instruments/{instrument_ref}` add a `Content-Location` header with the canonical path when the request used another form.
 

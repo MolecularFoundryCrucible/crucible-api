@@ -333,6 +333,11 @@ class AuthSettings(SettingsGroup):
     password_link_hours: int = Field(24, ge=1, le=168, description="How long a one-time link to set or reset a password works.")
     device_cookie_days: int = Field(90, ge=1, le=400, description="How long a browser that signed in with a password stays known, which exempts it from the delays for unknown browsers.")
     hash_concurrency: int = Field(2, ge=1, le=32, description="Password checks running at once in each worker; each holds CRUCIBLE_AUTH_ARGON2_MEMORY_KIB of memory.")
+    hash_queue: int = Field(8, ge=0, le=256, description="Password checks allowed to wait for a free slot in each worker; beyond that a check is refused at once as busy, so waiting checks cannot hold every server thread.")
+    hash_wait_seconds: int = Field(10, ge=1, le=60, description="Longest a password check waits for a free slot before it is refused as busy.")
+    address_free_failures: int = Field(10, ge=1, le=1000, description="Failed password and code attempts from one network address before each further attempt is delayed.")
+    longest_address_delay_seconds: int = Field(60, ge=1, le=3600, description="Longest delay imposed on one network address; delays double from 2 seconds up to this.")
+    max_pending_accounts: int = Field(100, ge=0, le=100000, description="Accounts that may wait for approval at once; registration is refused while the list is full, so one source cannot flood it.")
 
     @field_validator("providers", "clients", mode="before")
     @classmethod

@@ -5,10 +5,11 @@ from datetime import datetime, timezone
 
 from email_validator import EmailNotValidError, validate_email
 from fastapi import HTTPException
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.tables import User, get_mfid_value
 
+LIST_FULL = "Account requests are not being accepted right now. Try again later, or contact an administrator."
 IN_USE = "This username or email is already in use. Choose another username, or ask an administrator if you already have an account."
 
 
@@ -37,6 +38,7 @@ def checked_fields(session: Session, *, username: str, first_name: str, last_nam
     email already held gets one shared answer, so the form does not say which one exists."""
     from app.utils.user_utils import assert_profile_fields_available, assert_self_chosen_username_allowed, validate_username_format
 
+    refuse_when_list_full(session)
     first, last = first_name.strip(), last_name.strip()
     if not first or not last:
         raise RegistrationRefused(RegistrationProblem("name", "Give your first and last name, so an administrator knows who is asking."))
@@ -59,6 +61,17 @@ def checked_fields(session: Session, *, username: str, first_name: str, last_nam
     return cleaned_username, first, last, cleaned_email
 
 
+def refuse_when_list_full(session: Session) -> None:
+    """Refuse a request while CRUCIBLE_AUTH_MAX_PENDING_ACCOUNTS accounts already wait for approval."""
+    from sqlalchemy import func
+
+    from app.config import get_settings
+
+    waiting = session.exec(select(func.count()).select_from(User).where(User.pending_at.is_not(None))).one()
+    if waiting >= get_settings().auth.max_pending_accounts:
+        raise RegistrationRefused(RegistrationProblem("form", LIST_FULL, 503))
+
+
 def register(session: Session, *, username: str, first_name: str, last_name: str, email: str, password: str, now: datetime | None = None) -> User:
     """Create the waiting account with its password, in the caller's transaction. The fields must
     already have passed checked_fields."""
@@ -66,6 +79,7 @@ def register(session: Session, *, username: str, first_name: str, last_name: str
     from app.auth.passwords import store_password
     from app.utils.user_utils import provision_user
 
+    refuse_when_list_full(session)
     user = provision_user(session, unique_id=get_mfid_value(), first_name=first_name, last_name=last_name, email=email, username=username)
     user.pending_at = now or datetime.now(timezone.utc)
     session.add(user)

@@ -49,10 +49,12 @@ def _hasher() -> PasswordHash:
 
 
 def _current_pepper() -> tuple[str | None, bytes | None]:
-    auth = get_settings().auth
-    if auth.pepper_id is None or auth.pepper is None or not auth.pepper.get_secret_value():
+    """The pepper new hashes use. With an identifier set, the secret must be given in one of the ways
+    get_secret reads, Secret Manager included; a missing one is an error, never an unpeppered hash."""
+    pepper_id = get_settings().auth.pepper_id
+    if pepper_id is None:
         return None, None
-    return auth.pepper_id, get_secret("CRUCIBLE_AUTH_PEPPER").encode("utf-8")
+    return pepper_id, get_secret("CRUCIBLE_AUTH_PEPPER").encode("utf-8")
 
 
 def _pepper(pepper_id: str | None) -> bytes | None:

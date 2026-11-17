@@ -214,7 +214,7 @@ async def start_sign_in(request: Request, engine, *, path: str, response_type: s
             raise InvalidLoginRequest
         check_login_request(config, client_id, redirect_uri, state, code_challenge)
     except InvalidLoginRequest:
-        if not state or not 16 <= len(state) <= 256:
+        if not redirect_uri or not state or not 16 <= len(state) <= 256:
             raise HTTPException(status_code=400, detail="Invalid sign-in request")
         return _client_error(redirect_uri, state, "invalid_request")
     listed = get_settings().auth.providers
@@ -550,7 +550,7 @@ async def password_sign_in(
         return _password_page(request, expired=True, status=400)
     holder = await run_in_threadpool(_password_holder, engine, username)
     user_id = holder[0] if holder else None
-    device = read_device_cookie(request.cookies.get(DEVICE_COOKIE), user_id) if user_id is not None else None
+    device = await run_in_threadpool(read_device_cookie, request.cookies.get(DEVICE_COOKIE), user_id) if user_id is not None else None
     try:
         valid = await run_in_threadpool(attempt_password, engine, user_id, password, client_address(request), device_cookie=device)
     except HashBusy:
@@ -572,7 +572,8 @@ async def password_sign_in(
         response = _deliver(request, transaction.client_id, destination, transaction.callback_uri, transaction.hub_state, status=303)
     secure = request.url.scheme == "https" or public_api_url().startswith("https://")
     changed = await run_in_threadpool(_password_changed_at, engine, user_id)
-    response.set_cookie(DEVICE_COOKIE, issue_device_cookie(user_id, changed), max_age=get_settings().auth.device_cookie_days * 86400, path=_password_path(), secure=secure, httponly=True, samesite="lax")
+    device_cookie = await run_in_threadpool(issue_device_cookie, user_id, changed)
+    response.set_cookie(DEVICE_COOKIE, device_cookie, max_age=get_settings().auth.device_cookie_days * 86400, path=_password_path(), secure=secure, httponly=True, samesite="lax")
     response.delete_cookie(login_cookie_name(state), path=_password_path())
     return response
 

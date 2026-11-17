@@ -8,10 +8,12 @@ from app import config
 from app.auth import throttle
 from app.auth.passwords import store_password
 from app.auth.throttle import (
-    ADDRESS_FREE_FAILURES, KNOWN_LIMIT, TOTAL_LIMIT, UNKNOWN_LIMIT, DeviceCookie, attempt_password, begin_attempt, client_address, finish_attempt,
+    KNOWN_LIMIT, TOTAL_LIMIT, UNKNOWN_LIMIT, DeviceCookie, attempt_password, begin_attempt, client_address, finish_attempt,
     issue_device_cookie, read_device_cookie,
 )
 from app.tables import AuthEvent, DeviceAuthorization, LocalCredential, LoginThrottle, PasswordToken, User, UserIdentity
+
+ADDRESS_FREE_FAILURES = 10
 
 NOW = datetime(2026, 11, 6, 12, tzinfo=timezone.utc)
 RIGHT = "violet ladder under quiet rain"
@@ -263,14 +265,14 @@ def test_an_address_is_slowed_for_at_most_a_minute(engine):
         attempt(engine, None, at=NOW + timedelta(seconds=step * 61), address="10.0.0.1")
     with Session(engine) as session:
         row = session.exec(select(LoginThrottle)).one()
-    assert row.consecutive_failures == 40 and row.blocked_until - row.last_failure_at <= throttle.LONGEST_ADDRESS_DELAY
+    assert row.consecutive_failures == 40 and row.blocked_until - row.last_failure_at <= timedelta(seconds=60)
     assert attempt(engine, victim, RIGHT, at=row.blocked_until + timedelta(seconds=1), address="10.0.0.1")
 
 
 def test_a_known_browser_signs_in_while_its_address_is_slowed(engine):
     victim = person(engine)
     cookie = cookie_for(engine, victim)
-    for _ in range(throttle.ADDRESS_FREE_FAILURES + 1):
+    for _ in range(ADDRESS_FREE_FAILURES + 1):
         attempt(engine, None, address="10.0.0.1")
     assert not attempt(engine, victim, RIGHT, address="10.0.0.1")
     assert attempt(engine, victim, RIGHT, address="10.0.0.1", cookie=cookie)
@@ -392,3 +394,57 @@ def test_device_cookie_round_trip(engine):
     user = person(engine)
     cookie = cookie_for(engine, user)
     assert cookie == DeviceCookie(user, credential(engine, user).password_changed_at.replace(tzinfo=timezone.utc))
+
+
+def test_a_delayed_address_is_refused_without_hashing(engine, monkeypatch):
+    victim = person(engine)
+    for _ in range(ADDRESS_FREE_FAILURES + 1):
+        attempt(engine, None, address="203.0.113.7")
+    hashed = []
+    monkeypatch.setattr("app.auth.passwords.verify_dummy", lambda password: hashed.append(password))
+    monkeypatch.setattr("app.auth.passwords.verify_password", lambda *args: hashed.append(args) or (False, None))
+    assert attempt(engine, victim, RIGHT, address="203.0.113.7") is False
+    assert hashed == []
+
+
+def test_a_check_that_finds_no_free_slot_is_not_counted(engine, monkeypatch):
+    monkeypatch.setenv("CRUCIBLE_AUTH_HASH_CONCURRENCY", "1")
+    monkeypatch.setenv("CRUCIBLE_AUTH_HASH_QUEUE", "0")
+    config.get_settings.cache_clear()
+    monkeypatch.setattr(throttle, "_slots", None)
+    user = person(engine)
+    cookie = cookie_for(engine, user)
+    with throttle.hash_slot():
+        for _ in range(KNOWN_LIMIT + 2):
+            with pytest.raises(throttle.HashBusy):
+                attempt(engine, user, RIGHT, cookie=cookie, address="203.0.113.7")
+        with pytest.raises(throttle.HashBusy):
+            attempt(engine, user, RIGHT, address="203.0.113.7")
+    row = credential(engine, user)
+    assert (row.trusted_failed_attempts, row.failed_attempts, row.locked_at) == (0, 0, None)
+    with Session(engine) as session:
+        assert session.exec(select(LoginThrottle.consecutive_failures)).one() == 0
+    assert attempt(engine, user, RIGHT, cookie=cookie) is True
+
+
+def test_waiting_checks_are_capped_and_the_rest_refused_at_once(monkeypatch):
+    import time
+
+    monkeypatch.setenv("CRUCIBLE_AUTH_HASH_CONCURRENCY", "1")
+    monkeypatch.setenv("CRUCIBLE_AUTH_HASH_QUEUE", "0")
+    config.get_settings.cache_clear()
+    monkeypatch.setattr(throttle, "_slots", None)
+    with throttle.hash_slot():
+        started = time.monotonic()
+        with pytest.raises(throttle.HashBusy):
+            with throttle.hash_slot(timeout=5):
+                pass
+        assert time.monotonic() - started < 1
+
+
+def test_one_ipv6_client_is_counted_per_64_network(engine):
+    for host in range(ADDRESS_FREE_FAILURES + 1):
+        attempt(engine, None, address=f"2001:db8:1:2::{host + 1:x}")
+    with Session(engine) as session:
+        assert session.exec(select(LoginThrottle.consecutive_failures)).all() == [ADDRESS_FREE_FAILURES + 1]
+    assert throttle.address_hash("::ffff:203.0.113.7") == throttle.address_hash("203.0.113.7")

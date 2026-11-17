@@ -32,7 +32,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_active
-from app.auth.api_keys import key_status, newest_key, newest_keys, replace_plain_keys, revoke_user_keys
+from app.auth.api_keys import key_status, newest_key, newest_keys, revoke_user_keys
 from app.auth.events import AuthEventType, record_event
 from app.auth.linking import sign_in_labels
 from app.auth.password_links import void_links
@@ -767,7 +767,6 @@ def delete_user_apikey(
         if not auth_res.is_user(user):
             require_human_admin_safeguard(auth_res, user)
 
-        replace_plain_keys(session, user.id)
         revoke_user_keys(session, user.id)
         session.commit()
         forget_cached_keys(session, user.id)

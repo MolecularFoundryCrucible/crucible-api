@@ -165,15 +165,15 @@ def test_new_person_from_hub_sign_in_gets_a_username_and_identity_group(db_engin
         assert session.exec(select(AccessGroup.group_type).where(AccessGroup.group_name == ORCID)).one() == "identity"
 
 
-def test_existing_person_from_hub_sign_in_keeps_having_no_username(db_engine, hub_tables):
+def test_existing_person_from_hub_sign_in_keeps_their_username(db_engine, hub_tables):
     from app.auth.login_transactions import create_handoff_code
 
     with Session(db_engine) as session:
-        session.add(User(unique_id=ORCID, first_name="Ada", last_name="Lovelace"))
+        session.add(User(unique_id=ORCID, first_name="Ada", last_name="Lovelace", username="countess"))
         session.commit()
     create_handoff_code(db_engine, login_record(), ORCID_PROVIDER, ORCID, "Ada", "Lovelace")
     with Session(db_engine) as session:
-        assert session.exec(select(User)).one().username is None
+        assert session.exec(select(User)).one().username == "countess"
 
 
 def test_existing_person_from_hub_sign_in_only_fills_empty_names(db_engine, hub_tables):

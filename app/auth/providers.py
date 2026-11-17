@@ -7,6 +7,7 @@ from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.starlette_client import OAuth, StarletteOAuth2App
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from cachetools import TTLCache
+from fastapi.concurrency import run_in_threadpool
 from joserfc.errors import JoseError
 
 from app.config import ConfigurationError, OidcProvider, get_secret
@@ -106,13 +107,13 @@ async def _with_discovery(name: str, client: StarletteOAuth2App, issuer: str) ->
 
 async def new_code_verifier(provider: OidcProvider) -> str | None:
     """A PKCE verifier when the provider advertises S256, which ORCID's discovery document does not."""
-    client = await _with_discovery(provider.key, _provider_app(provider), provider.issuer)
+    client = await _with_discovery(provider.key, await run_in_threadpool(_provider_app, provider), provider.issuer)
     advertised = client.server_metadata.get("code_challenge_methods_supported")
     return secrets.token_urlsafe(64) if isinstance(advertised, list) and "S256" in advertised else None
 
 
 async def authorization_url(provider: OidcProvider, callback_uri: str, state: str, nonce: str, max_age: int | None = None, code_verifier: str | None = None) -> str:
-    client = await _with_discovery(provider.key, _provider_app(provider), provider.issuer)
+    client = await _with_discovery(provider.key, await run_in_threadpool(_provider_app, provider), provider.issuer)
     extra = {} if max_age is None else {"max_age": str(max_age), **({"prompt": "login"} if max_age == 0 else {})}
     if code_verifier is not None:
         extra |= {"code_challenge": create_s256_code_challenge(code_verifier), "code_challenge_method": "S256"}
@@ -127,7 +128,7 @@ class IssuerMismatch(Exception):
 async def check_response_issuer(provider: OidcProvider, iss: str | None) -> None:
     """RFC 9207 mix-up defense: an authorization response's `iss` must name this provider, and a
     provider that advertises the parameter must send it."""
-    client = await _with_discovery(provider.key, _provider_app(provider), provider.issuer)
+    client = await _with_discovery(provider.key, await run_in_threadpool(_provider_app, provider), provider.issuer)
     if iss is None:
         if client.server_metadata.get("authorization_response_iss_parameter_supported") is True:
             raise IssuerMismatch("missing iss")
@@ -137,7 +138,7 @@ async def check_response_issuer(provider: OidcProvider, iss: str | None) -> None
 
 
 async def verified_identity(provider: OidcProvider, callback_uri: str, code: str, nonce: str, code_verifier: str | None = None) -> VerifiedIdentity:
-    client = await _with_discovery(provider.key, _provider_app(provider), provider.issuer)
+    client = await _with_discovery(provider.key, await run_in_threadpool(_provider_app, provider), provider.issuer)
     token = await client.fetch_access_token(redirect_uri=callback_uri, code=code, **({} if code_verifier is None else {"code_verifier": code_verifier}))
     if "id_token" not in token:
         raise ValueError("token response has no ID token")

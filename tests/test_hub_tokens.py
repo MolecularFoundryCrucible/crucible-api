@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.api.dependencies import get_engine
+from app.auth.api_keys import store_key
 from app.api.routes.browser_sign_in import router as hub_auth_router
 from app.tables import (
     DeviceAuthorization,
@@ -297,15 +298,7 @@ def test_hub_and_legacy_credentials_both_authorize(use_engine, engine, monkeypat
     pair = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub")
     legacy_key = "a" * 64
     with Session(engine) as session:
-        session.add(
-            ApiToken(
-                token=legacy_key,
-                user_id=internal_id(session, "0000-0000-0000-0001"),
-                user_unique_id="0000-0000-0000-0001",
-                access_group_id="0000-0000-0000-0001",
-                token_created=datetime.now(timezone.utc).date().isoformat(),
-            )
-        )
+        store_key(session, internal_id(session, "0000-0000-0000-0001"), legacy_key)
         session.commit()
     for token in (pair.access_token, legacy_key):
         principal = auth_utils._authorize_user(

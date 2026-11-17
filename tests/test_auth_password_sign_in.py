@@ -339,3 +339,9 @@ def test_a_public_client_gets_the_code_only_after_the_person_allows_it(client, d
     assert tokens.status_code == 200, tokens.text
     hub_state = start(client)
     answer(submit(client, hub_state))
+
+
+def test_a_sign_in_request_without_a_redirect_is_refused_not_redirected(client):
+    params = {"response_type": "code", "client_id": "crucible-hub", "state": "client-state-123456789", "code_challenge": CHALLENGE, "code_challenge_method": "S256"}
+    answer = client.get("/oauth/authorize", params=params, follow_redirects=False)
+    assert answer.status_code == 400 and "location" not in answer.headers

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import update
 from sqlmodel import Session, SQLModel, select
 
+from app.config import get_secret
 from app import config
 from app.api import main
 from app.api.dependencies import get_engine
@@ -175,7 +176,7 @@ def test_a_decision_naming_someone_who_did_not_sign_in_is_refused(client, db_eng
     state = parse_qs(urlparse(authorize.headers["location"]).query)["state"][0]
     signed_in = client.post("/oauth/password", data={"username": "ada.lovelace", "password": RIGHT, "state": state}, follow_redirects=False)
     confirm = client.get(signed_in.headers["location"].removeprefix(API_URL))
-    serializer = device_routes._serializer("decision")
+    serializer = device_routes._serializer(get_secret("CRUCIBLE_SECRET_KEY"), "decision")
     genuine = serializer.loads(re.search(r'name="decision_token" value="([^"]+)"', confirm.text).group(1))
     assert set(genuine) == {"d", "u", "n"}
     forged = serializer.dumps({**genuine, "u": genuine["u"] + 1})

@@ -654,38 +654,21 @@ def test_first_sign_in_committed_between_the_two_lookups_is_found_on_postgres(pg
     assert_one_person(pg_sign_in)
 
 
-def tokens(engine):
-    from app.tables import ApiToken
-
-    with Session(engine) as session:
-        return session.exec(select(ApiToken.token)).all()
-
-
-@pytest.mark.parametrize("regenerate", [False, True], ids=["first-key", "regenerate"])
-def test_simultaneous_key_requests_leave_one_key_on_postgres(pg_sign_in, monkeypatch, regenerate):
-    from threading import Barrier, BrokenBarrierError
-
-    from app.utils import auth_utils
-    from app.utils.auth_utils import find_or_add_api_access
+def test_simultaneous_key_rotations_leave_one_active_key_on_postgres(pg_sign_in):
+    from app.auth.api_keys import active, replace_keys
+    from app.tables import ApiKey
 
     with Session(pg_sign_in) as session, session.begin():
         add_user(session)
-    if regenerate:
-        find_or_add_api_access(internal_id(pg_sign_in, ORCID), pg_sign_in)
-    real_generate = auth_utils.generate_apikey
-    all_found_no_key = Barrier(8)
 
-    def generate_after_every_thread_has_looked(orcid, session):
-        try:
-            all_found_no_key.wait(timeout=1)
-        except BrokenBarrierError:
-            pass
-        return real_generate(orcid, session)
+    def rotate():
+        with Session(pg_sign_in) as session, session.begin():
+            replace_keys(session, session.get(User, internal_id(pg_sign_in, ORCID)))
 
-    monkeypatch.setattr(auth_utils, "generate_apikey", generate_after_every_thread_has_looked)
-    race(8, lambda: find_or_add_api_access(internal_id(pg_sign_in, ORCID), pg_sign_in, regenerate=regenerate))
-    assert len(tokens(pg_sign_in)) == 1
-    assert find_or_add_api_access(internal_id(pg_sign_in, ORCID), pg_sign_in) == tokens(pg_sign_in)[0]
+    race(8, rotate)
+    with Session(pg_sign_in) as session:
+        assert len(session.exec(select(ApiKey).where(active())).all()) == 1
+        assert len(session.exec(select(ApiKey)).all()) == 8
 
 
 def test_deleting_a_user_removes_their_identities_on_postgres(pg_engine):

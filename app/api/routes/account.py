@@ -1,4 +1,4 @@
-from datetime import timedelta, datetime, timezone
+from datetime import timedelta
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response
@@ -43,6 +43,7 @@ from app.auth.api_keys import find_api_key, key_status, newest_key
 from app.auth.identity import linked_orcid
 from app.services.proposals import ProposalServiceUnavailable, assign_discovered_projects, lookup_proposals
 from app.utils.user_utils import assert_profile_fields_available, assert_username_kept_for_password, assert_self_chosen_username_allowed, commit_user
+from app.auth.common import as_utc
 
 router = APIRouter(tags=["account"])
 
@@ -273,10 +274,6 @@ RECENT_RETENTION = timedelta(days=90)
 RECENT_THROTTLE = timedelta(seconds=60)
 
 
-def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-
-
 def _readable_resources(principal: Principal):
     return select(Resource.mfid).where(
         permission_filter(principal, Resource, Permission.READ, resource_id_column=Resource.mfid),
@@ -302,7 +299,7 @@ def record_recent_resource(auth_res: Annotated[Principal, Depends(authorize_user
         row = session.get(UserRecentResource, (user_id, body.resource_mfid))
         if row is None:
             session.add(UserRecentResource(user_id=user_id, resource_mfid=body.resource_mfid, viewed_at=now))
-        elif _aware(row.viewed_at) <= now - RECENT_THROTTLE:
+        elif as_utc(row.viewed_at) <= now - RECENT_THROTTLE:
             row.viewed_at = now
             session.add(row)
         else:
@@ -344,7 +341,7 @@ def list_recent_resources(auth_res: Annotated[Principal, Depends(authorize_user)
             .limit(limit)
         )
         return [
-            RecentResourceRead(resource_mfid=mfid, resource_type=kind, name=label, project_id=project_id, identifier=identifier, viewed_at=_aware(viewed_at))
+            RecentResourceRead(resource_mfid=mfid, resource_type=kind, name=label, project_id=project_id, identifier=identifier, viewed_at=as_utc(viewed_at))
             for mfid, kind, label, project_id, identifier, viewed_at in session.exec(statement).all()
         ]
 

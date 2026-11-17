@@ -273,6 +273,19 @@ def owners_of(session, records) -> dict:
     return {user.id: user for user in session.exec(select(User).where(User.id.in_(ids))).all()} if ids else {}
 
 
+def owner_reference(record, owner: Optional[User]) -> Optional[str]:
+    """For stored records: the owner's unique_id, or for a record not linked to a user, the owner
+    it stores, so rewriting the stored record does not erase an owner `owners backfill` could not match."""
+    if owner is not None:
+        return owner.unique_id
+    if record.owner_user_id is not None:
+        return None
+    stored = getattr(record, "owner_orcid", None)
+    if stored is None and isinstance(getattr(record, "owner", None), str):
+        stored = record.owner
+    return stored
+
+
 def owner_fields(record, owners: dict, include_owner: bool = False) -> dict:
     """`owner_orcid`, and with include_owner the public `owner`, read from the owner's user row."""
     from app.models.users import UserPublicRead
@@ -286,7 +299,7 @@ def owner_fields(record, owners: dict, include_owner: bool = False) -> dict:
 
 def owner_unique_id(session, record) -> Optional[str]:
     owner = session.get(User, record.owner_user_id) if record.owner_user_id is not None else None
-    return owner.unique_id if owner is not None else None
+    return owner_reference(record, owner)
 
 
 def owned_by_any(session, owner_user_id_column, values):

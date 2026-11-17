@@ -9,7 +9,7 @@ from google.protobuf.message import DecodeError
 from google.protobuf.struct_pb2 import ListValue
 from pydantic import BaseModel, ConfigDict
 
-from app.config import MIN_CLIENT_SECRET_LENGTH, get_settings, optional_secret
+from app.config import MIN_CLIENT_SECRET_LENGTH, ConfigurationError, get_settings, optional_secret
 from app.utils.auth_utils import get_secret_key
 
 
@@ -33,6 +33,14 @@ class ResourceCursor(BaseModel):
     unique_id: str
     filters: str
     principal: str
+
+
+def check_signing_keys() -> None:
+    """Refuse to start with cursor signing keys that every list request would reject."""
+    try:
+        _signing_keys()
+    except RuntimeError as error:
+        raise ConfigurationError(str(error)) from None
 
 
 def _signing_keys() -> tuple[str, dict[str, bytes]]:

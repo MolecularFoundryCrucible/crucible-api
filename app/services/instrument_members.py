@@ -35,16 +35,6 @@ def require_members_group(session: Session, instrument_mfid: str) -> AccessGroup
     return group
 
 
-def ensure_members_group(session: Session, instrument_mfid: str) -> AccessGroup:
-    """The instrument's members group, created empty if an instrument written by an earlier release lacks one."""
-    group = members_group(session, instrument_mfid)
-    if group is None:
-        group = AccessGroup(group_name=members_group_name(instrument_mfid), group_type=AccessGroupType.INSTRUMENT_MEMBER.value)
-        session.add(group)
-        session.flush()
-    return group
-
-
 def create_members_group(session: Session, instrument_mfid: str, owner: User) -> AccessGroup:
     """The members group of a new instrument, with `owner` as its owner and the group's owner grant on the record."""
     from app.utils.sql_utils import sql_create_resource_acl
@@ -61,7 +51,7 @@ def grant_dataset(session: Session, dataset_mfid: str, instrument_mfid: str) -> 
     """Let the instrument's members read the dataset."""
     from app.utils.sql_utils import sql_create_resource_acl
 
-    sql_create_resource_acl(ensure_members_group(session, instrument_mfid), dataset_mfid,
+    sql_create_resource_acl(require_members_group(session, instrument_mfid), dataset_mfid,
                             read=True, write=False, session=session, permission=Role.VIEWER)
 
 
@@ -187,6 +177,9 @@ GRANT_CHECKS = {
     "person_or_project_grants_on_instruments": """
         SELECT count(*) FROM resourceacl acl JOIN instrument i ON i.unique_id = acl.mfid
         JOIN accessgroup g ON g.id = acl.accessgroup_id WHERE g.group_type IN ('identity', 'project')""",
+    "instruments_without_owner": """
+        SELECT count(*) FROM instrument i JOIN accessgroup g ON g.group_name = i.unique_id || :suffix AND g.group_type = 'instrument_member'
+        WHERE NOT EXISTS (SELECT 1 FROM useraccessgrouplink link WHERE link.accessgroup_id = g.id AND link.role = 'owner')""",
     "instruments_without_members_grant": """
         SELECT count(*) FROM instrument i WHERE NOT EXISTS (
             SELECT 1 FROM resourceacl acl JOIN accessgroup g ON g.id = acl.accessgroup_id
@@ -220,7 +213,7 @@ REPAIR_STATEMENTS = (
               CASE WHEN acl.permission = 'owner' AND EXISTS (
                        SELECT 1 FROM useraccessgrouplink current_owner
                        WHERE current_owner.accessgroup_id = members.id AND current_owner.role = 'owner')
-                   THEN 'admin' ELSE acl.permission END
+                   THEN 'admin' WHEN acl.permission = 'contributor' THEN 'editor' ELSE acl.permission END::resource_role
        FROM resourceacl acl
        JOIN instrument i ON i.unique_id = acl.mfid
        JOIN accessgroup identity_group ON identity_group.id = acl.accessgroup_id AND identity_group.group_type = 'identity'

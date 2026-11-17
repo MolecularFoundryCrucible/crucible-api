@@ -1,4 +1,6 @@
 """Move instrument maintainers into a members group per instrument and let members read the instrument's datasets.
+People with a grant on the instrument, directly or through a project, become members at the highest role they held
+(contributor becomes editor); an instrument whose owner was a service account passes to its highest-ranking member.
 The members group holds the instrument record's owner grant and viewer on every dataset assigned to the instrument;
 operator group grants are made to match dataset assignment."""
 import sqlalchemy as sa
@@ -24,14 +26,44 @@ def upgrade():
     """)
     _run(f"""
         INSERT INTO useraccessgrouplink (user_id, accessgroup_id, role)
-        SELECT person.user_id, members.id, acl.permission
-        FROM resourceacl acl
-        JOIN instrument i ON i.unique_id = acl.mfid
-        JOIN accessgroup identity_group ON identity_group.id = acl.accessgroup_id AND identity_group.group_type = 'identity'
-        JOIN useraccessgrouplink person ON person.accessgroup_id = identity_group.id AND person.role = 'owner'
-        JOIN "user" u ON u.id = person.user_id AND NOT COALESCE(u.is_service_account, false)
+        SELECT held.user_id, members.id, max(held.role)
+        FROM (
+            SELECT acl.mfid, person.user_id,
+                   CASE acl.permission WHEN 'contributor' THEN 'editor' ELSE acl.permission END::resource_role AS role
+            FROM resourceacl acl
+            JOIN accessgroup identity_group ON identity_group.id = acl.accessgroup_id AND identity_group.group_type = 'identity'
+            JOIN useraccessgrouplink person ON person.accessgroup_id = identity_group.id AND person.role = 'owner'
+            UNION ALL
+            SELECT acl.mfid, project_member.user_id,
+                   CASE least(project_member.role, acl.permission) WHEN 'contributor' THEN 'editor' WHEN 'owner' THEN 'admin'
+                        ELSE least(project_member.role, acl.permission) END::resource_role
+            FROM resourceacl acl
+            JOIN accessgroup project_group ON project_group.id = acl.accessgroup_id AND project_group.group_type = 'project'
+            JOIN useraccessgrouplink project_member ON project_member.accessgroup_id = project_group.id
+        ) held
+        JOIN instrument i ON i.unique_id = held.mfid
+        JOIN "user" u ON u.id = held.user_id AND NOT COALESCE(u.is_service_account, false)
         JOIN accessgroup members ON members.group_name = {MEMBERS} AND members.group_type = 'instrument_member'
+        GROUP BY held.user_id, members.id
         ON CONFLICT DO NOTHING
+    """)
+    _run("""
+        UPDATE useraccessgrouplink link SET role = 'owner'
+        FROM (
+            SELECT DISTINCT ON (candidate.accessgroup_id) candidate.accessgroup_id, candidate.user_id
+            FROM useraccessgrouplink candidate
+            JOIN accessgroup g ON g.id = candidate.accessgroup_id AND g.group_type = 'instrument_member'
+            WHERE NOT EXISTS (SELECT 1 FROM useraccessgrouplink held WHERE held.accessgroup_id = candidate.accessgroup_id AND held.role = 'owner')
+            ORDER BY candidate.accessgroup_id, candidate.role DESC, candidate.user_id
+        ) successor
+        WHERE link.accessgroup_id = successor.accessgroup_id AND link.user_id = successor.user_id
+    """)
+    _run(f"""
+        UPDATE instrument i SET owner_user_id = u.id, owner = u.orcid
+        FROM accessgroup members
+        JOIN useraccessgrouplink link ON link.accessgroup_id = members.id AND link.role = 'owner'
+        JOIN "user" u ON u.id = link.user_id
+        WHERE members.group_name = {MEMBERS} AND members.group_type = 'instrument_member' AND i.owner_user_id IS DISTINCT FROM u.id
     """)
     _run("""
         DELETE FROM resourceacl acl

@@ -176,3 +176,19 @@ def test_public_state_is_read_once_per_write(client, setup, kind, monkeypatch, c
     assert len(calls) == 1
     assert response.json()["public"] is False
 
+
+
+def test_public_filter_reads_the_public_grant(client, setup, db_engine, kind):
+    public, private = create(client, kind, True), create(client, kind, False)
+    with Session(db_engine) as session:
+        if kind == "datasets":
+            session.get(Dataset, session.exec(select(Dataset.id).where(Dataset.unique_id == public)).one()).public = False
+        session.commit()
+
+    def listed(value):
+        response = client.get(f"/{kind}", params={"public": value})
+        assert response.status_code == 200, response.text
+        return {item["unique_id"] for item in response.json()["items"]}
+
+    assert listed("true") == {public}
+    assert listed("false") == {private}

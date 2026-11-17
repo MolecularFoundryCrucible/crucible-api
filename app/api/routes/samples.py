@@ -314,7 +314,7 @@ def list_samples(
     of cursor. When both are supplied, cursor takes precedence. Prefer cursor for large
     result sets, since deep offsets are slower.
     Pass affiliation=owner to return only resources authoritatively owned by the caller.
-    Use owner_id for an exact owner match; owner_orcid remains as a deprecated alias.
+    Use owner_ref, repeatable, for an exact owner match; owner_id and owner_orcid are deprecated.
     Pass sort=created, updated, or name with direction=asc or desc for explicit ordering.
     Pass anchor_mfid without cursor or offset to start an inclusive page at a resource
     within the authorized, filtered, and ordered collection.
@@ -346,7 +346,7 @@ def list_samples(
     exact_filters = {
         key: param_values[key]
         for key in (
-            "public", "sample_name", "sample_type",
+            "sample_name", "sample_type",
             "description", "timestamp",
         )
         if param_values[key] is not None
@@ -402,6 +402,8 @@ def list_samples(
                 q = q.where(Sample.unique_id.in_(params.mfid))
             if owners:
                 q = q.where(owned_by_any(session, Sample.owner_user_id, owners))
+            if params.public is not None:
+                q = q.where(public_grant_exists(Sample.unique_id) if params.public else ~public_grant_exists(Sample.unique_id))
             for key, value in exact_filters.items():
                 q = q.where(getattr(Sample, key) == value)
             for column, value in (
@@ -559,7 +561,7 @@ def search_samples(
 ):
     '''
     Search readable samples by name and return results ordered by match quality.
-    Use owner_id for an exact owner match.
+    Use owner_ref, repeatable, for an exact owner match.
     Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.
     '''
 
@@ -629,7 +631,7 @@ def read_sample(
     '''
     Returns the sample for the provided MFID.
     Pass include_links=true to include parent, child, and associated resources.
-    Embedded dataset objects are retained by default for compatibility. New clients should pass include_datasets=false and use include_links or GET /datasets?sample_mfid=... instead.
+    Pass include_datasets=true to embed the sample's datasets; GET /datasets?sample_mfid=... lists them with filters and pages.
     The owner identity is resolved by default. Pass include_owner=false to omit it.
     '''
     with Session(get_engine()) as session:

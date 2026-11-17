@@ -29,7 +29,7 @@ def _seed(engine):
             return row
 
         people = {}
-        for unique_id, is_sa in (("owner", False), ("editor", False), ("sa", True)):
+        for unique_id, is_sa in (("owner", False), ("editor", False), ("sa", True), ("contrib", False), ("pm_admin", False), ("pm_viewer", False)):
             user = add(User(unique_id=unique_id, first_name="T", last_name=unique_id, is_service_account=is_sa))
             group = add(AccessGroup(group_name=unique_id, group_type="identity"))
             add(UserAccessGroupLink(user_id=user.id, accessgroup_id=group.id, role="owner"))
@@ -39,8 +39,14 @@ def _seed(engine):
             add(Resource(mfid=mfid, resource_type="instrument"))
             add(Instrument(unique_id=mfid, instrument_id=mfid, instrument_name=mfid, location="b30"))
             operators[mfid] = add(AccessGroup(group_name=mfid, group_type="instrument")).id
-        for unique_id, role in (("owner", "owner"), ("editor", "editor"), ("sa", "viewer")):
-            add(ResourceACL(mfid="inst-1", accessgroup_id=people[unique_id][1], read=True, write=role != "viewer", permission=role))
+        for mfid, unique_id, role in (("inst-1", "owner", "owner"), ("inst-1", "editor", "editor"), ("inst-1", "sa", "viewer"),
+                                      ("inst-1", "contrib", "contributor"), ("inst-1", "pm_viewer", "editor"), ("inst-2", "sa", "owner")):
+            add(ResourceACL(mfid=mfid, accessgroup_id=people[unique_id][1], read=True, write=role != "viewer", permission=role))
+        project = add(AccessGroup(group_name="proj-x", group_type="project")).id
+        for unique_id, role in (("pm_admin", "admin"), ("pm_viewer", "viewer"), ("sa", "editor")):
+            add(UserAccessGroupLink(user_id=people[unique_id][0], accessgroup_id=project, role=role))
+        for mfid, role in (("inst-1", "viewer"), ("inst-2", "editor")):
+            add(ResourceACL(mfid=mfid, accessgroup_id=project, read=True, write=role != "viewer", permission=role))
         for mfid, instrument in (("ds-1", "inst-1"), ("ds-2", "inst-1"), ("ds-3", "inst-2")):
             add(Resource(mfid=mfid, resource_type="dataset"))
             add(Dataset(unique_id=mfid, dataset_name=mfid, instrument_mfid=instrument))
@@ -82,7 +88,13 @@ def test_upgrade_moves_maintainers_into_members_and_downgrade_restores_them():
                 ("ds-3", "inst-2", "instrument", "contributor"),
                 ("ds-3", "inst-2:members", "instrument_member", "viewer"),
             ])
-            assert _grants(connection, MEMBERS) == [("inst-1:members", "editor", "editor"), ("inst-1:members", "owner", "owner")]
+            assert _grants(connection, MEMBERS) == sorted([
+                ("inst-1:members", "owner", "owner"), ("inst-1:members", "editor", "editor"), ("inst-1:members", "contrib", "editor"),
+                ("inst-1:members", "pm_admin", "viewer"), ("inst-1:members", "pm_viewer", "editor"),
+                ("inst-2:members", "pm_admin", "owner"), ("inst-2:members", "pm_viewer", "viewer"),
+            ])
+            assert connection.execute(text(
+                "SELECT u.orcid, i.owner FROM instrument i JOIN \"user\" u ON u.id = i.owner_user_id WHERE i.unique_id = 'inst-2'")).one() == ("pm_admin", "pm_admin")
             read_write = connection.execute(text(
                 "SELECT read, write FROM resourceacl acl JOIN accessgroup g ON g.id = acl.accessgroup_id "
                 "WHERE acl.mfid = 'ds-2' AND g.group_type = 'instrument_member'")).one()
@@ -95,7 +107,11 @@ def test_upgrade_moves_maintainers_into_members_and_downgrade_restores_them():
         with engine.connect() as connection:
             assert _grants(connection, MEMBERS) == []
             record = _grants(connection, GRANTS.replace("('inst-1', 'inst-2', 'ds-1', 'ds-2', 'ds-3', 'gone')", "('inst-1', 'inst-2')"))
-            assert record == [("inst-1", "editor", "identity", "editor"), ("inst-1", "owner", "identity", "owner")]
+            assert record == sorted([
+                ("inst-1", "owner", "identity", "owner"), ("inst-1", "editor", "identity", "editor"), ("inst-1", "contrib", "identity", "editor"),
+                ("inst-1", "pm_admin", "identity", "viewer"), ("inst-1", "pm_viewer", "identity", "editor"),
+                ("inst-2", "pm_admin", "identity", "owner"), ("inst-2", "pm_viewer", "identity", "viewer"),
+            ])
             assert connection.execute(text("SELECT count(*) FROM accessgroup WHERE group_type = 'instrument_member'")).scalar() == 0
 
 

@@ -19,7 +19,7 @@ from app.models.query_params import (
 from app.models.users import UserPublicRead
 from app.services.capabilities import record_capabilities
 from app.services.instrument_members import (
-    create_members_group, ensure_members_group, load_members, member_filter, member_link,
+    create_members_group, load_members, member_filter, member_link,
     require_members_group)
 from app.services.resource_access import may_view_members, record_roles
 from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
@@ -37,7 +37,7 @@ from app.utils.search_utils import (
 )
 from app.utils.sql_utils import record_resource, add_or_update, assert_not_pending_deletion, touch_resource_modification_time, deletion_filter_for
 from app.models.query_params import requested_owners
-from app.utils.user_utils import owned_by_any, resolve_create_owner, resolve_service_account_reference, resolve_user_by_identifier
+from app.utils.user_utils import owned_by_any, owners_of, resolve_create_owner, resolve_service_account_reference, resolve_user_by_identifier
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
@@ -110,15 +110,8 @@ def _instrument_members(session, principal, instrument):
     return load_members(session, principal, instrument.unique_id)
 
 
-def _instrument_owners(session, instruments) -> dict[int, User]:
-    owner_ids = {instrument.owner_user_id for instrument in instruments if instrument.owner_user_id is not None}
-    if not owner_ids:
-        return {}
-    return {user.id: user for user in session.exec(select(User).where(User.id.in_(owner_ids))).all()}
-
-
 def _instrument_owner(session, instrument) -> User | None:
-    return session.get(User, instrument.owner_user_id) if instrument.owner_user_id is not None else None
+    return owners_of(session, [instrument]).get(instrument.owner_user_id)
 
 
 @router.get("/instruments", response_model=PaginatedResponse[InstrumentResponse])
@@ -133,7 +126,7 @@ def list_instruments(
     Use instrument_id for exact slug lookup. Other filterable fields include
     other_id, other_id_source, instrument_name, manufacturer,
     model, owner, location, description, instrument_type, status.
-    Use owner_id for an exact owner match; owner remains as a deprecated alias.
+    Use owner_ref, repeatable, for an exact owner match; owner_id and owner are deprecated.
     Pass affiliation=owner to return only instruments authoritatively owned by the caller.
     Pass sort=instrument_id|name|created|updated with direction=asc|desc to change the order.
     Each item carries the caller's effective role on the instrument record in role.
@@ -196,7 +189,7 @@ def list_instruments(
         )
         page = execute_resource_page(session, statement, pagination)
         rows = page.rows
-        owners = _instrument_owners(session, (row[0] for row in rows))
+        owners = owners_of(session, (row[0] for row in rows))
         roles = record_roles(session, auth_res, [row[0].unique_id for row in rows])
 
         items = []
@@ -230,7 +223,7 @@ def search_instruments(
     '''
     Search instruments by name, type, or manufacturer using fuzzy matching.
     Returns results ordered by match quality. Maximum 50 results.
-    Use owner_id for an exact owner match.
+    Use owner_ref, repeatable, for an exact owner match.
     '''
     normalized_q, tokens = normalize_search_query(params.q)
     with Session(get_engine()) as session:
@@ -262,7 +255,7 @@ def search_instruments(
             Instrument.unique_id.desc(),
         ).limit(params.limit)
         rows = session.exec(statement).all()
-        owners = _instrument_owners(session, (inst for inst, _ in rows))
+        owners = owners_of(session, (inst for inst, _ in rows))
         items = [
             _instrument_response(inst, ri, owner=owners.get(inst.owner_user_id), include_owner=params.include_owner)
             for inst, ri in rows
@@ -603,7 +596,7 @@ def add_instrument_user(
         require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
         assert_not_pending_deletion(session, instrument_mfid)
         user = _member_user(session, user_ref)
-        group = ensure_members_group(session, instrument_mfid)
+        group = require_members_group(session, instrument_mfid)
         link = member_link(session, group, user)
         if link is not None:
             current = Role.from_db(link.role)

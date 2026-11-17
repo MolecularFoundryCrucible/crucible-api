@@ -33,6 +33,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The pages that set a password (password link, registration) check the length rule and the confirmation as the user types, and their hints and messages are shorter.
 - With passwords enabled, the sign-in page is the username and password form, with the listed identity providers offered below it; the separate method-choice page remains only for several providers without passwords. `provider=` still goes straight to one method.
 - The sign-in pages served by the API (method choice, password sign-in, password link, registration, program and device approval, result pages) share one layout: a narrower card, larger controls, boxed error messages, request details as a list, and a full-width layout on phones.
+### Fixed
+- The instrument members migration also makes project members with a grant on an instrument its members, turns `contributor` into `editor`, and passes an instrument owned by a service account to its highest-ranking member; `instruments check` reports instruments left without an owner.
+- The `public` filter on `GET /datasets` and `GET /samples` reads the public grant, as responses do; on samples it returned 500.
+- The server checks every cursor signing key at startup, instead of answering list requests with 500.
+- Rewriting a stored dataset, sample or instrument record keeps an owner that matches no user, instead of erasing it.
 ### Security
 - Dependencies: `opentelemetry-api` 1.45.2, which fixes slow parsing of crafted `traceparent` headers.
 

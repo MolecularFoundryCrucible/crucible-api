@@ -290,7 +290,7 @@ def search_resource_metadata_v2(
         max_length=5,
         description=RESOURCE_AFFILIATION_DESCRIPTION + " Applies to dataset and sample results; project and instrument results are not narrowed.",
     ),
-    owner_ref: Optional[List[str]] = Query(default=None, min_length=1, max_length=OWNER_REF_MAX, description=OWNER_REF_DESCRIPTION),
+    owner_ref: Annotated[Optional[List[str]], Query(min_length=1, max_length=OWNER_REF_MAX, description=OWNER_REF_DESCRIPTION)] = None,
 ):
     """
     Search resources by scientific metadata content using full-text search.
@@ -386,7 +386,7 @@ def get_resource(
     Resolves the type from idtype, then returns the full resource record.
     Pass include_metadata=true to include scientific metadata.
     Pass include_links=true to include parent/child/associated resources (datasets and samples only).
-    Sample dataset objects remain embedded by default for compatibility. Pass include_datasets=false to omit them.
+    Pass include_datasets=true to embed a sample's datasets.
     The owner identity is resolved by default for datasets, samples, and instruments. Pass include_owner=false to omit it.
     """
 

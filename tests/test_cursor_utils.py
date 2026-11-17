@@ -99,3 +99,17 @@ def test_cursor_signing_key_reference_is_used(monkeypatch):
     from app.utils import cursor_utils
 
     assert cursor_utils._signing_keys() == ("v1", {"v1": b"from-manager" * 3})
+
+
+def test_startup_refuses_a_short_cursor_signing_key(monkeypatch):
+    from app.config import ConfigurationError
+    from app.utils.cursor_utils import check_signing_keys
+
+    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", json.dumps({"old": "short", "new": "new-secret" * 4}))
+    monkeypatch.setenv("CRUCIBLE_CURSOR_ACTIVE_KEY_ID", "new")
+    _restart()
+    with pytest.raises(ConfigurationError, match="at least 32 characters"):
+        check_signing_keys()
+    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", json.dumps({"new": "new-secret" * 4}))
+    _restart()
+    check_signing_keys()

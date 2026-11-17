@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-11-17
+
+Crucible authenticates users itself, instruments gain members who read their datasets, and records share one response shape. This release contains everything listed under 4.0.0a1 below, and the following. Upgrading: `docs/upgrading/3.3-to-4.0.md`.
+
 ### Breaking changes
 
 - Instruments have members, like projects: `GET`, `POST`, `PATCH`, `DELETE /instruments/{instrument_ref}/users/{user_ref}` (roles `viewer`, `editor`, `admin`); user and project grants on an instrument through `/resources/{mfid}/access/...` return 409 `use_instrument_members`. Needs migrations `3b8e5d1f7c24` and `9d4a2c7e6f13`.

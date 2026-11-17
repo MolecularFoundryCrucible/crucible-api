@@ -20,7 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - `affiliation=instrument` on dataset lists, facets and search, for datasets read through instrument membership; `affiliation=member` on instruments.
 - `python -m app.cli instruments check [--commit]` reports, and repairs, instrument grants that do not match membership and dataset assignment.
-- `owner_ref` names a user in create bodies, `new_owner_ref` in ownership transfer; the owner filter `owner_ref` is repeatable and exists on project lists and search too.
+- `owner_ref` names a user in create bodies, `new_owner_ref` in ownership transfer; the owner filter `owner_ref` is repeatable and exists on project lists and search and on metadata search too.
 
 ### Deprecated
 

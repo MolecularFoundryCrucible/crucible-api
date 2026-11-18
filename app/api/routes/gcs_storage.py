@@ -2,7 +2,6 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from app.api.removed import REMOVED_RESPONSE, removed
 from app.config import get_settings
 from app.services.storage_downloads import DOWNLOAD_LIFETIME, StorageLocationError, multipart_prefix, resolve_storage_object, upload_bucket
 from app.storage import get_store
@@ -10,17 +9,6 @@ from app.storage.gcs import server_client
 
 router = APIRouter(tags=["storage"])
 logger = logging.getLogger(__name__)
-
-_GONE = {"deprecated": True, "status_code": 410, "responses": REMOVED_RESPONSE}
-
-
-@router.post("/datasets/{dataset_mfid}/upload/initiate", **_GONE)
-@router.post("/datasets/{dataset_mfid}/upload/initiate/multipart", **_GONE)
-@router.post("/datasets/{dataset_mfid}/upload/complete", **_GONE)
-def removed_legacy_upload(dataset_mfid: str):
-    """Removed: the resumable and token uploads. Use the signed multipart routes under /datasets/{dataset_mfid}/upload/multipart."""
-    removed("The resumable and token upload routes were removed. Upload through POST /datasets/{dataset_mfid}/upload/multipart/initiate (nano-crucible 3.3.0 or newer).")
-
 
 def _determine_storage_path(dataset_mfid, filename):
     """

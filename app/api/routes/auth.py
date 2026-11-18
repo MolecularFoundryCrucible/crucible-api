@@ -1,18 +1,11 @@
 from fastapi import APIRouter
 
-from app.api.removed import REMOVED_RESPONSE, removed
 from app.config import get_settings
 from app.models.response_schemas import AuthMethodRead
 
 # Note: /account/* routes live in account.py
 
 router = APIRouter(tags=["auth"])
-
-BROWSER_KEY_FLOW_REMOVED = (
-    "Getting an API key from this browser page was removed. Sign in and create a named key with POST /account/apikeys "
-    "(the Hub's Security page does this), or sign in from nano-crucible 4.0 or later; programs sign people in through /oauth/authorize."
-)
-
 
 @router.get("/auth/methods", response_model=list[AuthMethodRead])
 def list_sign_in_methods():
@@ -36,18 +29,3 @@ def list_sign_in_methods():
                 registration_url = None
         methods.append(AuthMethodRead(key=LOCAL_PROVIDER, display_name="Password", kind="password", is_orcid=False, registration_url=registration_url))
     return methods
-
-
-_GONE = {"deprecated": True, "status_code": 410, "responses": REMOVED_RESPONSE}
-
-
-@router.get("/auth/login", **_GONE)
-@router.get("/auth/callback", **_GONE)
-@router.get("/auth/apikey", **_GONE)
-@router.post("/auth/apikey/regenerate", **_GONE)
-@router.get("/login", **_GONE)
-@router.get("/auth", **_GONE)
-@router.get("/user_apikey", **_GONE)
-def removed_browser_key_flow():
-    """Removed: the browser pages that signed in with ORCID and handed out a single API key."""
-    removed(BROWSER_KEY_FLOW_REMOVED)

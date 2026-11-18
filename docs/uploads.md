@@ -32,7 +32,7 @@ All routes accept an API key or an access token in `Authorization: Bearer <crede
 
 Session states are `uploading`, `completed`, `aborted`, `failed` and `expired`. `initiating` and `finalizing` are transient states held while an initiate or complete request is in progress; a client that sees `finalizing` after a lost response retries completion.
 
-The routes `POST /datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart` and `/upload/complete` were removed in 4.0.0 and return 410 `route_removed`; the server no longer issues storage tokens.
+The routes `POST /datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart` and `/upload/complete` were removed in 4.0.0; the server no longer issues storage tokens.
 
 ## Sessions and filenames
 

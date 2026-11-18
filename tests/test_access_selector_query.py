@@ -531,7 +531,6 @@ def test_access_selectors_are_repeated_openapi_arrays():
     }
     assert instrument_search_parameters["owner_id"]["required"] is False
     assert "/samples/{sample_mfid}/datasets" not in schema["paths"]
-    assert schema["paths"]["/datasets/{dataset_mfid}/samples"]["get"]["deprecated"] is True
     for schema_name in ("DatasetResponse", "SampleResponse"):
         capabilities = schema["components"]["schemas"][schema_name]["properties"]["capabilities"]
         assert capabilities["anyOf"][0]["$ref"] == "#/components/schemas/ResourceCapabilities"

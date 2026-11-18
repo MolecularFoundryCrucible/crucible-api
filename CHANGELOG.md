@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
-- The Compose bundle runs Hub 1.8.0 instead of its pre-release 1.8.0-alpha.1.
+- When an identity provider refuses a sign-in's code exchange, the log names its error and description, with the code removed.
 
 ## [4.0.0] - 2026-11-17
 

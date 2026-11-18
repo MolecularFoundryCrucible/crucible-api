@@ -397,15 +397,6 @@ class AuthEvent(SQLModel, table=True):
     client_id: Optional[str] = Field(default=None, max_length=100)
 
 
-class ApiToken(SQLModel, table = True):
-    access_group_id: str= Field(default = None)
-    user_unique_id: str = Field(default = None, foreign_key = "user.orcid", index = True)
-    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
-    token: str = Field(default = None, primary_key = True, index = True)
-    token_created: str = Field(default_factory=get_utc_isoformat)
-    last_used_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-
-
 class ApiKey(SQLModel, table=True):
     """An API key, stored only as the SHA-256 of the key: keys are 256-bit random values, so a fast
     hash is enough, and the key itself cannot be read back. Expired and revoked keys are kept."""

@@ -71,7 +71,7 @@ def test_waiting_accounts_get_no_hub_tokens_or_api_key(db_engine, use_engine):
     from fastapi import HTTPException
     from fastapi.security import HTTPAuthorizationCredentials
 
-    from app.tables import ApiToken
+    from app.auth.api_keys import store_key
     from app.utils import auth_utils
 
     use_engine(db_engine)
@@ -81,7 +81,7 @@ def test_waiting_accounts_get_no_hub_tokens_or_api_key(db_engine, use_engine):
     with pytest.raises(InvalidGrant):
         issue_tokens(db_engine, user.id, "crucible-hub")
     with Session(db_engine) as session:
-        session.add(ApiToken(token="planted", user_id=user.id, user_unique_id=unique_id, access_group_id=unique_id, token_created=datetime.now(timezone.utc).date().isoformat()))
+        store_key(session, user.id, "planted")
         session.commit()
     with pytest.raises(HTTPException) as caught:
         auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials="planted"))

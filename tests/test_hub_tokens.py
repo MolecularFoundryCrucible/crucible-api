@@ -17,7 +17,6 @@ from app.tables import (
     LoginThrottle,
     AccessGroup,
     ApiKey,
-    ApiToken,
     AuthEvent,
     AccessToken,
     LoginCode,
@@ -91,7 +90,7 @@ def engine():
     SQLModel.metadata.create_all(
         engine,
         tables=[
-            User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, ApiKey.__table__, AuthEvent.__table__,
+            User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__, ApiKey.__table__, AuthEvent.__table__,
             LoginThrottle.__table__, DeviceAuthorization.__table__, TokenFamily.__table__, RefreshToken.__table__, AccessToken.__table__,
             LoginTransaction.__table__, LoginCode.__table__, UserIdentity.__table__, PasswordToken.__table__,
         ],

@@ -14,7 +14,7 @@ from app import config
 from app.api.routes.browser_sign_in import require_client
 from app.auth.clients import registered_clients
 from app.tables import (
-    AccessGroup, ApiKey, ApiToken, AuthEvent, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User,
+    AccessGroup, ApiKey, AuthEvent, AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User,
     UserAccessGroupLink, UserIdentity,
 )
 from app.config import ConfigurationError, OidcProvider, check_settings, get_secret, get_settings
@@ -39,7 +39,7 @@ SECRETS = {"OAUTH_HUB_CLIENT_SECRET": "h" * 40, "OAUTH_NOTES_CLIENT_SECRET": "n"
 def db_engine(use_engine):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine, tables=[
-        User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, ApiKey.__table__, AuthEvent.__table__,
+        User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__, ApiKey.__table__, AuthEvent.__table__,
         TokenFamily.__table__, RefreshToken.__table__, AccessToken.__table__, LoginTransaction.__table__, LoginCode.__table__, UserIdentity.__table__,
     ])
     with Session(engine) as session:

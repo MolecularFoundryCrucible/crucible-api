@@ -60,7 +60,7 @@ from app.tables import (
     User, AccessGroup, UserAccessGroupLink, ResourceACL, Resource, Dataset,
     AssociatedFile, IngestionRequest, Project, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
-    DatasetLink, ApiToken, UploadSession, DeletionAuditLog, DatasetKeywordLink, Thumbnail,
+    DatasetLink, UploadSession, DeletionAuditLog, DatasetKeywordLink, Thumbnail,
     ResourceEmbedding, UserPreferences, UserRecentResource, PostprocessingRun, FileVersion, UserIdentity, AuthEvent, ApiKey, PasswordToken, LocalCredential, LoginCode, DeviceAuthorization,
 )
 from app.utils.auth_utils import authenticate_user
@@ -81,7 +81,7 @@ TEST_TABLES = [
     AssociatedFile.__table__, IngestionRequest.__table__, Project.__table__,
     Sample.__table__, DeletionRequest.__table__,
     Instrument.__table__, AccessGroupJoinRequest.__table__, DatasetSampleLink.__table__,
-    SampleLink.__table__, DatasetLink.__table__, ApiToken.__table__, UploadSession.__table__,
+    SampleLink.__table__, DatasetLink.__table__, UploadSession.__table__,
     DeletionAuditLog.__table__, DatasetKeywordLink.__table__, Thumbnail.__table__,
     ResourceEmbedding.__table__, UserPreferences.__table__, UserRecentResource.__table__, UserIdentity.__table__, AuthEvent.__table__, ApiKey.__table__,
     PostprocessingRun.__table__, FileVersion.__table__, PasswordToken.__table__, LocalCredential.__table__,

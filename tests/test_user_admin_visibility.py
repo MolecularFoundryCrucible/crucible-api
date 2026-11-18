@@ -3,7 +3,7 @@ import pytest
 import sqlalchemy
 from sqlmodel import Session, select
 
-from app.tables import ApiToken, Project, User
+from app.tables import ApiKey, Project, User
 from app.models.query_params import UserListQuery
 from app.utils.permissions import PlatformRole
 from tests.people import internal_id, add_old_style_key
@@ -634,10 +634,8 @@ def test_delete_apikey_revokes_tokens(client, db_engine, auth_as):
     assert response.status_code == 204, response.text
 
     with Session(db_engine) as session:
-        remaining = session.exec(
-            select(ApiToken).where(ApiToken.user_unique_id == PERSON)
-        ).all()
-        assert remaining == []
+        person = session.exec(select(User.id).where(User.unique_id == PERSON)).one()
+        assert session.exec(select(ApiKey).where(ApiKey.user_id == person, ApiKey.revoked_at == None)).all() == []  # noqa: E711
 
 
 def test_delete_apikey_works_for_service_accounts(client, db_engine, auth_as):

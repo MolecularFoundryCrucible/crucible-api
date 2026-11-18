@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Needs migration `b0e044b67c87`: API keys still held only in plain text are copied into the hashed key table, and the plain-text `apitoken` table is dropped; a rollback to 3.3.1 then has no API keys.
+- API key items no longer have `older_routes`.
+
+### Removed
+
+- `python -m app.cli api-keys import`: the migration copies the keys.
+
 ### Changed
 
 - New MFIDs follow the final UUIDv7 standard (mfid 2.0), so they sort before MFIDs created earlier; MFIDs are tie-breakers only, never a creation order.

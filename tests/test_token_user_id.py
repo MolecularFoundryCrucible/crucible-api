@@ -14,7 +14,7 @@ from sqlmodel import Session, SQLModel, select
 import app.utils.auth_utils as auth_utils
 from app.auth.api_keys import newest_key, status_of
 from app.auth.api_keys import create_key
-from app.tables import ApiKey, ApiToken, AccessToken, LoginCode, RefreshToken, TokenFamily, User
+from app.tables import ApiKey, AccessToken, LoginCode, RefreshToken, TokenFamily, User
 from app.auth.tokens import access_token_family, issue_tokens, refresh_tokens, revoke_all_tokens
 
 ORCID = "0000-0002-1825-0097"
@@ -70,15 +70,6 @@ def test_revoking_hub_sessions_by_internal_id_after_unique_id_changes(db_engine,
     with Session(db_engine) as session:
         with pytest.raises(Exception):
             access_token_family(session, pair.access_token)
-
-
-def test_a_key_with_no_owner_signs_nobody_in(db_engine, use_engine):
-    use_engine(db_engine)
-    with Session(db_engine) as session, session.begin():
-        session.add(ApiToken(token="orphan", access_group_id="g", user_unique_id="nobody", token_created=datetime.now(timezone.utc).date().isoformat()))
-    with pytest.raises(Exception) as caught:
-        authorize("orphan")
-    assert caught.value.status_code == 401
 
 
 @pytest.mark.skipif(not os.getenv("CRUCIBLE_TEST_PG_URL"), reason="requires isolated test PostgreSQL")

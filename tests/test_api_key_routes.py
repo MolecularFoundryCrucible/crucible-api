@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlmodel import Session, select
 
 from app.auth.api_keys import MAX_ACTIVE_KEYS, store_key
-from app.tables import ApiKey, ApiToken, User
+from app.tables import ApiKey, User
 from app.utils import auth_utils
 from app.utils.permissions import PlatformRole
 
@@ -55,9 +55,7 @@ def test_created_key_is_shown_once_with_its_prefix_and_works(client, auth_as, pe
     assert authorize(body["api_key"]).user_id == ADA
     listed = client.get("/account/apikeys").json()["items"]
     assert [(item["id"], item["last4"]) for item in listed] == [(body["id"], body["last4"])]
-    assert body["api_key"] not in str(listed)
-    with Session(people) as session:
-        assert session.exec(select(ApiToken)).all() == []
+    assert body["api_key"] not in str(listed) and "older_routes" not in listed[0]
 
 
 def test_api_key_cannot_create_a_key_and_a_stale_session_signs_in_again(client, auth_as, people):
@@ -120,26 +118,6 @@ def test_expired_key_is_refused_like_an_unknown_one(people):
     assert messages[0] == messages[1] == (401, "Invalid or expired API key.")
 
 
-def test_an_older_key_works_once_imported_and_is_listed_for_revoking(client, auth_as, people):
-    from app.auth.api_keys import import_plain_keys
-
-    plain_key_only(people, ADA, "a" * 64, datetime.now(timezone.utc).date().isoformat())
-    with pytest.raises(HTTPException):
-        authorize("a" * 64)
-    with Session(people) as session:
-        import_plain_keys(session, commit=True)
-        session.commit()
-    assert authorize("a" * 64).user_id == ADA
-    auth_as(ADA)
-    [listed] = client.get("/account/apikeys").json()["items"]
-    assert (listed["name"], listed["last4"], listed["older_routes"]) == ("Default key", "aaaa", False)
-    assert client.delete(f"/account/apikeys/{listed['id']}").status_code == 204
-    with pytest.raises(HTTPException):
-        authorize("a" * 64)
-    with Session(people) as session:
-        assert session.exec(select(ApiToken)).all() == []
-
-
 def test_last_use_is_recorded_on_the_hashed_key(people):
     from app.services import activity
 
@@ -170,20 +148,7 @@ def test_post_users_creates_no_key(client, auth_as, people):
     response = client.post("/users", json={"user_info": {"first_name": "New", "last_name": "Person", "username": "newcomer"}})
     assert response.status_code == 200, response.text
     with Session(people) as session:
-        assert session.exec(select(ApiKey)).all() == [] and session.exec(select(ApiToken)).all() == []
-
-
-def plain_key_only(engine, unique_id, token, created):
-    with Session(engine) as session:
-        session.add(ApiToken(token=token, user_id=user_id(engine, unique_id), user_unique_id=unique_id, access_group_id=unique_id, token_created=created))
-        session.commit()
-
-
-def test_status_ignores_a_plain_key_not_yet_imported(client, auth_as, people):
-    plain_key_only(people, ADA, "p" * 64, datetime.now(timezone.utc).date().isoformat())
-    client.headers["Crucible-Privilege-Mode"] = "elevated"
-    as_hub(auth_as, ADMIN, role=PlatformRole.ADMIN)
-    assert client.get(f"/users/{ADA}").json()["api_key_status"] is None
+        assert session.exec(select(ApiKey)).all() == []
 
 
 def test_status_prefers_a_working_key_over_a_newer_expired_one(client, auth_as, people):
@@ -230,7 +195,7 @@ def test_keys_can_be_renamed(client, auth_as, people):
     named = create(client).json()
     auth_as(ADA)
     renamed = client.patch(f"/account/apikeys/{named['id']}", json={"name": "old scripts"}).json()
-    assert (renamed["name"], renamed["older_routes"]) == ("old scripts", False)
+    assert renamed["name"] == "old scripts"
     auth_as(BOB)
     assert client.patch(f"/account/apikeys/{named['id']}", json={"name": "mine now"}).status_code == 404
 

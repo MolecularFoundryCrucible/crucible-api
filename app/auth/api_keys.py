@@ -1,15 +1,12 @@
-"""API keys stored as hashes. Several per person, each shown once. Keys from before 4.0, kept in plain
-text in `apitoken`, are copied here by `python -m app.cli api-keys import`; nothing else reads that
-table. Until a later release drops it, revoking a key also deletes its plain row, so a rollback to
-3.3.1 cannot bring a revoked key back."""
+"""API keys stored as hashes. Several per person, each shown once."""
 import hashlib
 import secrets
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
-from sqlalchemy import delete, or_, update
+from sqlalchemy import or_, update
 from sqlmodel import Session, select
 
-from app.tables import ApiKey, ApiToken, User
+from app.tables import ApiKey, User
 from app.auth.common import as_utc, now_or
 
 KEY_LIFETIME = timedelta(days=365)
@@ -24,19 +21,6 @@ class TooManyKeys(Exception):
 
 def key_hash(presented: str) -> str:
     return hashlib.sha256(presented.encode("utf-8")).hexdigest()
-
-
-def created_at_of(token_created: str | None) -> datetime | None:
-    """`apitoken.token_created` holds either a date (`YYYY-MM-DD`) or an ISO timestamp."""
-    if not token_created:
-        return None
-    try:
-        if len(token_created) == 10:
-            return datetime.combine(date.fromisoformat(token_created), datetime.min.time(), tzinfo=timezone.utc)
-        moment = datetime.fromisoformat(token_created.replace("Z", "+00:00"))
-        return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
 
 
 def store_key(session: Session, user_id: int, key: str, *, created_at: datetime | None = None, name: str | None = None, expires_at: datetime | None = None) -> ApiKey:
@@ -57,26 +41,6 @@ def status_of(row: ApiKey, now: datetime | None = None) -> str:
 def active(now: datetime | None = None):
     """SQL test for keys that are neither revoked nor expired."""
     return (ApiKey.revoked_at == None) & or_(ApiKey.expires_at == None, ApiKey.expires_at > now_or(now))  # noqa: E711
-
-
-def import_plain_keys(session: Session, *, commit: bool = False) -> dict[str, int]:
-    """Copy every plain key not yet stored here, keeping its creation date and last use. Reports
-    what it copied or would copy, and the rows it cannot copy (no user, or an unreadable date)."""
-    known = set(session.exec(select(ApiKey.key_hash)).all())
-    counts = {"copied" if commit else "to_copy": 0, "already_copied": 0, "skipped": 0}
-    for token in session.exec(select(ApiToken)).all():
-        digest = key_hash(token.token)
-        created = created_at_of(token.token_created)
-        if digest in known:
-            counts["already_copied"] += 1
-        elif token.user_id is None or created is None:
-            counts["skipped"] += 1
-        else:
-            counts["copied" if commit else "to_copy"] += 1
-            if commit:
-                store_key(session, token.user_id, token.token, created_at=created, name=DEFAULT_KEY_NAME).last_used_at = token.last_used_at
-            known.add(digest)
-    return counts
 
 
 def find_api_key(session: Session, presented: str) -> ApiKey | None:
@@ -128,17 +92,12 @@ def revoke_key(session: Session, row: ApiKey, *, actor: User | None, now: dateti
     if row.revoked_at is None:
         row.revoked_at = now_or(now)
         session.add(row)
-    for token in session.exec(select(ApiToken).where(ApiToken.user_id == row.user_id)).all():
-        if key_hash(token.token) == row.key_hash:
-            session.delete(token)
     record_event(session, AuthEventType.API_KEY_REVOKED, user=session.get(User, row.user_id), actor=actor)
 
 
 def revoke_user_keys(session: Session, user_id: int, *, now: datetime | None = None) -> None:
-    """Mark every active key of this person revoked and delete their plain rows, in the caller's
-    transaction. The hashed rows stay."""
+    """Mark every active key of this person revoked, in the caller's transaction. The rows stay."""
     session.execute(update(ApiKey).where(ApiKey.user_id == user_id, ApiKey.revoked_at == None).values(revoked_at=now_or(now)))  # noqa: E711
-    session.execute(delete(ApiToken).where(ApiToken.user_id == user_id))
 
 
 def replace_keys(session: Session, user: User, *, now: datetime | None = None) -> str:

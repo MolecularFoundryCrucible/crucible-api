@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.cli.__main__ import main
 from app.auth.api_keys import key_hash
-from app.tables import AccessGroup, ApiKey, ApiToken, User, UserAccessGroupLink
+from app.tables import AccessGroup, ApiKey, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 
@@ -34,7 +34,6 @@ def test_create_admin_creates_user_group_and_key(db_engine, capsys):
         link = session.exec(select(UserAccessGroupLink).where(UserAccessGroupLink.accessgroup_id == group.id)).one()
         assert (link.user_id, link.role) == (user.id, Role.OWNER.db_value)
         assert [key.key_hash for key in session.exec(select(ApiKey).where(ApiKey.user_id == user.id)).all()] == [key_hash(output["api_key"])]
-        assert session.exec(select(ApiToken)).all() == []
 
 
 def test_orcid_becomes_the_identifier(db_engine, capsys):

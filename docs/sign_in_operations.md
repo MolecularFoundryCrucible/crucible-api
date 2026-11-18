@@ -114,7 +114,6 @@ Run as `python -m app.cli <command>`. Commands that change data report the plann
 | `auth end-sessions --user REF` or `--all` | End sessions, for example during incident response |
 | `auth revoke-passwords` | Remove every password and end the associated sessions |
 | `auth rewrite-issuer` | Move identities to a provider's new issuer |
-| `api-keys import` | Copy API keys from before 4.0.0 into the hashed key table; until then they do not authenticate |
 | `identity backfill` | Record an identity for each user created before 4.0.0 |
 | `identity move` | Move an identity off an empty duplicate account |
 

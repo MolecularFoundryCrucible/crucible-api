@@ -38,10 +38,12 @@ def user_id_or_none(session: Session, unique_id) -> int | None:
 
 
 def add_old_style_key(session: Session, user_id, token: str, token_created: str, **fields):
-    """A key as both tables hold it after the backfill: plain in apitoken, hashed in api_key."""
-    from app.auth.api_keys import created_at_of, store_key
-    from app.tables import ApiToken
+    """A key from before 4.0, as the migration copied it into api_key."""
+    from datetime import date, datetime, time, timezone
 
-    owner = session.get(User, user_id)
-    session.add(ApiToken(token=token, user_id=user_id, user_unique_id=owner.unique_id, access_group_id=owner.unique_id, token_created=token_created, **fields))
-    return store_key(session, user_id, token, created_at=created_at_of(token_created))
+    from app.auth.api_keys import store_key
+
+    row = store_key(session, user_id, token, created_at=datetime.combine(date.fromisoformat(token_created[:10]), time.min, tzinfo=timezone.utc), name="Default key")
+    for name, value in fields.items():
+        setattr(row, name, value)
+    return row

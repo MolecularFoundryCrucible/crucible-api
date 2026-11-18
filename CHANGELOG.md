@@ -6,9 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-11-17
+
 ### Fixed
 
 - Device sign-in works in Chrome: the code form's security policy lists the identity providers, since Chrome checks it on every redirect after the form is submitted.
+
+### Changed
+
+- When an identity provider refuses a sign-in's code exchange, the log names its error and description, with the code removed.
+- The Compose bundle runs Hub 1.8.0 instead of its pre-release 1.8.0-alpha.1.
 
 ## [4.0.0] - 2026-11-17
 

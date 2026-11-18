@@ -35,6 +35,10 @@ The response:
 | Maximum session lifetime | 30 days | 90 days |
 | Authorization code lifetime | 1 minute | 5 minutes |
 
+### When the browser cannot reach the program
+
+A public client running on the user's computer normally uses a loopback `redirect_uri` (`http://127.0.0.1:<port>/callback`, any port). That fails when the browser cannot reach the program: Chrome's local network restrictions, a program in WSL or a container, or one on a remote machine over SSH. For those cases, every public client may instead use `redirect_uri=<API>/oauth/code`. Sign-in then ends on a page of the API that shows the code; the user copies it into the program, which exchanges it at `POST /oauth/token` with the same `redirect_uri` and its `code_verifier`. The code is useless without that verifier and expires after 5 minutes. A program can wait on its loopback address first and offer to paste the code when nothing arrives.
+
 ## Session lifecycle
 
 - **Refresh** before the access token expires: `POST /oauth/token` with `grant_type=refresh_token` and `refresh_token`. Refresh tokens are rotated: every refresh returns a new refresh token, which replaces the previous one.

@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [4.0.1] - 2026-11-17
 
+### Added
+
+- `GET /oauth/code` shows a sign-in code to copy into a program; every public client may use it as `redirect_uri` when the browser cannot reach the program on its computer (Chrome's local network rules, WSL, SSH).
+
 ### Fixed
 
 - Device sign-in works in Chrome: the code form's security policy lists the identity providers, since Chrome checks it on every redirect after the form is submitted.

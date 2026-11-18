@@ -345,3 +345,35 @@ def test_a_sign_in_request_without_a_redirect_is_refused_not_redirected(client):
     params = {"response_type": "code", "client_id": "crucible-hub", "state": "client-state-123456789", "code_challenge": CHALLENGE, "code_challenge_method": "S256"}
     answer = client.get("/oauth/authorize", params=params, follow_redirects=False)
     assert answer.status_code == 400 and "location" not in answer.headers
+
+
+def test_a_public_client_can_end_on_the_code_page_and_redeem_the_pasted_code(client, db_engine, monkeypatch):
+    import html
+    import json
+
+    code_page = f"{API_URL}/oauth/code"
+    for name in ("HUB_AUTH_ENABLED", "HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_CALLBACK_URI"):
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("CRUCIBLE_AUTH_CLIENTS", json.dumps([
+        {"key": "hub", "client_id": "crucible-hub", "display_name": "Crucible Hub", "type": "confidential", "redirect_uris": [CALLBACK]},
+        {"key": "nanocrucible", "client_id": "nano-crucible", "display_name": "nano-crucible", "type": "public", "redirect_uris": ["http://127.0.0.1/callback"]},
+    ]))
+    monkeypatch.setenv("OAUTH_HUB_CLIENT_SECRET", SECRET)
+    config.get_settings.cache_clear()
+    person(db_engine)
+    refused = client.get("/oauth/authorize", params={"response_type": "code", "client_id": "crucible-hub", "redirect_uri": code_page, "state": "client-state-123456789", "code_challenge": CHALLENGE, "code_challenge_method": "S256"}, follow_redirects=False)
+    assert refused.status_code == 400
+    state = start(client, client_id="nano-crucible", redirect_uri=code_page)
+    confirm = submit(client, state)
+    assert "a code shown on this site" in confirm.text
+    allow = next(html.unescape(href) for href in re.findall(r'href="([^"]+)"', confirm.text) if "code=" in html.unescape(href))
+    assert allow.startswith(code_page + "?")
+    shown = client.get(allow.removeprefix(API_URL))
+    code = parse_qs(urlparse(allow).query)["code"][0]
+    assert shown.status_code == 200 and code in shown.text and "Your sign-in code" in shown.text
+    assert "form-action 'none'" in shown.headers["content-security-policy"] and shown.headers["cache-control"] == "no-store" and shown.headers["referrer-policy"] == "no-referrer"
+    tokens = client.post("/oauth/token", data={"grant_type": "authorization_code", "client_id": "nano-crucible", "code": code, "code_verifier": VERIFIER, "redirect_uri": code_page})
+    assert tokens.status_code == 200, tokens.text
+    assert client.post("/oauth/token", data={"grant_type": "authorization_code", "client_id": "nano-crucible", "code": code, "code_verifier": "x" * 43, "redirect_uri": code_page}).status_code == 400
+    cancelled = client.get("/oauth/code", params={"error": "access_denied"})
+    assert cancelled.status_code == 200 and "Sign-in not completed" in cancelled.text

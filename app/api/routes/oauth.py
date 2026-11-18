@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from app.api.dependencies import get_engine
 from app.auth.clients import ClientUnavailable, sign_in_enabled
@@ -19,6 +19,27 @@ def public_uri(path: str) -> str:
         return f"{public_api_url()}{path}"
     except SignInUnavailable:
         raise HTTPException(status_code=503, detail="Sign-in is unavailable") from None
+
+
+@router.get("/code", response_class=HTMLResponse, responses={200: {"description": "The sign-in code to copy, or why there is none", "content": {"text/html": {}}}})
+def show_sign_in_code(
+    request: Request,
+    code: str | None = Query(default=None, max_length=128),
+    error: str | None = Query(default=None, max_length=64),
+) -> Response:
+    """Where a public client's sign-in ends when it asked for `redirect_uri` set to this page, because
+    the browser cannot reach the program on its computer (Chrome's local network rules, WSL, SSH).
+    The person copies the code into the program, which redeems it with its PKCE verifier; without
+    that verifier the code is useless."""
+    import secrets
+
+    from app.api.routes.browser_sign_in import _browser_headers, _templates
+
+    nonce = secrets.token_urlsafe(16)
+    response = _templates.TemplateResponse(request, "sign_in_code.html", {"style_nonce": nonce, "code": code, "error": error})
+    response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    response.headers["X-Frame-Options"] = "DENY"
+    return _browser_headers(response)
 
 
 class RepeatedParameter(Exception):

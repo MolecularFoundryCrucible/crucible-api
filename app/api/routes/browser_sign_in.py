@@ -132,14 +132,15 @@ def _deliver(request: Request, client_id: str, destination: str, callback_uri: s
     (RFC 8252 8.6). The code stays in the page until they choose Allow."""
     from urllib.parse import urlsplit
 
-    from app.auth.clients import client_by_id
+    from app.auth.clients import client_by_id, code_page_url
 
     client = client_by_id(client_id)
     if client is None or not client.is_public:
         return _browser_headers(RedirectResponse(destination, status_code=status))
     nonce = secrets.token_urlsafe(16)
     response = _templates.TemplateResponse(request, "confirm_program.html", {
-        "style_nonce": nonce, "client_name": client.display_name, "where": urlsplit(callback_uri).netloc,
+        "style_nonce": nonce, "client_name": client.display_name,
+        "where": "a code shown on this site, to copy into the program" if callback_uri == code_page_url() else urlsplit(callback_uri).netloc,
         "allow": destination, "deny": error_destination(callback_uri, hub_state, "access_denied"),
     })
     response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"

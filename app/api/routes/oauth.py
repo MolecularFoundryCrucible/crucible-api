@@ -35,11 +35,32 @@ def show_sign_in_code(
 
     from app.api.routes.browser_sign_in import _browser_headers, _templates
 
-    nonce = secrets.token_urlsafe(16)
-    response = _templates.TemplateResponse(request, "sign_in_code.html", {"style_nonce": nonce, "code": code, "error": error})
-    response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    style_nonce, script_nonce = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
+    response = _templates.TemplateResponse(request, "sign_in_code.html", {
+        "style_nonce": style_nonce, "script_nonce": script_nonce, "code": code, "error": error, "program": _program_name(code),
+    })
+    response.headers["Content-Security-Policy"] = (
+        f"default-src 'none'; style-src 'nonce-{style_nonce}'; script-src 'nonce-{script_nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
     response.headers["X-Frame-Options"] = "DENY"
     return _browser_headers(response)
+
+
+def _program_name(code: str | None) -> str:
+    """The name of the program a sign-in code was issued to, for the page that shows it."""
+    from sqlmodel import Session
+
+    from app.api.dependencies import get_engine
+    from app.auth.clients import client_by_id
+    from app.auth.common import sha256_hex
+    from app.tables import LoginCode
+
+    if not code:
+        return "your program"
+    with Session(get_engine()) as session:
+        grant = session.get(LoginCode, sha256_hex(code))
+    client = client_by_id(grant.client_id) if grant is not None else None
+    return client.display_name if client is not None else "your program"
 
 
 class RepeatedParameter(Exception):

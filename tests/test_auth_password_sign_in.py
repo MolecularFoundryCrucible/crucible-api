@@ -370,8 +370,12 @@ def test_a_public_client_can_end_on_the_code_page_and_redeem_the_pasted_code(cli
     assert allow.startswith(code_page + "?")
     shown = client.get(allow.removeprefix(API_URL))
     code = parse_qs(urlparse(allow).query)["code"][0]
-    assert shown.status_code == 200 and code in shown.text and "Your sign-in code" in shown.text
-    assert "form-action 'none'" in shown.headers["content-security-policy"] and shown.headers["cache-control"] == "no-store" and shown.headers["referrer-policy"] == "no-referrer"
+    assert shown.status_code == 200 and code in shown.text and "Copy this code to nano-crucible" in shown.text and 'id="copy-code"' in shown.text
+    csp = shown.headers["content-security-policy"]
+    script_nonce = re.search(r"script-src 'nonce-([^']+)'", csp).group(1)
+    assert f'<script nonce="{script_nonce}">' in shown.text and "form-action 'none'" in csp and "unsafe-inline" not in csp
+    assert shown.headers["cache-control"] == "no-store" and shown.headers["referrer-policy"] == "no-referrer"
+    assert "Copy this code to your program" in client.get("/oauth/code", params={"code": "not-a-code"}).text
     tokens = client.post("/oauth/token", data={"grant_type": "authorization_code", "client_id": "nano-crucible", "code": code, "code_verifier": VERIFIER, "redirect_uri": code_page})
     assert tokens.status_code == 200, tokens.text
     assert client.post("/oauth/token", data={"grant_type": "authorization_code", "client_id": "nano-crucible", "code": code, "code_verifier": "x" * 43, "redirect_uri": code_page}).status_code == 400

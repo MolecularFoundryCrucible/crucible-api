@@ -3,6 +3,7 @@ from typing import Any, Optional, List
 from pydantic import ConfigDict
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Boolean, Column, CheckConstraint, UniqueConstraint, BigInteger, DateTime, ForeignKey, Integer, false, func, Index, text, Text, String
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel, Relationship
 from mfid import mfid
@@ -245,10 +246,18 @@ class UserAccessGroupLink(SQLModel, table=True):
     role: str
 
 
+# The column is the Postgres enum access_group_type. Declared as such so that a flush inserting several
+# groups casts each value to the enum; as plain VARCHAR, Postgres refuses the batched insert.
+ACCESS_GROUP_TYPE = String().with_variant(
+    postgresql.ENUM("identity", "project", "instrument", "custom", "system", "instrument_member", name="access_group_type"),
+    "postgresql",
+)
+
+
 class AccessGroup(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     group_name: str = Field(index=True, unique=True)
-    group_type: str = Field(default="custom", index=True)
+    group_type: str = Field(default="custom", index=True, sa_type=ACCESS_GROUP_TYPE)
     users: List["User"] = Relationship(back_populates="accessgroups", link_model=UserAccessGroupLink)
     acl: List["ResourceACL"] = Relationship(back_populates="accessgroup")
 

@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Creating an instrument answered 500 on PostgreSQL: the instrument's two access groups are inserted together, and the group type now binds as the database enum.
 - Device sign-in works in Chrome: the code form's security policy lists the identity providers, since Chrome checks it on every redirect after the form is submitted.
 
 ### Changed

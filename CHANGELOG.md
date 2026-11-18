@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Needs migration `b0e044b67c87`: API keys still held only in plain text are copied into the hashed key table, and the plain-text `apitoken` table is dropped; a rollback to 3.3.1 then has no API keys.
 - API key items no longer have `older_routes`.
+- The routes deprecated in 4.0.0 are removed, except `POST /users/resolve` and `/auth/hub/*`: `GET /account/join_requests`, `POST /access_groups/{group_name}/join`, `GET /users/{user_ref}/apikey/verify`, the four postprocessing aliases, `GET` and `POST /resources/{mfid}/access_groups`, and `POST` and `DELETE /users/{user_ref}/access_groups/{group_name}`.
 - The 19 routes removed in 4.0.0, which answered 410 `route_removed`, are gone and answer 404.
 
 ### Removed

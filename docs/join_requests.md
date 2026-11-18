@@ -84,9 +84,7 @@ When a user is added to a project by any other route (direct add, proposal sync,
 
 ## Deprecated routes and fields
 
-These remain served in 4.0.0 with the behavior and response described above:
+These remain served, with the behavior described above:
 
-- `POST /access_groups/{group_name}/join`, where `group_name` is a project slug or MFID: use `POST /projects/{project_ref}/join_requests`. Returns 200 instead of 201.
-- `GET /account/join_requests` (parameters `status`, `limit`, `offset`): use `GET /join_requests?scope=submitted`.
 - The `group_name` query parameter of `GET /join_requests` and `GET /join_requests/facets`, a project slug or MFID: use `project_mfid`.
 - The `group_name` response field, the project slug (or the MFID when the project no longer exists): use `project.project_id`.

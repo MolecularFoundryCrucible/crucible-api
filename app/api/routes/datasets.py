@@ -17,7 +17,7 @@ from app.services.resource_access import record_roles
 from app.services.instrument_members import grant_dataset as grant_instrument_members, revoke_dataset as revoke_instrument_members
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
-from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, feature_disabled_response
+from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
 from app.general_utils import get_utc_datetime
 from app.tables import (
     AccessGroup,
@@ -81,8 +81,6 @@ from app.utils.instrument_utils import (
     resolve_instrument_mfids_to_references,
 )
 from app.utils.link_utils import reject_lineage_cycle, reject_self_link, require_link_create_permissions
-from app.api.routes.pipelines import start_postprocessing_run
-from app.models.pipelines import PostprocessingRunRead
 from app.utils.search_utils import (
     apply_trigram_search,
     configure_trigram_search,
@@ -121,30 +119,6 @@ def _normalize_thumbnail_input(dsid: str, thumbnail_b64str: str) -> str:
     except Exception as exc:
         logger.exception("Unexpected thumbnail processing failure for dataset %s", dsid)
         raise HTTPException(status_code=500, detail="Unable to process thumbnail image") from exc
-
-
-@router.post("/datasets/{dataset_mfid}/carrier_segmentation", response_model=PostprocessingRunRead, deprecated=True, responses=feature_disabled_response("ingestion"))
-def request_carrier_segmentation(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "carrier_segmentation".'''
-    return start_postprocessing_run(auth_res, dsid, "carrier_segmentation", {})
-
-
-@router.post("/datasets/{dataset_mfid}/insitu_spec_aggregation", response_model=PostprocessingRunRead, deprecated=True, responses=feature_disabled_response("ingestion"))
-def request_insitu_aggregation(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "insitu_aggregation".'''
-    return start_postprocessing_run(auth_res, dsid, "insitu_aggregation", {})
-
-
-@router.post("/datasets/{dataset_mfid}/rga_analysis", response_model=PostprocessingRunRead, deprecated=True, responses=feature_disabled_response("ingestion"))
-def request_rga_analysis(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "rga_analysis".'''
-    return start_postprocessing_run(auth_res, dsid, "rga_analysis", {})
-
-
-@router.post("/datasets/{dataset_mfid}/mosaic_stitch", response_model=PostprocessingRunRead, deprecated=True, responses=feature_disabled_response("ingestion"))
-def request_mosaic_stitch(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "mosaic_stitch".'''
-    return start_postprocessing_run(auth_res, dsid, "mosaic_stitch", {})
 
 
 @router.post("/datasets", response_model=DatasetResponse)
@@ -979,8 +953,6 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-
-
 @router.delete('/datasets/{dataset_mfid}/samples/{sample_mfid}', response_model=MessageResponse)
 def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, sample_id: SampleMfid):
 
@@ -1016,7 +988,6 @@ def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)
         touch_resource_modification_time(session, sample_id)
         session.commit()
         return {"message": f"Successfully unlinked dataset {dsid} and sample {sample_id}"}
-
 
 
 def _thumbnail_read(thumbnail: Thumbnail, dataset_mfid: str) -> ThumbnailRead:

@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from sqlalchemy import desc, false, func, join, or_, text, Text, true
+from sqlalchemy import desc, false, func, or_, text, Text, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import attributes, selectinload
 from sqlalchemy.sql import and_, exists
@@ -22,8 +22,7 @@ from app.tables import (
     ScientificMetadataBinary, User, UserAccessGroupLink,
 )
 from app.models.ai import ChunkHit, ChunkSearchRequest, ResourceEmbeddingRead
-from app.models.access import AccessGrantRead, AccessGrantWrite, ResourceAccessGroupRead
-from app.models.access_groups import AccessGroupRead
+from app.models.access import AccessGrantRead, AccessGrantWrite
 from app.models.datasets import DatasetResponse, ScientificMetadataBinaryRead
 from app.models.deletion import DeletionRequestCapabilities, DeletionRequestRead
 from app.utils.deletion_utils import deletion_preview_read, deletion_summary
@@ -43,17 +42,7 @@ from app.models.query_params import (
 from app.models.response_schemas import DetailResponse
 from app.services.resource_access import access_grant_read, access_grant_reads, may_view_members, with_grant_capabilities
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
-from app.utils.auth_utils import (
-    authorize_user,
-    caller_row,
-    fetch_acl_rows,
-    permission_filter,
-    project_member_filter,
-    require_grant,
-    require_permission,
-    require_platform_admin,
-    resource_affiliation_filter,
-)
+from app.utils.auth_utils import authorize_user, caller_row, fetch_acl_rows, permission_filter, project_member_filter, require_grant, require_permission, resource_affiliation_filter
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME,
     AccessGroupType,
@@ -729,54 +718,6 @@ def _set_resource_access_grant(
     session.add(existing)
     touch_resource_modification_time(session, mfid)
     return existing
-
-
-@router.get(
-    "/resources/{mfid}/access_groups",
-    response_model=List[AccessGroupRead],
-    deprecated=True,
-)
-def read_resource_acl(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    require_platform_admin(auth_res)
-    with Session(get_engine()) as session:
-        # Verify resource exists
-        resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
-
-        if resource is None:
-            raise HTTPException(status_code=404, detail="Resource not found")
-
-        cmd = select(AccessGroup).select_from(
-            join(AccessGroup,
-                 join(ResourceACL, Resource, ResourceACL.mfid == Resource.mfid),
-                 AccessGroup.id == ResourceACL.accessgroup_id)
-        ).where(Resource.mfid == mfid)
-        acl = session.exec(cmd).all()
-
-        return acl
-
-
-@router.post(
-    "/resources/{mfid}/access_groups",
-    response_model=ResourceAccessGroupRead,
-    deprecated=True,
-)
-def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    require_platform_admin(auth_res)
-    if not read:
-        raise HTTPException(status_code=422, detail="read must be true; use the revoke route to remove access")
-    permission = Role.EDITOR if write else Role.VIEWER
-    with Session(get_engine()) as session:
-        resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
-        if resource is None:
-            raise HTTPException(status_code=404, detail="Resource not found")
-        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
-        if ag is None:
-            raise HTTPException(status_code=404, detail="Access Group not found")
-        _guard_grant(session, resource, ag)
-        acl = _set_resource_access_grant(session, auth_res, mfid, ag, permission)
-        session.commit()
-        session.refresh(acl)
-    return acl
 
 
 # ---------------------------------------------------------------------------

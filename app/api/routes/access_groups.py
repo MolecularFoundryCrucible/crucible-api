@@ -4,10 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.api.routes.join_requests import create_join_request
 from app.tables import AccessGroup, Instrument, Project, User, UserAccessGroupLink
 from app.models.access_groups import AccessGroupCreate, AccessGroupMemberRead, AccessGroupRead
-from app.models.join_requests import JoinRequestCreate, JoinRequestRead
 from app.utils.auth_utils import authorize_user, require_platform_admin
 from app.utils.permissions import AccessGroupType, Principal
 
@@ -73,12 +71,3 @@ def list_access_group_users(auth_res: Annotated[Principal, Depends(authorize_use
         ]
 
 
-@router.post("/access_groups/{group_name}/join", response_model=JoinRequestRead, deprecated=True)
-def request_to_join_access_group(
-    group_name: str,
-    body: JoinRequestCreate,
-    auth_res: Annotated[Principal, Depends(authorize_user)],
-):
-    '''Deprecated: use POST /projects/{project_ref}/join_requests. group_name takes a project slug or MFID.'''
-    with Session(get_engine()) as session:
-        return create_join_request(session, auth_res, group_name, body.reason)

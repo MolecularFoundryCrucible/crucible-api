@@ -269,20 +269,10 @@ def test_facets(act, world):
     assert act(ALICE).get("/join_requests/facets", params={"field": "status", "scope": "reviewable"}).json()["items"] == []
 
 
-def test_deprecated_routes(act, world):
-    created = act(ALICE).post("/access_groups/films/join", json={"reason": "old client"})
-    assert created.status_code == 200, created.text
-    assert created.json()["group_name"] == "films"
-    mine = act(ALICE).get("/account/join_requests")
-    assert mine.status_code == 200, mine.text
-    assert [item["id"] for item in mine.json()["items"]] == [created.json()["id"]]
-    assert act(ALICE).get("/account/join_requests", params={"status": "approved"}).json()["items"] == []
-
-
 def test_requests_for_a_missing_project_still_list(act, world, db_engine):
     request_id = ask(act, ALICE)["id"]
     with Session(db_engine) as session:
         session.delete(session.exec(select(Project).where(Project.project_id == "films")).one())
         session.commit()
-    item = act(ALICE).get("/account/join_requests").json()["items"][0]
+    item = act(ALICE).get("/join_requests", params={"scope": "submitted"}).json()["items"][0]
     assert (item["id"], item["project"], item["project_mfid"], item["group_name"]) == (request_id, None, world["films"][1], world["films"][1])

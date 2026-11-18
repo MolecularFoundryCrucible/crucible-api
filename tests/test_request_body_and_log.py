@@ -147,8 +147,8 @@ def test_large_ascii_bodies_are_scanned_quickly():
 def test_request_log_names_the_client_of_a_deprecated_route(client, auth_as, caplog):
     auth_as("0000-0005-0000-0001")
     with caplog.at_level("INFO", logger="app.api.main"):
-        client.get("/account/join_requests", headers={"User-Agent": 'nano-crucible/3.2.1 "x" forged=1'})
-    line = next(line for line in _request_lines(caplog) if line.startswith("GET /account/join_requests "))
+        client.post("/users/resolve", json={"user_ids": []}, headers={"User-Agent": 'nano-crucible/3.2.1 "x" forged=1'})
+    line = next(line for line in _request_lines(caplog) if line.startswith("POST /users/resolve "))
     assert line.endswith(' credential=api_key user_agent="nano-crucible/3.2.1 \\"x\\" forged=1"')
 
 

@@ -240,19 +240,6 @@ class TestRefusedRoutes:
         assert client.delete(f"/resources/{mfid}/access/users/{EDITOR}").status_code == 409
         assert client.get(f"/resources/{mfid}/access").status_code == 200
 
-    def test_legacy_routes_refuse_instrument_groups(self, client, db_engine, auth_as):
-        mfid, dataset = _world(client, db_engine, auth_as)
-        with Session(db_engine) as session:
-            _user(session, "padmin-m")
-            session.exec(select(User).where(User.unique_id == "padmin-m")).one().platform_role = "admin"
-            session.commit()
-        _as(auth_as, db_engine, "padmin-m")
-        assert client.post(f"/users/{STRANGER}/access_groups/{mfid}:members").status_code == 409
-        assert client.delete(f"/users/{VIEWER}/access_groups/{mfid}:members").status_code == 409
-        resp = client.post(f"/resources/{dataset}/access_groups", params={"group_name": f"{mfid}:members", "read": True, "write": False})
-        assert resp.status_code == 409
-
-
 class TestDeletion:
     def test_deleting_the_instrument_removes_its_members_group(self, client, db_engine, auth_as):
         with Session(db_engine) as session:

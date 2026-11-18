@@ -14,10 +14,6 @@ from app.api.dependencies import get_engine
 from app.general_utils import get_utc_datetime, if_match_satisfied
 from app.tables import Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
 from app.models.preferences import MAX_DOCUMENT_BYTES, PREFERENCES_SCHEMA_VERSION, PreferencesDocument, PreferencesRead, RecentResourceRead, RecentResourceRecord, serialized_size
-from app.api.routes.join_requests import join_request_filters, list_join_requests_page
-from app.models.join_requests import JoinRequestRead, JoinRequestScope, JoinRequestSort, JoinRequestStatus
-from app.models.query_params import SortDirection
-from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import AccountInfo, ApiKeyVerify, ProjectSyncResult
 from app.models.users import (
     AccountAuthorizationRead,
@@ -142,21 +138,6 @@ def sync_account_projects(auth_res: Annotated[Principal, Depends(authorize_user)
         result = assign_discovered_projects(session, caller_row(session, auth_res), proposal_ids)
         session.commit()
     return ProjectSyncResult(orcid=orcid, **result)
-
-
-@router.get("/account/join_requests", response_model=PaginatedResponse[JoinRequestRead], deprecated=True)
-def get_account_join_requests(
-    auth_res: Annotated[Principal, Depends(authorize_user)],
-    status: Optional[JoinRequestStatus] = None,
-    limit: int = Query(default=100, ge=1, le=1000),
-    offset: int = Query(default=0, ge=0),
-):
-    """Deprecated: use GET /join_requests?scope=submitted."""
-    filters = join_request_filters(scope=JoinRequestScope.SUBMITTED, status=[status] if status else None, project_mfid=None,
-                                   group_name=None, requester_id=None, reviewer_id=None, requested_after=None,
-                                   requested_before=None, reviewed_after=None, reviewed_before=None, q=None)
-    with Session(get_engine()) as session:
-        return list_join_requests_page(session, auth_res, filters, JoinRequestSort.REQUEST_TIME, SortDirection.DESC, limit, None, offset)
 
 
 @router.get("/account/verify", response_model=ApiKeyVerify, responses={404: {"description": "A Hub session's account has no API key"}})

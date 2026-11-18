@@ -6,21 +6,21 @@ bound to this browser carries the PKCE verifier and a nonce that the sign-in sta
 must both match."""
 import secrets
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from itsdangerous import BadData, URLSafeTimedSerializer
 from sqlmodel import Session
 
-from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from app.api.dependencies import get_api_root_path, get_engine
 from app.api.routes.browser_sign_in import _browser_headers, _templates
 from app.auth.clients import client_by_id
 from app.auth.devices import INTERNAL_CLIENT_ID, decide, device_by_hash, pending_device, record_signed_in
 from app.auth.throttle import begin_code_attempt, client_address, give_back
-from app.config import get_secret
+from app.config import get_secret, get_settings
 from app.tables import User
 from app.auth.login_transactions import SignInUnavailable, public_api_url, redeem_approval_code
 from app.auth.tokens import InvalidGrant
@@ -43,10 +43,23 @@ def _cookie_path() -> str:
     return f"{get_api_root_path()}/oauth/device"
 
 
+def _form_targets() -> str:
+    """Where submitting the code form may lead. Chrome applies form-action to every redirect after the
+    submission, and entering a code redirects through /oauth/authorize to the identity provider, so
+    the providers' sites are listed beside this one."""
+    origins = []
+    for provider in get_settings().auth.providers:
+        parts = urlsplit(provider.issuer)
+        origin = f"{parts.scheme}://{parts.netloc}"
+        if origin not in origins:
+            origins.append(origin)
+    return " ".join(["'self'", *origins])
+
+
 def _page(request: Request, template: str, context: dict, status: int = 200, *, form: bool = False) -> Response:
     nonce = secrets.token_urlsafe(16)
     response = _templates.TemplateResponse(request, template, {**context, "style_nonce": nonce}, status_code=status)
-    targets = "'self'" if form else "'none'"
+    targets = _form_targets() if form else "'none'"
     response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action {targets}; frame-ancestors 'none'"
     response.headers["X-Frame-Options"] = "DENY"
     return _browser_headers(response)

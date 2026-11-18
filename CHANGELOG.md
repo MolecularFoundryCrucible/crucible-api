@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- Device sign-in works in Chrome: the code form's security policy lists the identity providers, since Chrome checks it on every redirect after the form is submitted.
+
 ## [4.0.0] - 2026-11-17
 
 Crucible authenticates users itself, instruments gain members who read their datasets, and records share one response shape. This release contains everything listed under 4.0.0a1 below, and the following. Upgrading: `docs/upgrading/3.3-to-4.0.md`.

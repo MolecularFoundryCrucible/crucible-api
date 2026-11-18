@@ -212,3 +212,12 @@ def test_cleanup_removes_device_rows_a_day_after_they_expire(client, db_engine):
     start_device(client)
     assert cleanup_sign_in_records(db_engine, commit=True, now=datetime.now(timezone.utc) + timedelta(hours=2))["device_authorization"] == 0
     assert cleanup_sign_in_records(db_engine, commit=True, now=datetime.now(timezone.utc) + timedelta(days=2))["device_authorization"] == 1
+
+
+def test_the_code_form_may_lead_on_to_the_identity_providers(client, orcid_provider_settings):
+    orcid_provider_settings()
+    entry = client.get("/oauth/device").headers["content-security-policy"]
+    assert "form-action 'self' https://orcid.org;" in entry
+    body = start_device(client).json()
+    confirm = client.post("/oauth/device", data={"user_code": "WRONG-CODE"}).headers["content-security-policy"]
+    assert "form-action 'self' https://orcid.org;" in confirm and body["user_code"]

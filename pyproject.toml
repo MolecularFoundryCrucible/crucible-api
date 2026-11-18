@@ -13,7 +13,7 @@ dependencies = [
     "google-cloud-secret-manager==2.22.1",
     "google-cloud-storage>=3.4.1",
     "gunicorn",
-    "mfid==1.0.0",
+    "mfid==2.0.0",
     "paho-mqtt>=2.1.0",
     "pika==1.4.4",
     "pillow==13.0.0",

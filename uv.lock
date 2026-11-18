@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -478,7 +478,7 @@ requires-dist = [
     { name = "itsdangerous", specifier = ">=2.2.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "joserfc", specifier = ">=1.7.7" },
-    { name = "mfid", specifier = "==1.0.0" },
+    { name = "mfid", specifier = "==2.0.0" },
     { name = "paho-mqtt", specifier = ">=2.1.0" },
     { name = "pgvector", specifier = ">=0.4.1" },
     { name = "pika", specifier = "==1.4.4" },
@@ -1094,14 +1094,11 @@ wheels = [
 
 [[package]]
 name = "mfid"
-version = "1.0.0"
+version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "uuid7" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a4/0f/dda9472ceec2e609f6113d42863dbc8ec338b68c6b17aefe1110b3407195/mfid-1.0.0.tar.gz", hash = "sha256:14d90fb9ef52e3f75ce8c01456c3faecec27fa767eeb54856abd24d4385a44b9", size = 6465, upload-time = "2025-02-05T19:23:19.573Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c3/a9/5c6609b14ac56942caa5098a2d9723190f04361d963fc89207751e916ad5/mfid-2.0.0.tar.gz", hash = "sha256:58ae7022839676d70dfa1ed9c4fa10e9d452d971d8b47dde6c7dae85bc1fae61", size = 10902, upload-time = "2026-11-13T18:39:51.866Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/de/c7d812d4000e312105b8e2151749ae17d50237f00dea6e2b8a566132ccf9/mfid-1.0.0-py3-none-any.whl", hash = "sha256:498cd04079440a62029385b1628138e1dbdcde7d9270d0b3f7d17c59894b8dac", size = 6829, upload-time = "2025-02-05T19:23:17.575Z" },
+    { url = "https://files.pythonhosted.org/packages/62/20/3b1893b4e4158a74053ad9eedc378830bd5a8c55f2b1ffa9aa80dfee3a63/mfid-2.0.0-py3-none-any.whl", hash = "sha256:a4714b1531af9c4dff67ac4caeb9617f42997f2fe5068367b25302ea44442b40", size = 11485, upload-time = "2026-11-13T18:39:50.582Z" },
 ]
 
 [[package]]
@@ -1600,7 +1597,7 @@ resolution-markers = [
     "python_full_version < '3.12'",
 ]
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8b/04/e7c1fe4dc78a6fdbfd6c337b1c3732ff543b8a397683ab38378447baa331/pyee-13.0.1.tar.gz", hash = "sha256:0b931f7c14535667ed4c7e0d531716368715e860b988770fc7eb8578d1f67fc8", size = 31655, upload-time = "2026-02-14T21:12:28.044Z" }
 wheels = [
@@ -1617,7 +1614,7 @@ resolution-markers = [
     "python_full_version == '3.12.*'",
 ]
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version >= '3.12'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1d/f1/fdedc2c75c3e31a330659c85e5793bb18b3397981fbf0844c6dee5b18926/pyee-14.0.0.tar.gz", hash = "sha256:76dd0f4314ecd27f02dc73589dea7fd3853f9b6176d8ef9b122860657e3602de", size = 98760, upload-time = "2026-08-13T04:26:11.021Z" }
 wheels = [
@@ -1916,15 +1913,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz", hash = "sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63", size = 458972, upload-time = "2026-09-15T19:29:36.253Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl", hash = "sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3", size = 135717, upload-time = "2026-09-15T19:29:34.577Z" },
-]
-
-[[package]]
-name = "uuid7"
-version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5c/19/7472bd526591e2192926247109dbf78692e709d3e56775792fec877a7720/uuid7-0.1.0.tar.gz", hash = "sha256:8c57aa32ee7456d3cc68c95c4530bc571646defac01895cfc73545449894a63c", size = 14052, upload-time = "2021-12-29T01:38:21.897Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b5/77/8852f89a91453956582a85024d80ad96f30a41fed4c2b3dce0c9f12ecc7e/uuid7-0.1.0-py2.py3-none-any.whl", hash = "sha256:5e259bb63c8cb4aded5927ff41b444a80d0c7124e8a0ced7cf44efa1f5cccf61", size = 7477, upload-time = "2021-12-29T01:38:20.418Z" },
 ]
 
 [[package]]

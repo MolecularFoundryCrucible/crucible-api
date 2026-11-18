@@ -6,9 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-### Changed
+### Fixed
 
-- When an identity provider refuses a sign-in's code exchange, the log names its error and description, with the code removed.
+- Device sign-in works in Chrome: the code form's security policy lists the identity providers, since Chrome checks it on every redirect after the form is submitted.
 
 ## [4.0.0] - 2026-11-17
 

@@ -16,7 +16,7 @@ It changes on every replacement and on any change to those four fields, and is s
 
 1. Obtain the file's `etag` from `GET /files/{file_id}`, a file listing, or the 409 `filename_exists` response of `POST /datasets/{dataset_mfid}/upload/multipart/initiate` or `POST /datasets/{dataset_mfid}/files`, which carries `file_mfid` and `etag`.
 2. `POST /files/{file_mfid}/upload/multipart/initiate` with `{"size": <int>, "sha256_hash": <optional>}`, the optional `Idempotency-Key` header, and the optional `If-Match: <etag>` header (`If-Match: *` matches any ETag). The response is a `MultipartStatus` with an `upload_id`.
-3. Sign parts, upload, read the status, abort and complete through the dataset's routes under `/datasets/{dataset_mfid}/upload/multipart/` ([Uploads](multipart_upload_api.md)).
+3. Sign parts, upload, read the status, abort and complete through the dataset's routes under `/datasets/{dataset_mfid}/upload/multipart/` ([Uploads](uploads.md)).
 4. Completion returns the `AssociatedFileRead` with the same `mfid` and `filename`, and the new `size`, `sha256_hash`, `storage_path` and `etag`.
 
 After a `filename_exists` conflict, clients ask the user before replacing; they never replace silently. The current content stays downloadable until completion.
@@ -31,7 +31,7 @@ After a `filename_exists` conflict, clients ask the user before replacing; they 
 4. The file is stored by the API (400 `Only GCS files can be replaced; edit catalog-only records with PATCH /files/{file_id}`).
 5. A request with an `Idempotency-Key` already used by the caller for this dataset returns the earlier result, before the `If-Match` comparison. The key's fingerprint includes the replaced file, so reusing a key between an upload and a replacement returns 409.
 6. `If-Match`, when present, must match the file's current `etag` (412 `{"detail": {"code": "etag_mismatch", "etag": "<current>", "message": ...}}`).
-7. A missing `storage_path` is located as for downloads ([Missing storage paths](storage_download_design.md#missing-storage-paths)). When no object is found, the replacement proceeds with no previous content. A located path is saved even when the request ends at a later step.
+7. A missing `storage_path` is located as for downloads ([Missing storage paths](storage_downloads.md#missing-storage-paths)). When no object is found, the replacement proceeds with no previous content. A located path is saved even when the request ends at a later step.
 8. No other replacement of the file is in progress, that is, no session for it that is neither terminal nor expired (409 `{"detail": {"code": "replace_in_progress", "upload_id": "...", "message": ...}}`).
 9. When the file has a `storage_path`, the request's `sha256_hash` and `size` equal the file's, and its hash is trusted (no `storage_generation`, or `sha256_verified_at` set), the route returns state `completed` with `existing_file` and creates no session.
 10. Size limits and quotas are those of a new upload. The session records the file and its `etag` after step 7.
@@ -44,7 +44,7 @@ The upload completion route verifies the object as for a new upload, then publis
 2. The file must still exist, be stored by the API and have the `etag` recorded at initiation. Otherwise the session fails with `file_changed` (409 `Upload could not be published: file_changed`) and the new object is deleted.
 3. The record is repointed to the new object: `storage_path`, `storage_generation`, `size`, `sha256_hash` and `storage_crc32c` are set, and `sha256_verified_at` is cleared. The dataset's modification time is updated.
 
-A file in the older layout (`{dataset_mfid}/{filename}`, no generation) moves to the upload layout and from then on behaves like any uploaded file ([Object layouts](storage_download_design.md#object-layouts)). Ingestion requests are not repeated; clients request ingestion again if needed.
+A file in the older layout (`{dataset_mfid}/{filename}`, no generation) moves to the upload layout and from then on behaves like any uploaded file ([Object layouts](storage_downloads.md#object-layouts)). Ingestion requests are not repeated; clients request ingestion again if needed.
 
 ## Previous content
 
@@ -53,7 +53,7 @@ Replaced content is never overwritten. It is retained for a grace period and the
 | | `STORAGE_BACKEND=gcs` | `STORAGE_BACKEND=s3` |
 |---|---|---|
 | Retention | The object's `customTime` is set to the completion time, after the commit | A row in `file_versions`, written in the transaction that repoints the record |
-| Grace period | The bucket's `daysSinceCustomTime` lifecycle rule ([Uploads](multipart_upload_api.md#google-cloud-storage)) | `FILE_VERSION_RETENTION_DAYS` (default 14) |
+| Grace period | The bucket's `daysSinceCustomTime` lifecycle rule ([Uploads](uploads.md#google-cloud-storage)) | `FILE_VERSION_RETENTION_DAYS` (default 14) |
 | Deletion | The lifecycle rule | `python -m app.cli storage cleanup` |
 | Restore | Not provided by the API | `python -m app.cli files restore FILE_MFID` |
 
@@ -64,7 +64,7 @@ Every replacement logs `file_replaced` with the file and dataset MFIDs, `previou
 The previous object is retired only when all of the following hold; otherwise it is left in place and logged with `retired=False`:
 
 - It is in `UPLOAD_BUCKET` or `MULTIPART_UPLOAD_BUCKET`, never in one of `STORAGE_READ_BUCKETS`.
-- It satisfies the [location rule](storage_download_design.md#location-rule).
+- It satisfies the [location rule](storage_downloads.md#location-rule).
 - No other record has the same `storage_path`.
 - For an object without a recorded generation: its key is exactly `{dataset_mfid}/{filename}`, and no record of the dataset without a `storage_path` has a filename whose basename is a suffix of the key, since such a record could later be located at that key.
 
@@ -99,6 +99,6 @@ A version is recorded for the previous object when it satisfies the location rul
 | Same trusted content | 200 `completed` with `existing_file`, no session |
 | File changed before completion | 409 `Upload could not be published: file_changed` |
 | `edit` permission revoked before completion | 403 `Upload could not be published: permission_revoked` |
-| Uploads disabled, size limit, quotas, storage errors | As for new uploads ([Uploads](multipart_upload_api.md#errors)) |
+| Uploads disabled, size limit, quotas, storage errors | As for new uploads ([Uploads](uploads.md#errors)) |
 
 Aborting a replacement, or letting it expire, leaves the file unchanged and deletes the new object.

@@ -16,7 +16,7 @@ A single ordered set of five roles (`Role`, Postgres enum `resource_role`) is us
 | `admin` | Manage grants, publish and unpublish, move the record to another project, assign a dataset's instrument, delete files, review deletion requests, request deletion of a project or instrument, change an instrument's status and service-account bindings. |
 | `owner` | Transfer ownership and delete directly with `DELETE /resources/{mfid}?force=true`. An owner's grant cannot be changed or revoked by any caller, only transferred. |
 
-Routes require a `Permission`, and `THRESHOLDS` maps each permission to the lowest role that satisfies it: `read` to `viewer`, `create` to `contributor`, `edit` to `editor`, `delete` and `manage_acl` to `admin`, `hard_delete` and `transfer` to `owner`. Deletion is described in the [database deletion contract](database_deletion_contract.md).
+Routes require a `Permission`, and `THRESHOLDS` maps each permission to the lowest role that satisfies it: `read` to `viewer`, `create` to `contributor`, `edit` to `editor`, `delete` and `manage_acl` to `admin`, `hard_delete` and `transfer` to `owner`. Deletion is described in the [database deletion contract](deletion.md).
 
 ## Access model
 
@@ -92,7 +92,7 @@ The lead is the member holding `owner` in the project group. Authorization reads
 
 ### Project identity: MFID and `project_id`
 
-A project has two identifiers. The MFID (`unique_id`) is immutable and is used for all internal references: the project group's name, the project's own grant, and `project_mfid` on datasets and samples. `project_id` is the human-readable slug used in URLs and responses. It is unique case-insensitively, consists of 3 to 25 letters, digits, `_` or `-`, and cannot be `admin`, `read_only`, `public` or the name of any existing access group. An `editor` can rename it with `PATCH /projects/{project_ref}`; no other update is required because responses resolve the slug from the MFID. See [resource identifier routes](resource_identifier_routes.md).
+A project has two identifiers. The MFID (`unique_id`) is immutable and is used for all internal references: the project group's name, the project's own grant, and `project_mfid` on datasets and samples. `project_id` is the human-readable slug used in URLs and responses. It is unique case-insensitively, consists of 3 to 25 letters, digits, `_` or `-`, and cannot be `admin`, `read_only`, `public` or the name of any existing access group. An `editor` can rename it with `PATCH /projects/{project_ref}`; no other update is required because responses resolve the slug from the MFID. See [resource identifier routes](resource_identifiers.md).
 
 ## Instruments and service accounts
 
@@ -106,7 +106,7 @@ A project has two identifiers. The MFID (`unique_id`) is immutable and is used f
 - `User.platform_role` is `none`, `contributor`, `support` or `admin`. It is a property of the user, not a group, and is never written as grants. `admin` passes every check; `contributor` passes `read` and `create` checks everywhere; `support` is reserved and grants nothing.
 - The `Crucible-Privilege-Mode` header determines whether an administrator's bypass applies to a request. With `normal` the administrator is treated as an ordinary caller with only their own groups. `elevated` is accepted only from a human administrator; any other caller receives 403.
 - Without the header, an administrator's API key acts elevated and a browser session acts normal.
-- Details, response headers and audit logging are described in [explicit privilege mode](explicit_privilege_mode_design.md).
+- Details, response headers and audit logging are described in [explicit privilege mode](explicit_privilege_mode.md).
 
 ## Public records
 

@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- When an identity provider refuses a sign-in's code exchange, the log names its error and description, with the code removed.
+
 ## [4.0.0] - 2026-11-17
 
 Crucible authenticates users itself, instruments gain members who read their datasets, and records share one response shape. This release contains everything listed under 4.0.0a1 below, and the following. Upgrading: `docs/upgrading/3.3-to-4.0.md`.

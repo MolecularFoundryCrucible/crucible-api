@@ -31,7 +31,7 @@ An access group (`AccessGroup`) has a `group_name` and a `group_type`. Membershi
 | `instrument` | The instrument's MFID | Service accounts bound to the instrument (the operator group). |
 | `instrument_member` | The instrument's MFID followed by `:members` | The instrument's members, each at their instrument role. |
 | `system` | A reserved name; `public` is the only one in use | No members are stored. Every caller is placed in `public` at `viewer` when the principal is built. |
-| `custom` | A name chosen by a platform administrator | Manually managed groups created with `POST /access_groups`. None are created automatically. |
+| `custom` | A name chosen by a platform administrator | Groups created by earlier releases. No route creates or fills them any more. |
 
 The group type, not the format of the name, determines what a group is, because projects, instruments and service accounts all use MFIDs. Lookups always match `group_name` together with `group_type`.
 

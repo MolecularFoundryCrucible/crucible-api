@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-11-17
+
+### Added
+
+- `GET /oauth/code` shows a sign-in code to copy into a program; every public client may use it as `redirect_uri` when the browser cannot reach the program on its computer (Chrome's local network rules, WSL, SSH).
+
+### Fixed
+
+- Creating an instrument answered 500 on PostgreSQL: its two access groups are inserted together, which failed because the group type was bound as text instead of the database enum. Access group types, platform roles and join request roles now bind as their enums, so several rows of those tables can be inserted at once.
+- Device sign-in works in Chrome: the code form's security policy lists the identity providers, since Chrome checks it on every redirect after the form is submitted.
+
+### Changed
+
+- When an identity provider refuses a sign-in's code exchange, the log names its error and description, with the code removed.
+- The Compose bundle runs Hub 1.8.0 instead of its pre-release 1.8.0-alpha.1.
+
 ## [4.0.0] - 2026-11-17
 
 Crucible authenticates users itself, instruments gain members who read their datasets, and records share one response shape. This release contains everything listed under 4.0.0a1 below, and the following. Upgrading: `docs/upgrading/3.3-to-4.0.md`.

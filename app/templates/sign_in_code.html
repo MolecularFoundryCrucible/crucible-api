@@ -1,0 +1,13 @@
+{% extends "sign_in_base.html" %}
+{% block title %}{% if code %}Your sign-in code{% else %}Sign-in not completed{% endif %}{% endblock %}
+{% block content %}
+  {% if code %}
+    <p>Copy this code into the program you are signing in with, where it asks for it.</p>
+    <dl class="facts stacked">
+      <dt>Sign-in code</dt><dd class="code">{{ code }}</dd>
+    </dl>
+    <p class="note">It works once, within five minutes, and only in the program that started this sign-in. Never give it to anyone else.</p>
+  {% else %}
+    <p>The sign-in was cancelled or refused{% if error %} ({{ error }}){% endif %}. Start it again from your program.</p>
+  {% endif %}
+{% endblock %}

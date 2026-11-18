@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from app.config import LOOPBACK_HOSTS, ConfigurationError, get_settings, optional_secret
 
 logger = logging.getLogger(__name__)
+CODE_PAGE_PATH = "/oauth/code"
 
 @dataclass(frozen=True)
 class RegisteredClient:
@@ -23,11 +24,15 @@ class RegisteredClient:
         return self.type == "public"
 
     def allows_redirect(self, uri: str) -> bool:
-        """Exact match, except that a public client's loopback entries accept any port (RFC 8252 7.3)."""
+        """Exact match, except that a public client's loopback entries accept any port (RFC 8252 7.3),
+        and every public client may end on this API's own code page, for when the browser cannot
+        reach the program on its computer."""
         if uri in self.redirect_uris:
             return True
         if not self.is_public:
             return False
+        if uri == code_page_url():
+            return True
         try:
             parsed = urlsplit(uri)
             port = parsed.port
@@ -37,6 +42,16 @@ class RegisteredClient:
             return False
         host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
         return f"http://{host}{parsed.path}" in self.redirect_uris
+
+
+def code_page_url() -> str | None:
+    """The API's page that shows a sign-in code for the person to copy into their program."""
+    from app.auth.login_transactions import SignInUnavailable, public_api_url
+
+    try:
+        return f"{public_api_url()}{CODE_PAGE_PATH}"
+    except (SignInUnavailable, ConfigurationError):
+        return None
 
 
 def registered_clients() -> tuple[RegisteredClient, ...]:

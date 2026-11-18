@@ -3,6 +3,7 @@ from typing import Any, Optional, List
 from pydantic import ConfigDict
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Boolean, Column, CheckConstraint, UniqueConstraint, BigInteger, DateTime, ForeignKey, Integer, false, func, Index, text, Text, String
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel, Relationship
 from mfid import mfid
@@ -245,10 +246,22 @@ class UserAccessGroupLink(SQLModel, table=True):
     role: str
 
 
+def _postgres_enum(name: str, *labels: str):
+    """A column that is a Postgres enum, declared as one so that a flush inserting several rows of a
+    table with a generated id casts each value to the enum; as plain VARCHAR, Postgres refuses that
+    batched insert. Other databases store text."""
+    return String().with_variant(postgresql.ENUM(*labels, name=name), "postgresql")
+
+
+ACCESS_GROUP_TYPE = _postgres_enum("access_group_type", "identity", "project", "instrument", "custom", "system", "instrument_member")
+PLATFORM_ROLE = _postgres_enum("platform_role", "none", "contributor", "support", "admin")
+RESOURCE_ROLE = _postgres_enum("resource_role", "viewer", "contributor", "editor", "admin", "owner")
+
+
 class AccessGroup(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     group_name: str = Field(index=True, unique=True)
-    group_type: str = Field(default="custom", index=True)
+    group_type: str = Field(default="custom", index=True, sa_type=ACCESS_GROUP_TYPE)
     users: List["User"] = Relationship(back_populates="accessgroups", link_model=UserAccessGroupLink)
     acl: List["ResourceACL"] = Relationship(back_populates="accessgroup")
 
@@ -266,7 +279,7 @@ class User(SQLModel, table=True):
     is_service_account: Optional[bool] = Field(default=False)
     username: str = Field(max_length=32)
     # Platform-wide bypass, deliberately not a group. Postgres enum platform_role.
-    platform_role: Optional[str] = Field(default="none")
+    platform_role: Optional[str] = Field(default="none", sa_type=PLATFORM_ROLE)
     last_active_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
     disabled_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     pending_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
@@ -677,7 +690,7 @@ class AccessGroupJoinRequest(SQLModel, table=True):
     reviewer_id: Optional[str] = Field(default=None, foreign_key="user.orcid")
     reviewer_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     reviewer_notes: Optional[str] = Field(default=None)
-    granted_role: Optional[str] = Field(default=None)
+    granted_role: Optional[str] = Field(default=None, sa_type=RESOURCE_ROLE)
 
 
 class DeletionAuditLog(SQLModel, table=True):

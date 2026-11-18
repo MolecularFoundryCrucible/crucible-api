@@ -534,3 +534,23 @@ def test_login_accepts_only_an_exact_configured_callback(engine, monkeypatch, or
         get_settings.cache_clear()
         with pytest.raises(SignInUnavailable):
             load_login_config()
+
+
+def test_a_refused_provider_token_is_logged_with_its_error_but_not_the_code(hub_routes, caplog, monkeypatch):
+    import httpx
+
+    client, fake = hub_routes
+    state = start_hub_login(client, fake)
+    answer = fake.respond
+
+    def refuse(request):
+        if request.url.path.endswith("/oauth/token"):
+            return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Invalid authorization code: orcid-code"})
+        return answer(request)
+
+    monkeypatch.setattr(fake, "respond", refuse)
+    with caplog.at_level("WARNING"):
+        response = client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False)
+    assert hub_error_of(response) == "server_error"
+    assert "Hub sign-in failed: OAuthError (invalid_grant: Invalid authorization code: [code])" in caplog.text
+    assert "orcid-code" not in caplog.text

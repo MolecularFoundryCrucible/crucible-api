@@ -132,14 +132,15 @@ def _deliver(request: Request, client_id: str, destination: str, callback_uri: s
     (RFC 8252 8.6). The code stays in the page until they choose Allow."""
     from urllib.parse import urlsplit
 
-    from app.auth.clients import client_by_id
+    from app.auth.clients import client_by_id, code_page_url
 
     client = client_by_id(client_id)
     if client is None or not client.is_public:
         return _browser_headers(RedirectResponse(destination, status_code=status))
     nonce = secrets.token_urlsafe(16)
     response = _templates.TemplateResponse(request, "confirm_program.html", {
-        "style_nonce": nonce, "client_name": client.display_name, "where": urlsplit(callback_uri).netloc,
+        "style_nonce": nonce, "client_name": client.display_name,
+        "where": "a code shown on this site, to copy into the program" if callback_uri == code_page_url() else urlsplit(callback_uri).netloc,
         "allow": destination, "deny": error_destination(callback_uri, hub_state, "access_denied"),
     })
     response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -304,10 +305,24 @@ async def _finish_sign_in(request: Request, engine, served_by, cookie_directory:
             logger.warning("Hub sign-in could not reach the provider: %s", type(failure).__name__)
             response = _client_error(transaction.callback_uri, transaction.hub_state, "temporarily_unavailable")
         except TOKEN_FAILURES as failure:
-            logger.warning("Hub sign-in failed: %s", type(failure).__name__)
+            logger.warning("Hub sign-in failed: %s%s", type(failure).__name__, _provider_answer(failure, code))
             response = _client_error(transaction.callback_uri, transaction.hub_state, "server_error")
     response.delete_cookie(cookie, path=f"{get_api_root_path()}{cookie_directory}")
     return response
+
+
+def _provider_answer(failure: Exception, code: str | None) -> str:
+    """What the provider said, for the log: its OAuth error and description, with the one-time
+    code removed, since some providers repeat it in the description."""
+    error = getattr(failure, "error", None)
+    if not isinstance(error, str) or not error:
+        return ""
+    description = getattr(failure, "description", None)
+    if not isinstance(description, str) or not description:
+        return f" ({error})"
+    if code:
+        description = description.replace(code, "[code]")
+    return f" ({error}: {description[:200]})"
 
 
 _CALLBACK_RESPONSES = {302: {"description": "Redirect to the Hub with a sign-in code, or with state and an RFC 6749 error"}, 400: {"description": "The sign-in cannot be matched to this browser, so nothing is trusted enough to redirect to"}}

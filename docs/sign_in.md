@@ -79,7 +79,7 @@ Creating an API key, ending sessions, changing a user's sign-in methods, and cha
 | A session from the device authorization flow | 403 `browser_sign_in_required` |
 | A session with an older authentication | 401 `insufficient_user_authentication`: redirect the user to `/oauth/authorize` with `max_age=0` |
 
-An administrator's session acts with ordinary privileges unless a request carries `Crucible-Privilege-Mode: elevated`. An administrator's API key acts elevated when the header is omitted. See [explicit privilege mode](explicit_privilege_mode_design.md).
+An administrator's session acts with ordinary privileges unless a request carries `Crucible-Privilege-Mode: elevated`. An administrator's API key acts elevated when the header is omitted. See [explicit privilege mode](explicit_privilege_mode.md).
 
 ## API keys
 

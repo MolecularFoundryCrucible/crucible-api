@@ -1,6 +1,6 @@
 # Instrument access
 
-This page covers who manages an instrument, who reads the datasets recorded with it, and how service accounts bound to an instrument reach those datasets. Roles, grants and the service-account ceiling are defined in [Permissions](permissions.md#instruments-and-service-accounts); "platform administrator" below means an administrator in elevated mode ([explicit privilege mode](explicit_privilege_mode_design.md)).
+This page covers who manages an instrument, who reads the datasets recorded with it, and how service accounts bound to an instrument reach those datasets. Roles, grants and the service-account ceiling are defined in [Permissions](permissions.md#instruments-and-service-accounts); "platform administrator" below means an administrator in elevated mode ([explicit privilege mode](explicit_privilege_mode.md)).
 
 Every authenticated caller can read every instrument record. An instrument has two groups:
 
@@ -95,4 +95,4 @@ DELETE /resources/{mfid}?force=true[&confirm=true]
 
 `DELETE` requires `owner` on the instrument or a platform administrator. Without `confirm=true` it returns a preview and deletes nothing; with `confirm=true` it executes. Either call returns 409 with the blocking dataset count while datasets are assigned. The preview reports `memberships_removed`, the members, and `service_accounts_unbound`, the operator group's bindings.
 
-Deletion removes both groups, their grants and links, and the instrument's own records; the people and service accounts themselves remain. A `DeletionAuditLog` row is written on both paths, and the `instrument_id` slug can be reused afterwards. See [Deletion](database_deletion_contract.md) for the full behavior.
+Deletion removes both groups, their grants and links, and the instrument's own records; the people and service accounts themselves remain. A `DeletionAuditLog` row is written on both paths, and the `instrument_id` slug can be reused afterwards. See [Deletion](deletion.md) for the full behavior.

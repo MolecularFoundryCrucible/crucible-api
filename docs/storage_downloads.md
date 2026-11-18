@@ -8,10 +8,10 @@ A stored record's `storage_path` is `{bucket}/{key}`. Existing records have one 
 
 | Layout | Key | `storage_generation` | Written by |
 |---|---|---|---|
-| Upload | `{dataset_mfid}/_files/{upload_id}` | Recorded | The [upload routes](multipart_upload_api.md); never overwritten |
+| Upload | `{dataset_mfid}/_files/{upload_id}` | Recorded | The [upload routes](uploads.md); never overwritten |
 | Before 4.0.0 | `{dataset_mfid}/{filename}` | Not recorded | The upload routes removed in 4.0.0 |
 
-`storage_generation` is the store's version of the object: a Google Cloud Storage generation, or an S3 version ID or ETag. The segment `_files` is reserved for uploads; code identifies an upload object by this prefix, not by the identifier format. Replacing a file stored in the older layout moves it to the upload layout ([File replacement](file_replace_design.md)).
+`storage_generation` is the store's version of the object: a Google Cloud Storage generation, or an S3 version ID or ETag. The segment `_files` is reserved for uploads; code identifies an upload object by this prefix, not by the identifier format. Replacing a file stored in the older layout moves it to the upload layout ([File replacement](file_replacement.md)).
 
 ## Location rule
 
@@ -35,7 +35,7 @@ A stored record without `storage_path`, such as one registered through `POST /da
 | `GET /files/{file_id}/download_link` | `{"url": ..., "expires_in": 3600}` |
 | `GET /datasets/{dataset_mfid}/download_links` | An object mapping each file MFID to a URL or `null` |
 
-Both routes require read access to the dataset and accept `?disposition=attachment|inline` (any other value returns 422). A URL is valid for one hour. It is signed by the server's storage identity ([Uploads](multipart_upload_api.md#google-cloud-storage)); on Google Cloud Storage, the URL and the metadata lookup are pinned to the recorded generation.
+Both routes require read access to the dataset and accept `?disposition=attachment|inline` (any other value returns 422). A URL is valid for one hour. It is signed by the server's storage identity ([Uploads](uploads.md#google-cloud-storage)); on Google Cloud Storage, the URL and the metadata lookup are pinned to the recorded generation.
 
 The `disposition` parameter sets the response headers through signed URL overrides:
 
@@ -62,7 +62,7 @@ A download button omits the parameter (the browser saves the file under the reco
 
 - `storage_path` may be omitted, left unchanged, or cleared to `null` (the next download locates it again). A new value returns 422 `storage_path is assigned by the upload API for GCS files`.
 - A record with a recorded `storage_generation` cannot have its `storage_path` cleared (422, same message).
-- Changing `size` or `sha256_hash` returns 422 `size and sha256_hash are determined by the stored object for GCS files`. Content changes only through an upload or a [replacement](file_replace_design.md).
+- Changing `size` or `sha256_hash` returns 422 `size and sha256_hash are determined by the stored object for GCS files`. Content changes only through an upload or a [replacement](file_replacement.md).
 
 For every record, a change to `size`, `sha256_hash`, `storage_path` or `storage_backend` clears `sha256_verified_at` and `storage_crc32c`, and a change to `storage_path` or `storage_backend` clears `storage_generation`. Filename and backend changes are covered in [Remote file records](remote_file_records.md#identity-and-filenames).
 

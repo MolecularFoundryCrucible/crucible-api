@@ -7,7 +7,7 @@ This page specifies how a dataset's file records catalog files that are not stor
 | Field | Type | Notes |
 |---|---|---|
 | `storage_backend` | Free text, default `"gcs"` | `"gcs"` means stored by the API, in whichever store `STORAGE_BACKEND` configures (Google Cloud Storage or S3-compatible); the value is kept for compatibility with existing records and clients. Any other value (`"globus"`, `"nersc-perlmutter"`, `"lawrencium"`) marks a catalog-only record. Values are not validated, so external systems can be distinguished without a schema change. |
-| `storage_path` | Nullable text | For a stored record, `{bucket}/{key}`, assigned by the API ([Storage locations and downloads](storage_download_design.md)). For a catalog-only record, a location string such as a Globus URI or a file system path, not interpreted by the API. |
+| `storage_path` | Nullable text | For a stored record, `{bucket}/{key}`, assigned by the API ([Storage locations and downloads](storage_downloads.md)). For a catalog-only record, a location string such as a Globus URI or a file system path, not interpreted by the API. |
 | `access_note` | Nullable text | How to obtain the file when there is no self-service path, for example "request via NERSC allocation X" or "contact the PI for a Globus share". |
 | `sha256_hash`, `size` | Required | Required for every backend; supplied by the client. |
 
@@ -28,5 +28,5 @@ The path rules and the unique index do not apply to stored records created throu
 
 - `GET /files/{file_id}/download_link` returns `{"url": null, "expires_in": null}`, and `GET /datasets/{dataset_mfid}/download_links` maps the file to `null`. The response shapes are the same as for stored files; clients read `storage_backend` from `GET /files/{file_id}` or `GET /datasets/{dataset_mfid}/files` to know what to expect.
 - `POST /files/{file_id}/ingest` returns 400 `Ingestion is not supported for storage_backend='<value>' files.`; ingestion requests are created only for objects the API stores.
-- `PATCH /files/{file_id}` may change `storage_path`, `size`, `sha256_hash` and `access_note` freely ([Changes to stored records](storage_download_design.md#changes-to-stored-records) lists the fields this clears).
+- `PATCH /files/{file_id}` may change `storage_path`, `size`, `sha256_hash` and `access_note` freely ([Changes to stored records](storage_downloads.md#changes-to-stored-records) lists the fields this clears).
 - Permissions are evaluated as for stored files: reading and downloading require `viewer`, adding a record and requesting ingestion `contributor`, updating `editor`, and deleting `admin` on the dataset ([Permissions](permissions.md)).

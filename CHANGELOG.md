@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - The sign-in code page names the program the code is for and has a Copy button.
+- The Compose bundle serves the API at `/api/v4`, and everything under `/api/v3` answers 308 to it; an existing installation registers the new ORCID callback and points the Hub at `/api/v4` (`deploy/compose/docs/operations.md`).
 
 ## [4.0.1] - 2026-11-17
 

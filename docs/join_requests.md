@@ -21,7 +21,7 @@ Only `pending` requests change; any transition from another status returns 409 `
 - **Withdraw:** the requester only (403 `withdraw_not_allowed` for others who can read the request).
 - **Read:** the requester, users who may review the request, and platform administrators. All other callers receive 404 `join_request_not_found`, so request IDs do not reveal who asked to join which project.
 
-"Platform administrator" means an administrator in elevated mode ([explicit privilege mode](explicit_privilege_mode_design.md)).
+"Platform administrator" means an administrator in elevated mode ([explicit privilege mode](explicit_privilege_mode.md)).
 
 ## Routes
 

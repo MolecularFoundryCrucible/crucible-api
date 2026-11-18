@@ -2,7 +2,7 @@
 
 The server behind the Crucible Data Platform. It is a FastAPI service on PostgreSQL with S3-compatible file storage.
 
-The Molecular Foundry runs it at [crucible.lbl.gov](https://crucible.lbl.gov/api/v3/docs). The service can be self-hosted by any lab or institution.
+The Molecular Foundry runs it at [crucible.lbl.gov](https://crucible.lbl.gov/api/v4/docs). The service can be self-hosted by any lab or institution.
 
 ## Features
 
@@ -18,13 +18,13 @@ The Molecular Foundry runs it at [crucible.lbl.gov](https://crucible.lbl.gov/api
 
 ### API usage
 
-- [Interactive API reference](https://crucible.lbl.gov/api/v3/docs) of the Molecular Foundry deployment.
+- [Interactive API reference](https://crucible.lbl.gov/api/v4/docs) of the Molecular Foundry deployment.
 - [nano-crucible](https://github.com/MolecularFoundryCrucible/nano-crucible), the Python client and command-line interface.
 - [Authentication](docs/sign_in.md) and [permissions](docs/permissions.md).
 
 ### Deployment
 
-[`deploy/compose/`](deploy/compose/README.md) provides a Docker Compose bundle that runs the API with PostgreSQL, SeaweedFS and Caddy on a single host. For other environments, build the image from the `Dockerfile` and refer to the [authentication settings](docs/sign_in_operations.md), [storage settings](docs/multipart_upload_api.md) and [database migrations](migrations/README.md).
+[`deploy/compose/`](deploy/compose/README.md) provides a Docker Compose bundle that runs the API with PostgreSQL, SeaweedFS and Caddy on a single host. For other environments, build the image from the `Dockerfile` and refer to the [authentication settings](docs/sign_in_operations.md), [storage settings](docs/uploads.md) and [database migrations](migrations/README.md).
 
 ### Development
 
@@ -50,7 +50,7 @@ Run the test suite with `uv run pytest -q`.
 
 ## Versioning
 
-Releases follow [Semantic Versioning](https://semver.org/) and are tagged `vX.Y.Z`. Each release is listed in the [changelog](CHANGELOG.md) and published with its OpenAPI document. Releases that require operator action include an upgrade guide in [`docs/upgrading/`](docs/upgrading/). The 4.x series keeps the `/api/v3` path prefix.
+Releases follow [Semantic Versioning](https://semver.org/) and are tagged `vX.Y.Z`. Each release is listed in the [changelog](CHANGELOG.md) and published with its OpenAPI document. Releases that require operator action include an upgrade guide in [`docs/upgrading/`](docs/upgrading/). The path prefix is a deployment setting (`API_PATH`); the Molecular Foundry serves 4.x at `/api/v4`.
 
 ## Contributing
 

@@ -14,8 +14,8 @@ description: Add an API route, change what one accepts or returns, deprecate one
 
 ## 2. Contract rules
 
-- Identifiers in paths and bodies are MFIDs or the documented references (`docs/resource_identifier_routes.md`), never internal integer ids.
-- Lists are paginated (`PaginatedResponse`) and follow `docs/get_query_contract.md`.
+- Identifiers in paths and bodies are MFIDs or the documented references (`docs/resource_identifiers.md`), never internal integer ids.
+- Lists are paginated (`PaginatedResponse`) and follow `docs/collection_queries.md`.
 - Errors a client must tell apart carry a `code`, as in `{"detail": {"code": "...", "message": "..."}}`.
 
 ## 3. Changing what exists

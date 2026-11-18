@@ -256,7 +256,7 @@ jobs:
           python3 -c "import json, sys; print('created', json.load(open(sys.argv[1]))['username'])" "$RUNNER_TEMP/admin.json"
       - name: Smoke test through the proxy
         env:
-          CRUCIBLE_API_URL: http://localhost:8080/api/v3
+          CRUCIBLE_API_URL: http://localhost:8080/api/v4
         run: |
           CRUCIBLE_API_KEY=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1]))['api_key'])" "$RUNNER_TEMP/admin.json")
           CRUCIBLE_PASSWORD_LINK=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1]))['password_link'])" "$RUNNER_TEMP/admin.json")
@@ -265,8 +265,9 @@ jobs:
       - name: Only this machine can reach it, and plain HTTP under another name is refused
         run: |
           test "$(docker compose port proxy 80)" = "127.0.0.1:8080"
-          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: labbox:8080' http://localhost:8080/api/v3/health/ready)" = 421
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/v3/metrics)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: labbox:8080' http://localhost:8080/api/v4/health/ready)" = 421
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/v4/metrics)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -X POST 'http://localhost:8080/api/v3/oauth/token?x=1')" = "308 http://localhost:8080/api/v4/oauth/token?x=1"
           docker compose exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/metrics')"
       - name: Storage check inside the API container
         run: docker compose exec -T api python -m app.cli storage check
@@ -347,7 +348,7 @@ jobs:
           openssl rand -base64 32 | tr -d '\n' > secrets/hub_db_admin_password
           chmod 444 secrets/hub_*
           cp example.env .env
-          sed -i "s#^HUB_PUBLIC_ORIGIN=.*#HUB_PUBLIC_ORIGIN=$SITE#; s#^HUB_AUTH_PUBLIC_API_URL=.*#HUB_AUTH_PUBLIC_API_URL=$SITE/api/v3#" .env
+          sed -i "s#^HUB_PUBLIC_ORIGIN=.*#HUB_PUBLIC_ORIGIN=$SITE#; s#^HUB_AUTH_PUBLIC_API_URL=.*#HUB_AUTH_PUBLIC_API_URL=$SITE/api/v4#" .env
           echo "HUB_IMAGE=ghcr.io/molecularfoundrycrucible/crucible-hub:1.8.0@sha256:2c1c9dc2bf6fd80deb164dd60b946c3874c385d8deab1f8e382f1a8a115d3651" >> .env
           docker compose pull hub hub-setup
           docker compose up -d --wait
@@ -356,13 +357,13 @@ jobs:
         run: |
           curl -fsS --cacert "$CA" "$SITE/hub/health" | grep -q '"sessions":"ok"'
           login=$(curl -sS --cacert "$CA" -o /dev/null -w '%{redirect_url}' "$SITE/hub/auth/login")
-          case "$login" in "$SITE/api/v3/oauth/authorize?"*) ;; *) echo "Hub login went to $login"; exit 1;; esac
+          case "$login" in "$SITE/api/v4/oauth/authorize?"*) ;; *) echo "Hub login went to $login"; exit 1;; esac
           test "$(curl -sS --cacert "$CA" -L -c "$RUNNER_TEMP/jar" -b "$RUNNER_TEMP/jar" -o "$RUNNER_TEMP/sign-in.html" -w '%{http_code}' "$login")" = 200
           grep -q 'autocomplete="current-password"' "$RUNNER_TEMP/sign-in.html"
           grep -q 'provider=orcid' "$RUNNER_TEMP/sign-in.html"
           orcid=$(curl -sS --cacert "$CA" -o /dev/null -w '%{redirect_url}' "$login&provider=orcid")
           case "$orcid" in "https://sandbox.orcid.org/oauth/authorize?"*) ;; *) echo "API login went to ${orcid%%\?*}"; exit 1;; esac
-          python3 -c "import sys; from urllib.parse import parse_qs, urlparse; q = parse_qs(urlparse(sys.argv[1]).query); assert q['redirect_uri'] == [sys.argv[2] + '/api/v3/oauth/callback/orcid'], q['redirect_uri']" "$orcid" "$SITE"
+          python3 -c "import sys; from urllib.parse import parse_qs, urlparse; q = parse_qs(urlparse(sys.argv[1]).query); assert q['redirect_uri'] == [sys.argv[2] + '/api/v4/oauth/callback/orcid'], q['redirect_uri']" "$orcid" "$SITE"
       - name: The Hub authenticates to the API with the shared secret
         working-directory: hub/deploy/compose
         run: |
@@ -413,7 +414,7 @@ jobs:
           gateway=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
           cd hub/deploy/compose
           docker compose down
-          sed -i "s#^COMPOSE_FILE=.*#COMPOSE_FILE=compose.yaml:compose.published.yaml#; s#^CRUCIBLE_API_BASE_URL=.*#CRUCIBLE_API_BASE_URL=http://$gateway:8080/api/v3#" .env
+          sed -i "s#^COMPOSE_FILE=.*#COMPOSE_FILE=compose.yaml:compose.published.yaml#; s#^CRUCIBLE_API_BASE_URL=.*#CRUCIBLE_API_BASE_URL=http://$gateway:8080/api/v4#" .env
           echo "HUB_BIND_ADDRESS=$gateway" >> .env
           docker compose up -d --wait
           cd ../../../deploy/compose
@@ -428,7 +429,7 @@ jobs:
           sed -i '/^COMPOSE_FILE=/d; /^CRUCIBLE_HUB_UPSTREAM=/d' .env
           docker compose up -d --wait
           test "$(curl -sS --cacert "$CA" -o /dev/null -w '%{http_code}' "$SITE/hub/")" = 404
-          curl -fsS --cacert "$CA" "$SITE/api/v3/health/ready" | grep -q '"schema_state":"current"'
+          curl -fsS --cacert "$CA" "$SITE/api/v4/health/ready" | grep -q '"schema_state":"current"'
           docker compose exec -T api python -c "from app.config import get_settings; assert not get_settings().hub.enabled"
       - name: Service logs
         if: failure()

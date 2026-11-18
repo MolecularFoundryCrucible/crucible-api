@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- The sign-in code page names the program the code is for and has a Copy button.
+
 ## [4.0.1] - 2026-11-17
 
 ### Added

@@ -1,12 +1,27 @@
 {% extends "sign_in_base.html" %}
-{% block title %}{% if code %}Your sign-in code{% else %}Sign-in not completed{% endif %}{% endblock %}
+{% block title %}{% if code %}Copy this code to {{ program }}{% else %}Sign-in not completed{% endif %}{% endblock %}
+{% block style %}
+    .copy-row { display: flex; gap: 0.5rem; align-items: stretch; }
+    .copy-row .facts { flex: 1; }
+    .copy-row .facts dd { font-size: 1.125rem; }
+    .copy-row .button { flex: none; }
+{% endblock %}
 {% block content %}
   {% if code %}
-    <p>Copy this code into the program you are signing in with, where it asks for it.</p>
-    <dl class="facts stacked">
-      <dt>Sign-in code</dt><dd class="code">{{ code }}</dd>
-    </dl>
-    <p class="note">It works once, within five minutes, and only in the program that started this sign-in. Never give it to anyone else.</p>
+    <div class="copy-row">
+      <dl class="facts stacked"><dt>Sign-in code</dt><dd class="code" id="sign-in-code">{{ code }}</dd></dl>
+      <button type="button" class="button primary" id="copy-code">Copy</button>
+    </div>
+    <script nonce="{{ script_nonce }}">
+      document.getElementById("copy-code").addEventListener("click", function () {
+        const button = this;
+        navigator.clipboard.writeText(document.getElementById("sign-in-code").textContent.trim()).then(function () {
+          button.textContent = "Copied";
+        }, function () {
+          button.textContent = "Select and copy";
+        });
+      });
+    </script>
   {% else %}
     <p>The sign-in was cancelled or refused{% if error %} ({{ error }}){% endif %}. Start it again from your program.</p>
   {% endif %}

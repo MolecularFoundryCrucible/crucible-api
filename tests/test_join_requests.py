@@ -1,4 +1,4 @@
-"""POST /access_groups/{group_name}/join and the join-request review flow.
+"""POST /projects/{project_ref}/join_requests and the join-request review flow.
 
 No test previously exercised these routes end to end, which is how a real
 bug shipped unnoticed: AccessGroupJoinRequest.group_name FK'd to
@@ -43,8 +43,8 @@ def test_join_request_stores_accessgroup_id_not_a_label(client, db_engine, auth_
     ag_id, _ = _setup(db_engine)
     auth_as("0000-0002", platform_role=PlatformRole.NONE)
 
-    resp = client.post("/access_groups/proj_x/join", json={"reason": "need access"})
-    assert resp.status_code == 200, resp.text
+    resp = client.post("/projects/proj_x/join_requests", json={"reason": "need access"})
+    assert resp.status_code == 201, resp.text
     assert resp.json()["group_name"] == "proj_x"
 
     with Session(db_engine) as session:
@@ -57,9 +57,9 @@ def test_duplicate_pending_request_is_rejected(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as("0000-0002", platform_role=PlatformRole.NONE)
 
-    resp1 = client.post("/access_groups/proj_x/join", json={})
-    assert resp1.status_code == 200, resp1.text
-    resp2 = client.post("/access_groups/proj_x/join", json={})
+    resp1 = client.post("/projects/proj_x/join_requests", json={})
+    assert resp1.status_code == 201, resp1.text
+    resp2 = client.post("/projects/proj_x/join_requests", json={})
     assert resp2.status_code == 409
 
 
@@ -103,15 +103,15 @@ def test_unknown_project_404s(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as("0000-0002", platform_role=PlatformRole.NONE)
 
-    resp = client.post("/access_groups/does-not-exist/join", json={})
+    resp = client.post("/projects/does-not-exist/join_requests", json={})
     assert resp.status_code == 404
 
 
 def test_lead_can_list_and_approve_join_request(client, db_engine, auth_as):
     ag_id, requester_id = _setup(db_engine)
     auth_as("0000-0002", platform_role=PlatformRole.NONE)
-    resp = client.post("/access_groups/proj_x/join", json={"reason": "please"})
-    assert resp.status_code == 200, resp.text
+    resp = client.post("/projects/proj_x/join_requests", json={"reason": "please"})
+    assert resp.status_code == 201, resp.text
     request_id = resp.json()["id"]
 
     auth_as("0000-0001", groups=[("proj_x", ag_id, Role.OWNER)])
@@ -138,7 +138,7 @@ def test_lead_can_list_and_approve_join_request(client, db_engine, auth_as):
 def test_non_lead_cannot_review(client, db_engine, auth_as):
     ag_id, _ = _setup(db_engine)
     auth_as("0000-0002", platform_role=PlatformRole.NONE)
-    resp = client.post("/access_groups/proj_x/join", json={})
+    resp = client.post("/projects/proj_x/join_requests", json={})
     request_id = resp.json()["id"]
 
     auth_as("0000-0002", groups=[], platform_role=PlatformRole.NONE)
@@ -149,7 +149,7 @@ def test_non_lead_cannot_review(client, db_engine, auth_as):
 def test_service_account_cannot_use_project_lead_standing(client, db_engine, auth_as):
     ag_id, _ = _setup(db_engine)
     auth_as("0000-0002", platform_role=PlatformRole.NONE)
-    created = client.post("/access_groups/proj_x/join", json={})
+    created = client.post("/projects/proj_x/join_requests", json={})
     request_id = created.json()["id"]
 
     auth_as(
@@ -168,7 +168,7 @@ def test_service_account_cannot_use_project_lead_standing(client, db_engine, aut
 def test_platform_role_admin_can_list_and_review(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as("0000-0002", platform_role=PlatformRole.NONE)
-    created = client.post("/access_groups/proj_x/join", json={})
+    created = client.post("/projects/proj_x/join_requests", json={})
     request_id = created.json()["id"]
 
     with Session(db_engine) as session:

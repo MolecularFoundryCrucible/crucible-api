@@ -61,7 +61,7 @@ Responses use the envelope `{total, limit, offset, items, next_cursor}`. A null 
 | Cursor only | `GET /account/apikeys`, `GET /account/sessions`, `GET /account/auth-events` and their `/users/{user_ref}/...` counterparts | 50, 200 |
 | Cursor only | `GET /datasets/facets`, `GET /samples/facets` | 100, 1000 |
 | Cursor only | `GET /join_requests/facets` | 50, 200 |
-| Offset only | `GET /files`, `GET /ingestion_requests`, `GET /postprocessing_runs`, `GET /service_accounts`, `GET /projects/{project_ref}/users`, `GET /datasets/{child_dataset_mfid}/parents`, `GET /datasets/{parent_dataset_mfid}/children`, `GET /samples/{child_sample_mfid}/parents`, `GET /samples/{parent_sample_mfid}/children`, `GET /account/join_requests` (deprecated) | 100, 1000 |
+| Offset only | `GET /files`, `GET /ingestion_requests`, `GET /postprocessing_runs`, `GET /service_accounts`, `GET /projects/{project_ref}/users`, `GET /datasets/{child_dataset_mfid}/parents`, `GET /datasets/{parent_dataset_mfid}/children`, `GET /samples/{child_sample_mfid}/parents`, `GET /samples/{parent_sample_mfid}/children` | 100, 1000 |
 | One page, no continuation | `GET /datasets/search`, `GET /samples/search`, `GET /projects/search`, `GET /instruments/search`, `GET /users/search`, `GET /resources/metadata/search` | 20, 50 |
 
 Search routes require `q` of at least 3 characters.

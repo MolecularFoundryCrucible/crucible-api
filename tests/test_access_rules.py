@@ -2,7 +2,6 @@ import pytest
 from sqlmodel import Session, select
 
 from app.tables import Dataset, Resource, ResourceACL, User, UserAccessGroupLink
-from app.utils.permissions import PlatformRole
 from tests.test_join_request_workflow import ALICE, BOB, CONTRIBUTOR, EDITOR, OWNER, act, world  # noqa: F401
 
 
@@ -27,13 +26,12 @@ def acl(db_engine, mfid):
     ("put", "/resources/{project}/access/users/" + ALICE),
     ("delete", "/resources/{project}/access/users/" + ALICE),
     ("put", "/resources/{project}/access/projects/bulk"),
-    ("post", "/resources/{project}/access_groups?group_name={bulk}&read=true&write=false"),
 ])
 def test_project_access_goes_through_membership(act, world, db_engine, method, path):
     project = world["films"][1]
     before = acl(db_engine, project)
     url = path.format(project=project, bulk=world["bulk"][1])
-    client = act("admin-x", platform_role=PlatformRole.ADMIN) if "access_groups" in path else act(OWNER)
+    client = act(OWNER)
     response = getattr(client, method)(url, **({"json": {"permission": "editor"}} if method == "put" else {}))
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "use_project_members"

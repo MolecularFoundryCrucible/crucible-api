@@ -39,15 +39,13 @@ from app.auth.registration import NotPending, StillReferenced, approve_pending_u
 from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
 from app.auth.tokens import revoke_all_tokens
 from app.services.proposals import find_mf_user_proposals, usable_discovered_projects
-from app.utils.user_utils import assert_profile_fields_available, assert_username_kept_for_password, assert_self_chosen_username_allowed, commit_user, person_by_reference, profile_conflict, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
+from app.utils.user_utils import assert_profile_fields_available, assert_username_kept_for_password, assert_self_chosen_username_allowed, commit_user, person_by_reference, profile_conflict, provision_user, resolve_user_by_identifier
 from app.utils.project_utils import project_fields, project_leads, resolve_project_reference
 from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
 from app.api.routes.projects import PROJECT_PAGINATION
 from app.models.users import UserCreate, UserPublicRead, UserRead, UserUpdate
-from app.models.response_schemas import ApiKeyVerify, DetailResponse
 from app.models.projects import ProjectWithLead
-from app.models.access_groups import AccessGroupRead
 from app.models.access import EffectiveAccess, EffectiveResourceAccessRead
 from app.models.query_params import SortDirection, UserListQuery, UserProjectListQuery, UserSearchField, UserSort
 from app.models.users import (
@@ -454,25 +452,6 @@ def _admin_key_status(session, caller: Principal, user: User) -> Optional[Servic
     return _key_status(newest_key(session, user.id))
 
 
-@router.get("/users/{user_ref}/apikey/verify", response_model=ApiKeyVerify, deprecated=True)
-def verify_user_apikey(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)], response: Response):
-    '''Returns validity and expiry info for the given user's API key. Admin only.
-
-    Deprecated: administrators get the same status as `api_key_status` from GET /users/{user_ref}.
-    '''
-    user_id = _canonical_user_id(user_ref)
-    require_platform_admin(auth_res)
-    response.headers["Deprecation"] = API_KEY_VERIFY_DEPRECATION
-
-    with Session(get_engine()) as session:
-        user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        status = _admin_key_status(session, auth_res, user)
-        if status is None:
-            raise HTTPException(status_code=404, detail="No API key found for this user")
-        return ApiKeyVerify(**status.model_dump())
-
 @router.post("/users", response_model=UserRead, responses={409: {"description": "Identifier, username, or email already in use; username and email conflicts use `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [...], \"message\": ...}}`"}})
 def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_info: UserCreate,
                 project_ids: Optional[List[str]] = Body(default=None)):
@@ -780,47 +759,6 @@ def read_user_access_to_dataset(dataset_mfid: DatasetMfid, user_ref: UserRef, au
         )
 
 
-@router.post(
-    "/users/{user_ref}/access_groups/{group_name}",
-    response_model=AccessGroupRead,
-    deprecated=True,
-)
-def add_user_to_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], user_ref: UserRef, group_name: str):
-    '''Add a user to an access group. Not for project groups. Use
-    POST /projects/{project_ref}/users/{user_ref}, which applies the project's own
-    role cap instead of platform-admin-only.'''
-    user_id = _canonical_user_id(user_ref)
-    require_platform_admin(auth_res)
-    with Session(get_engine()) as session:
-        user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
-        if ag is None:
-            raise HTTPException(status_code=404, detail="Access group not found")
-        if ag.group_type == AccessGroupType.IDENTITY.value:
-            raise HTTPException(status_code=409, detail="Identity-group membership cannot be changed")
-        if ag.group_type == AccessGroupType.SYSTEM.value:
-            raise HTTPException(status_code=409, detail="System-group membership cannot be changed")
-        if ag.group_type == AccessGroupType.PROJECT.value:
-            raise HTTPException(
-                status_code=400,
-                detail=f"'{group_name}' is a project. Use POST /projects/{group_name}/users/{user_id} instead.")
-        if ag.group_type == AccessGroupType.INSTRUMENT_MEMBER.value:
-            raise HTTPException(
-                status_code=409,
-                detail="Instrument membership is managed with POST /instruments/{instrument_ref}/users/{user_ref}.")
-        if ag.group_type == AccessGroupType.INSTRUMENT.value and not user.is_service_account:
-            raise HTTPException(
-                status_code=409,
-                detail=(f"'{group_name}' is an instrument group, which holds service accounts only. "
-                        "Add people to the instrument with POST /instruments/{instrument_ref}/users/{user_ref}."))
-        ag = sql_add_user_to_access_group(user_id, group_name, session)
-        session.commit()
-        session.refresh(ag)
-    return ag
-
-
 @router.get("/users/{user_ref}/access_groups", response_model=List[str])
 def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_user)], user_ref: UserRef):
     user_id = _canonical_user_id(user_ref)
@@ -837,53 +775,6 @@ def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_use
             .where(UserAccessGroupLink.user_id == user.id)
         ).all()
         return([ag.group_name for ag in user_ags])
-
-
-@router.delete(
-    "/users/{user_ref}/access_groups/{group_name}",
-    response_model=DetailResponse,
-    deprecated=True,
-)
-def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], user_ref: UserRef, group_name: str):
-    '''Remove a user from an access group. Not for project groups. Use
-    DELETE /projects/{project_ref}/users/{user_ref}, which keeps membership records
-    in step instead of only revoking access-group standing.'''
-    user_id = _canonical_user_id(user_ref)
-    require_platform_admin(auth_res)
-    with Session(get_engine()) as session:
-        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
-        if ag is None:
-            raise HTTPException(status_code=404, detail="Access group not found")
-        if ag.group_type == AccessGroupType.IDENTITY.value:
-            raise HTTPException(status_code=409, detail="Identity-group membership cannot be changed")
-        if ag.group_type == AccessGroupType.SYSTEM.value:
-            raise HTTPException(status_code=409, detail="System-group membership cannot be changed")
-        if ag.group_type == AccessGroupType.PROJECT.value:
-            raise HTTPException(
-                status_code=400,
-                detail=f"'{group_name}' is a project. Use DELETE /projects/{group_name}/users/{user_id} instead.")
-        if ag.group_type == AccessGroupType.INSTRUMENT_MEMBER.value:
-            raise HTTPException(
-                status_code=409,
-                detail="Instrument membership is managed with DELETE /instruments/{instrument_ref}/users/{user_ref}.")
-
-        user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        link = session.exec(
-            select(UserAccessGroupLink).where(
-                UserAccessGroupLink.user_id == user.id,
-                UserAccessGroupLink.accessgroup_id == ag.id
-            )
-        ).one_or_none()
-
-        if link is None:
-            raise HTTPException(status_code=404, detail="User is not a member of this access group")
-
-        session.delete(link)
-        session.commit()
-        return {"detail": f"User {user_id} removed from access group {group_name}"}
 
 
 @router.get("/users/{user_ref}/projects", response_model=PaginatedResponse[ProjectWithLead])

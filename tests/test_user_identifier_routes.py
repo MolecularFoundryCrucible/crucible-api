@@ -2,7 +2,6 @@ from sqlmodel import Session
 
 from app.tables import User
 from app.utils.permissions import PlatformRole
-from tests.people import add_old_style_key, internal_id
 
 
 PERSON_ORCID = "0000-0001-2345-6789"
@@ -186,13 +185,10 @@ def test_user_routes_document_user_ref(client):
     operations = (
         ("/users/{user_ref}", "get"),
         ("/users/{user_ref}", "patch"),
-        ("/users/{user_ref}/apikey/verify", "get"),
         ("/users/{user_ref}/apikey", "delete"),
         ("/users/{user_ref}/platform_role", "patch"),
         ("/users/{user_ref}/datasets/{dataset_mfid}", "get"),
-        ("/users/{user_ref}/access_groups/{group_name}", "post"),
         ("/users/{user_ref}/access_groups", "get"),
-        ("/users/{user_ref}/access_groups/{group_name}", "delete"),
         ("/users/{user_ref}/projects", "get"),
         ("/projects/{project_ref}/users/{user_ref}", "post"),
         ("/projects/{project_ref}/users/{user_ref}", "patch"),
@@ -213,21 +209,3 @@ def test_user_routes_document_user_ref(client):
     assert "/users/{user_id}" not in schema["paths"]
 
 
-def test_deprecated_key_verify_matches_admin_key_status_for_both_date_formats(client, db_engine, auth_as):
-    from datetime import datetime, timedelta, timezone
-    _setup(db_engine)
-    recent = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
-    with Session(db_engine) as session:
-        add_old_style_key(session, internal_id(session, PERSON_ORCID), "k1", recent)
-        add_old_style_key(session, internal_id(session, OTHER_ORCID), "k2", "2024-01-02")
-        session.commit()
-    auth_as("admin", platform_role=PlatformRole.ADMIN)
-
-    for orcid, valid in ((PERSON_ORCID, True), (OTHER_ORCID, False)):
-        verify = client.get(f"/users/{orcid}/apikey/verify")
-        assert verify.status_code == 200, verify.text
-        assert verify.headers["deprecation"].startswith("@")
-        assert verify.json()["valid"] is valid
-        status = client.get(f"/users/{orcid}").json()["api_key_status"]
-        assert verify.json() == status
-    assert client.get(f"/users/{SERVICE_ACCOUNT_MFID}/apikey/verify").status_code == 404

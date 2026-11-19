@@ -109,22 +109,6 @@ def test_publish_failure_records_failed_run(client, datasets, auth_as, queue):
     assert (run.status, run.error, run.finished_at is not None) == ("failed", "Could not queue the run", True)
 
 
-@pytest.mark.parametrize("path, pipeline", [
-    ("carrier_segmentation", "carrier_segmentation"),
-    ("insitu_spec_aggregation", "insitu_aggregation"),
-    ("rga_analysis", "rga_analysis"),
-    ("mosaic_stitch", "mosaic_stitch"),
-])
-def test_deprecated_routes_start_runs_with_the_same_checks(client, datasets, auth_as, queue, path, pipeline):
-    as_member(auth_as, Role.VIEWER)
-    assert client.post(f"/datasets/ds1/{path}").status_code == 403
-    as_member(auth_as, Role.CONTRIBUTOR)
-    response = client.post(f"/datasets/ds1/{path}")
-    assert response.status_code == 200, response.text
-    assert response.json()["pipeline"] == pipeline
-    assert [run.pipeline for run in runs(datasets)] == [pipeline]
-
-
 def test_list_and_read_runs_follow_dataset_access(client, datasets, auth_as, queue):
     as_member(auth_as, Role.CONTRIBUTOR)
     first = client.post("/datasets/ds1/postprocess", json={"pipeline": "rga_analysis"}).json()["run_id"]

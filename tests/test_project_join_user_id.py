@@ -44,7 +44,7 @@ def _rename(db_engine, old, new):
 def test_join_request_follows_the_people_when_their_unique_id_changes(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as(REQUESTER, platform_role=PlatformRole.NONE)
-    request_id = client.post("/access_groups/proj_x/join", json={}).json()["id"]
+    request_id = client.post("/projects/proj_x/join_requests", json={}).json()["id"]
     auth_as(ADMIN, groups=[], platform_role=PlatformRole.ADMIN)
     assert client.patch(f"/join_requests/{request_id}", json={"status": "rejected"}).status_code == 200
     _rename(db_engine, REQUESTER, NEW_REQUESTER)
@@ -64,7 +64,7 @@ def test_join_request_follows_the_people_when_their_unique_id_changes(client, db
 def test_withdraw_checks_the_requester_by_internal_id(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as(REQUESTER, platform_role=PlatformRole.NONE)
-    request_id = client.post("/access_groups/proj_x/join", json={}).json()["id"]
+    request_id = client.post("/projects/proj_x/join_requests", json={}).json()["id"]
     _rename(db_engine, REQUESTER, NEW_REQUESTER)
     auth_as(NEW_REQUESTER, platform_role=PlatformRole.NONE)
     response = client.post(f"/join_requests/{request_id}/withdraw")
@@ -85,7 +85,7 @@ def test_project_lead_is_read_from_the_lead_user(client, db_engine, auth_as):
 def test_adding_a_requester_directly_closes_their_request_by_internal_id(client, db_engine, auth_as):
     mfid = _setup(db_engine)
     auth_as(REQUESTER, platform_role=PlatformRole.NONE)
-    request_id = client.post("/access_groups/proj_x/join", json={}).json()["id"]
+    request_id = client.post("/projects/proj_x/join_requests", json={}).json()["id"]
     _rename(db_engine, REQUESTER, NEW_REQUESTER)
     auth_as(ADMIN, groups=[], platform_role=PlatformRole.ADMIN)
     response = client.post(f"/projects/{mfid}/users/{NEW_REQUESTER}")

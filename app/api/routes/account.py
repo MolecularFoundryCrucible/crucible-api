@@ -10,7 +10,6 @@ from sqlalchemy import delete, exists, func, or_
 from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
-from app.api.removed import REMOVED_RESPONSE, removed
 from app.api.dependencies import get_engine
 from app.general_utils import get_utc_datetime, if_match_satisfied
 from app.tables import Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
@@ -158,18 +157,6 @@ def get_account_join_requests(
                                    requested_before=None, reviewed_after=None, reviewed_before=None, q=None)
     with Session(get_engine()) as session:
         return list_join_requests_page(session, auth_res, filters, JoinRequestSort.REQUEST_TIME, SortDirection.DESC, limit, None, offset)
-
-
-@router.get("/account/apikey", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
-def get_account_apikey():
-    """Removed: API keys are stored hashed and cannot be read back. Use POST /account/apikeys."""
-    removed("Reading or regenerating a single API key was removed. Create a named key with POST /account/apikeys (it is shown once), list them with GET /account/apikeys and revoke one with DELETE /account/apikeys/{key_id}.")
-
-
-@router.post("/account/apikey/regenerate", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
-def regenerate_account_apikey():
-    """Removed: create keys with POST /account/apikeys and revoke them with DELETE /account/apikeys/{key_id}."""
-    removed("Reading or regenerating a single API key was removed. Create a named key with POST /account/apikeys (it is shown once), list them with GET /account/apikeys and revoke one with DELETE /account/apikeys/{key_id}.")
 
 
 @router.get("/account/verify", response_model=ApiKeyVerify, responses={404: {"description": "A Hub session's account has no API key"}})

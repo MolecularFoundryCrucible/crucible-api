@@ -19,7 +19,7 @@ Samples and datasets have two kinds of relationship:
 | `GET /resources/{mfid}/links` | Immediate lineage and associations of one record |
 | `GET /samples?dataset_mfid=`, `GET /datasets?sample_mfid=` | Associated records as a filtered collection |
 
-Creating a link between records of the same project requires `contributor` on the parent (the dataset, for an association) and read access to the other record; across projects it requires `editor` on both. Linking a record to itself returns 422 `self_link`, and a lineage link that would create a cycle returns 409 `lineage_cycle`. Re-creating an existing lineage link without `relationship_type` keeps the stored type. Records pending deletion cannot be linked (409 `pending_deletion`). `GET /datasets/{dataset_mfid}/samples` was removed in 4.0.0 and returns 410 `route_removed`; use `GET /samples?dataset_mfid=`.
+Creating a link between records of the same project requires `contributor` on the parent (the dataset, for an association) and read access to the other record; across projects it requires `editor` on both. Linking a record to itself returns 422 `self_link`, and a lineage link that would create a cycle returns 409 `lineage_cycle`. Re-creating an existing lineage link without `relationship_type` keeps the stored type. Records pending deletion cannot be linked (409 `pending_deletion`). `GET /datasets/{dataset_mfid}/samples` was removed in 4.0.0; use `GET /samples?dataset_mfid=`.
 
 ## Bounded graph
 

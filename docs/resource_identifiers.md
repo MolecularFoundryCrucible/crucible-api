@@ -79,7 +79,7 @@ Exact user lookups return the same representation as `GET /users/{user_ref}`: th
 
 `POST /users/resolve` is deprecated; use the repeatable `unique_id` and `username` filters of `GET /users`. Its body field `orcids` is matched against `unique_id`, so it also accepts service-account MFIDs.
 
-`GET /users/by-username/{username}` was removed in 4.0.0 and returns 410 `route_removed`; use `GET /users/{user_ref}`.
+`GET /users/by-username/{username}` was removed in 4.0.0; use `GET /users/{user_ref}`.
 
 ## Naming exceptions
 

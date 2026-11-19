@@ -114,6 +114,6 @@ Singleton routes accept only representation parameters such as `include_metadata
 
 ## Removed routes
 
-`GET /users/{user_ref}/datasets` and `GET /users/{user_ref}/samples` were removed in 4.0.0 and return 410 `route_removed`; use `GET /datasets?accessible_to_user=` and `GET /samples?accessible_to_user=`. `GET /datasets/{dataset_mfid}/samples` was removed; use `GET /samples?dataset_mfid=`.
+`GET /users/{user_ref}/datasets` and `GET /users/{user_ref}/samples` were removed in 4.0.0; use `GET /datasets?accessible_to_user=` and `GET /samples?accessible_to_user=`. `GET /datasets/{dataset_mfid}/samples` was removed; use `GET /samples?dataset_mfid=`.
 
 Sorting and time filters use `creation_time` and `modification_time`; see [Timestamps](timestamps.md).

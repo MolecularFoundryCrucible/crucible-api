@@ -18,7 +18,6 @@ from app.services.instrument_members import grant_dataset as grant_instrument_me
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, feature_disabled_response
-from app.api.removed import REMOVED_RESPONSE, removed
 from app.general_utils import get_utc_datetime
 from app.tables import (
     AccessGroup,
@@ -1388,12 +1387,6 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": dsid})
 
 
-@router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
-def create_ds_file_ingestion_request(dataset_mfid: str, file_id: str):
-    """Removed: use POST /files/{file_id}/ingest."""
-    removed("This route was removed. Request ingestion of a file with POST /files/{file_id}/ingest.")
-
-
 @router.get("/datasets/{dataset_mfid}/keywords", response_model=List[KeywordRead])
 def list_keywords_for_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid):
 
@@ -1492,9 +1485,4 @@ def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)],
         session.commit()
         return _dataset_sample_link_response(ds, samp)
 
-
-@router.get("/datasets/{dataset_mfid}/samples", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
-def read_samples_in_dataset(dataset_mfid: str):
-    """Removed: use GET /samples?dataset_mfid={dataset_mfid}."""
-    removed("This route was removed. List a dataset's samples with GET /samples?dataset_mfid={dataset_mfid}.")
 

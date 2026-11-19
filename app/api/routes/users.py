@@ -10,7 +10,6 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.api.removed import REMOVED_RESPONSE, removed
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import DatasetMfid, UserRef
 from app.general_utils import is_orcid, is_valid_mfid
@@ -417,12 +416,6 @@ def search_users(
     return PaginatedResponse(limit=limit, items=results)
 
 
-@router.get("/users/by-username/{username}", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
-def get_user_by_username(username: str):
-    """Removed: use GET /users/{user_ref}, which takes a username."""
-    removed("This route was removed. GET /users/{user_ref} takes a username, an ORCID or a service-account MFID.")
-
-
 def _canonical_user_id(user_ref: str) -> str:
     """Map a username, email or linked ORCID path segment to the user's unique_id. MFIDs and
     unresolvable values pass through so the route's own exact lookup and error handling apply
@@ -459,18 +452,6 @@ def _admin_key_status(session, caller: Principal, user: User) -> Optional[Servic
     if not caller.is_platform_admin:
         return None
     return _key_status(newest_key(session, user.id))
-
-
-@router.post("/users/{user_ref}/apikey", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
-def get_or_provision_user_apikey(user_ref: str):
-    """Removed: people create their own keys with POST /account/apikeys."""
-    removed("Reading, creating or regenerating someone's API key was removed. People create their own keys with POST /account/apikeys; administrators list and revoke them with GET and DELETE /users/{user_ref}/apikeys.")
-
-
-@router.post("/users/{user_ref}/apikey/regenerate", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
-def regenerate_user_apikey(user_ref: str):
-    """Removed: administrators revoke keys with DELETE /users/{user_ref}/apikeys/{key_id}."""
-    removed("Reading, creating or regenerating someone's API key was removed. People create their own keys with POST /account/apikeys; administrators list and revoke them with GET and DELETE /users/{user_ref}/apikeys.")
 
 
 @router.get("/users/{user_ref}/apikey/verify", response_model=ApiKeyVerify, deprecated=True)
@@ -771,18 +752,6 @@ def delete_user_apikey(
         session.commit()
         forget_cached_keys(session, user.id)
     return Response(status_code=204)
-
-
-@router.get("/users/{user_ref}/datasets", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
-def read_user_datasets(user_ref: str):
-    """Removed: use GET /datasets?accessible_to_user={user_ref}."""
-    removed("This route was removed. List the datasets a person can read with GET /datasets?accessible_to_user={user_ref}.")
-
-
-@router.get("/users/{user_ref}/samples", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
-def read_user_samples(user_ref: str):
-    """Removed: use GET /samples?accessible_to_user={user_ref}."""
-    removed("This route was removed. List the samples a person can read with GET /samples?accessible_to_user={user_ref}.")
 
 
 @router.get("/users/{user_ref}/datasets/{dataset_mfid}", response_model=EffectiveResourceAccessRead)

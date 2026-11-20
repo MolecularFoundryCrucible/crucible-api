@@ -1,6 +1,6 @@
 ---
 name: run-checks
-description: Run this repository's checks on a local machine - the test suite, the PostgreSQL-backed tests, the linters, and the Docker Compose bundle jobs from CI. Use before opening a pull request, when asked whether something passes, or when GitHub Actions is unavailable.
+description: Run this repository's checks on a local machine - the test suite, the PostgreSQL-backed tests, the linters, and the self-hosting job from CI. Use before opening a pull request, when asked whether something passes, or when GitHub Actions is unavailable.
 ---
 
 # Run the checks
@@ -37,16 +37,15 @@ SLUG_INDEX_TEST_DATABASE_URL=$B/crucible_slug_index_test EMAIL_INDEX_TEST_DATABA
 
 Run these for any change to `app/tables.py`, `migrations/`, sign-in, or SQL that SQLite treats differently.
 
-## 3. The bundle jobs
+## 3. The self-hosting job
 
-For changes to `deploy/compose/`, the `Dockerfile`, startup, settings, or sign-in pages, run the CI job itself. It builds the image, starts the bundle in a temporary copy of the checkout, and removes it afterwards:
+For changes to the `Dockerfile`, startup, settings, or sign-in pages, run the CI job itself. It builds the image and runs it in the crucible-selfhost bundle (a sibling checkout, else cloned), in a temporary copy of the checkout, and removes it afterwards:
 
 ```bash
-uv run python agent-skills/run-checks/run_ci_job.py compose-smoke   # fresh install, password sign-in, backup
-uv run python agent-skills/run-checks/run_ci_job.py compose-hub     # with the Hub and ORCID overlays
+uv run python agent-skills/run-checks/run_ci_job.py selfhost
 ```
 
-Each takes a few minutes and needs Docker with ports 8080 and 8443 free on 127.0.0.1. The last line is `JOB PASSED` or `JOB FAILED`.
+It takes a few minutes and needs Docker with port 8080 free on 127.0.0.1. The bundle's own jobs, with the Hub and ORCID, run in crucible-selfhost. The last line is `JOB PASSED` or `JOB FAILED`.
 
 ## 4. Workflow files
 

@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Removed
 
+- The Docker Compose bundle and its guide moved to [crucible-selfhost](https://github.com/MolecularFoundryCrucible/crucible-selfhost), which runs the published image.
 - `python -m app.cli api-keys import`: the migration copies the keys.
 
 ### Added
@@ -26,7 +27,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - New MFIDs follow the final UUIDv7 standard (mfid 2.0), so they sort before MFIDs created earlier; MFIDs are tie-breakers only, never a creation order.
 - The sign-in code page names the program the code is for and has a Copy button.
-- The Compose bundle serves the API at `/api/v4`, and everything under `/api/v3` answers 308 to it; an existing installation registers the new ORCID callback and points the Hub at `/api/v4` (`deploy/compose/docs/operations.md`).
+- The Compose bundle serves the API at `/api/v4`, and everything under `/api/v3` answers 308 to it; an existing installation registers the new ORCID callback and points the Hub at `/api/v4` (`compose/docs/operations.md` in crucible-selfhost).
 
 ## [4.0.1] - 2026-11-17
 

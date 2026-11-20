@@ -11,7 +11,7 @@ The Molecular Foundry runs it at [crucible.lbl.gov](https://crucible.lbl.gov/api
 - **Authentication**: OAuth 2.0 authorization code flow with PKCE and device authorization, backed by OpenID Connect providers such as ORCID or by local passwords, plus named API keys for scripts and instruments.
 - **File storage**: multipart uploads and downloads through signed URLs on S3-compatible object storage, with versioned file replacement.
 - **Search**: filtering, sorting and pagination on list endpoints, with trigram and full-text search over names and metadata.
-- **Operations**: Alembic migrations, an administrative CLI, health and Prometheus metrics endpoints, and a Docker Compose bundle for single-host deployments.
+- **Operations**: Alembic migrations, an administrative CLI, health and Prometheus metrics endpoints, and a published container image.
 - **Optional integrations**: data ingestion and post-processing over RabbitMQ, label printing over MQTT, and project membership from a proposal database.
 
 ## Getting started
@@ -24,7 +24,7 @@ The Molecular Foundry runs it at [crucible.lbl.gov](https://crucible.lbl.gov/api
 
 ### Deployment
 
-[`deploy/compose/`](deploy/compose/README.md) provides a Docker Compose bundle that runs the API with PostgreSQL, SeaweedFS and Caddy on a single host. For other environments, build the image from the `Dockerfile` and refer to the [authentication settings](docs/sign_in_operations.md), [storage settings](docs/uploads.md) and [database migrations](migrations/README.md).
+Each release is published as `ghcr.io/molecularfoundrycrucible/crucible-api:<version>` for amd64 and arm64. [crucible-selfhost](https://github.com/MolecularFoundryCrucible/crucible-selfhost) installs it with PostgreSQL, the file store, the Hub and a reverse proxy. For other environments, refer to the [authentication settings](docs/sign_in_operations.md), [storage settings](docs/uploads.md) and [database migrations](migrations/README.md).
 
 ### Development
 
@@ -44,7 +44,7 @@ Run the test suite with `uv run pytest -q`.
 | Document | Contents |
 |---|---|
 | [Documentation index](docs/README.md) | Design and behavior of each part of the API |
-| [Installation guide](deploy/compose/README.md) | Self-hosting with Docker Compose |
+| [crucible-selfhost](https://github.com/MolecularFoundryCrucible/crucible-selfhost) | Installing and running your own Crucible |
 | [Upgrade guide](docs/upgrading/3.3-to-4.0.md) | Migrating from 3.3.1 to 4.0.0 |
 | [Changelog](CHANGELOG.md) | Changes in each release |
 

@@ -134,7 +134,7 @@ Google's S3 interface is not supported, because it does not check part or whole-
 
 Part URLs are presigned with SigV4 and bind the part's CRC32C and length (`x-amz-checksum-crc32c` and `Content-Length`, both returned as headers to send), so the store refuses a part with other content. Many S3 servers do not report a whole-object CRC32C, so the API combines the authorized part checksums and sizes and compares the result with the completion claim. When the store lists each part's own CRC32C (Versity S3 Gateway does; SeaweedFS 4.51 does not), the API first compares those with the authorized values; otherwise the check depends on the store enforcing the signed checksum. A store is supported only if `storage check` passes on it.
 
-Signed URLs embed `S3_PUBLIC_URL`: a client that reaches the store by another address receives signature errors. Objects are recorded with `storage_backend` `"gcs"`, which means "stored by the API" on every backend ([Remote file records](remote_file_records.md)). The Docker Compose bundle and external S3 stores are covered in the [installation guide](../deploy/compose/docs/storage.md).
+Signed URLs embed `S3_PUBLIC_URL`: a client that reaches the store by another address receives signature errors. Objects are recorded with `storage_backend` `"gcs"`, which means "stored by the API" on every backend ([Remote file records](remote_file_records.md)). The Docker Compose bundle and external S3 stores are covered in the [installation guide](https://github.com/MolecularFoundryCrucible/crucible-selfhost/blob/main/compose/docs/storage.md).
 
 ## Operations
 

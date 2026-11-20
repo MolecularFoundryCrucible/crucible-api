@@ -1,6 +1,6 @@
 """Run one job of .github/workflows/tests.yml on this machine, in a temporary copy of the checkout.
 
-    uv run python agent-skills/run-checks/run_ci_job.py selfhost
+    uv run python .agents/skills/run-checks/run_ci_job.py selfhost
 
 Only `run` steps are executed. A checkout step that names another repository is cloned from a
 sibling directory of this checkout when one exists, else with `gh repo clone`.
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 
 
 def copy_checkout(target: Path) -> None:

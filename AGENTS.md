@@ -1,6 +1,6 @@
 # Crucible API
 
-FastAPI and SQLModel service on PostgreSQL that stores scientific records and decides who may see them.
+FastAPI and SQLModel service on PostgreSQL that stores scientific records for the Crucible Data Platform.
 
 ## Rules
 
@@ -9,8 +9,6 @@ FastAPI and SQLModel service on PostgreSQL that stores scientific records and de
 - Every change to a table in `app/tables.py` needs an Alembic revision; keep a single head.
 - Routes never take or return a table class; each gets its own model in `app/models/`.
 - A change that API users, operators or clients can see gets one line under `Unreleased` in `CHANGELOG.md`.
-- No code comments unless the reason is not obvious from the code.
-- Other repositories (Hub, nano-crucible, deploy, Lens) are not edited from here; tell the user what they need.
 
 ## Where things are
 
@@ -29,11 +27,11 @@ FastAPI and SQLModel service on PostgreSQL that stores scientific records and de
 
 ## Skills
 
-Workflows are in `agent-skills/`, linked from `.claude/skills/`.
+Workflows are in `.agents/skills/`, one folder per skill with its `SKILL.md`.
 
 | Skill | Use when |
 |---|---|
-| `run-checks` | Running tests, the PostgreSQL tests or the bundle jobs locally |
+| `run-checks` | Running tests, the PostgreSQL tests or the self-hosting job locally |
 | `change-database-schema` | Editing a table, writing a migration or a data change |
 | `add-or-change-route` | Adding, changing, deprecating or removing a route |
 | `release` | Preparing a release pull request |

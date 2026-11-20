@@ -25,14 +25,12 @@ Content-Type: application/json
 - Resubmitting the current instrument changes nothing except ensuring that its two grants exist.
 - The response (`DatasetInstrumentRead`) contains `dataset_mfid`, `instrument`, `previous_instrument` and `previous_instrument_name`.
 
-An instrument cannot be removed from a dataset: there is no `DELETE` route for it.
+At the moment, an instrument cannot be removed from a dataset: there is no `DELETE` route for it.
 
 ## Generic update
 
-`PATCH /datasets/{dataset_mfid}` does not change the instrument. Its deprecated `instrument_id` field accepts only the current value, compared case-insensitively, so that clients resubmitting a full record do not fail; any other value, or `null` on a dataset with an instrument, returns 409. `instrument_name` returns 422 unless `null`. Clients omit both fields.
+`PATCH /datasets/{dataset_mfid}` does not change the instrument. Its deprecated `instrument_id` field accepts only the current value, any other value, or `null` on a dataset with an instrument, returns 409.
 
 ## Display name
 
 Dataset responses read `instrument_id`, `instrument_name` and the nested `instrument` reference from the assigned instrument, so a rename appears in every dataset response. A dataset without an instrument returns `null` for all three.
-
-`GET /datasets` has no `instrument_name` filter (422); filter by `instrument_mfid` or `instrument_id`.

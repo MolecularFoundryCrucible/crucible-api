@@ -1,6 +1,6 @@
 ---
 name: run-checks
-description: Run this repository's checks on a local machine - the test suite, the PostgreSQL-backed tests, the linters, and the self-hosting job from CI. Use before opening a pull request, when asked whether something passes, or when GitHub Actions is unavailable.
+description: Use when about to open a pull request, when asked whether something passes, or to reproduce a CI job locally - the test suite, the PostgreSQL-backed tests, pyflakes, actionlint and the self-hosting job.
 ---
 
 # Run the checks
@@ -16,14 +16,14 @@ uv run pytest -q tests/test_x.py      # one file while working
 uv run python -m pyflakes app scripts # unused or undefined names
 ```
 
-Tests never read a local `.env`. The suite takes about two minutes.
+Tests never read a local `.env`. The suite takes about three minutes.
 
 ## 2. PostgreSQL-backed tests
 
-About 90 tests skip without a server. They need PostgreSQL 17 with pgvector and four databases:
+About 120 tests skip without a server. They need PostgreSQL 17 with pgvector and four databases:
 
 ```bash
-docker run -d --rm --name crucible-pg-test -e POSTGRES_PASSWORD=test -p 55432:5432 pgvector/pgvector:0.8.1-pg17
+docker run -d --rm --name crucible-pg-test -e POSTGRES_PASSWORD=test -p 55432:5432 pgvector/pgvector:0.8.7-pg17
 for db in crucible_pg_test crucible_hub_auth_test crucible_slug_index_test crucible_email_index_test; do
   docker exec crucible-pg-test psql -U postgres -c "CREATE DATABASE $db"
 done
@@ -42,7 +42,7 @@ Run these for any change to `app/tables.py`, `migrations/`, sign-in, or SQL that
 For changes to the `Dockerfile`, startup, settings, or sign-in pages, run the CI job itself. It builds the image and runs it in the crucible-selfhost bundle (a sibling checkout, else cloned), in a temporary copy of the checkout, and removes it afterwards:
 
 ```bash
-uv run python agent-skills/run-checks/run_ci_job.py selfhost
+uv run python .agents/skills/run-checks/run_ci_job.py selfhost
 ```
 
 It takes a few minutes and needs Docker with port 8080 free on 127.0.0.1. The bundle's own jobs, with the Hub and ORCID, run in crucible-selfhost. The last line is `JOB PASSED` or `JOB FAILED`.

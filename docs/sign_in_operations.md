@@ -134,4 +134,4 @@ Remove every client from the list (and unset `HUB_AUTH_ENABLED`), then restart. 
 
 - The API never logs query strings, request bodies, keys or tokens, and its own access log is disabled, because authentication callbacks carry one-time codes in the URL.
 - Configure every reverse proxy, load balancer and tracer in front of the API the same way: no query strings, `Authorization` headers, cookies or redirect `Location` headers in logs.
-- Limit authentication routes (`/oauth/*`, `/auth/hub/*`) to small request bodies; the bundle's Caddy configuration allows 8 KB.
+- Limit authentication routes (`/oauth/*`, `/auth/hub/*`) to small request bodies; the Caddy configuration in crucible-selfhost allows 8 KB.

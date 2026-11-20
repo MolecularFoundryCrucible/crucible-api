@@ -1,6 +1,6 @@
 # Instrument access
 
-This page covers who manages an instrument, who reads the datasets recorded with it, and how service accounts bound to an instrument reach those datasets. Roles, grants and the service-account ceiling are defined in [Permissions](permissions.md#instruments-and-service-accounts); "platform administrator" below means an administrator in elevated mode ([explicit privilege mode](explicit_privilege_mode.md)).
+This page covers who manages an instrument, who reads the datasets recorded with it, and how service accounts bound to an instrument reach those datasets. Roles, grants and the service-account ceiling are defined in [Permissions](permissions.md#instruments-and-service-accounts).
 
 Every authenticated caller can read every instrument record. An instrument has two groups:
 
@@ -9,7 +9,7 @@ Every authenticated caller can read every instrument record. An instrument has t
 | Members (`instrument_member`, named `<instrument MFID>:members`) | People, as `owner`, `admin`, `editor` or `viewer` | `owner` | `viewer` |
 | Operator group (`instrument`, named `<instrument MFID>`) | Bound service accounts only | None | `contributor` |
 
-The members group is the instrument record's only grant apart from public access, as a project's own group is for a project. A member's role on the instrument is therefore their membership role. On the instrument's datasets every member reaches `viewer` and never more: editing, sharing or deleting a dataset still requires owning it, a project role or an explicit share.
+A member's role on the instrument is their membership role. On the instrument's datasets every member reaches `viewer` and never more: editing, sharing or deleting a dataset still requires owning it, a project role or an explicit share.
 
 ## Members
 

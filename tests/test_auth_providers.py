@@ -1,13 +1,10 @@
 import json
-import re
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
-import yaml
 from cachetools import TTLCache
 from joserfc import jwt
 from joserfc.jwk import OctKey, RSAKey
@@ -195,26 +192,6 @@ def test_secret_of_an_unlisted_provider_is_not_a_secret_setting(monkeypatch):
     set_providers(monkeypatch, LAB_ENTRY)
     with pytest.raises(KeyError):
         config.configured_secret("OIDC_OTHER_CLIENT_SECRET")
-
-
-REPO = Path(__file__).resolve().parents[1]
-
-
-def test_published_example_is_accepted(monkeypatch):
-    monkeypatch.setenv("CRUCIBLE_AUTH_PROVIDERS", (REPO / "deploy/compose/auth-providers.example.json").read_text())
-    listed = get_settings().auth.providers
-    assert [provider.key for provider in listed] == ["orcid", "lab"]
-    assert listed[0].is_orcid and not any(provider.legacy_callback for provider in listed)
-
-
-def test_compose_bundle_lists_orcid_explicitly(monkeypatch):
-    environment = yaml.safe_load((REPO / "deploy/compose/compose.orcid.yaml").read_text())["services"]["api"]["environment"]
-    value = re.sub(r"\$\{ORCID_CLIENT_ID:\?[^}]*\}", "APP-TEST", environment["CRUCIBLE_AUTH_PROVIDERS"])
-    value = re.sub(r"\$\{ORCID_(?:ISSUER|REGISTRATION|LEGACY_CALLBACK):-([^}]*)\}", r"\1", value)
-    monkeypatch.setenv("CRUCIBLE_AUTH_PROVIDERS", value)
-    provider = get_settings().auth.providers[0]
-    assert (provider.key, provider.client_id, provider.issuer, provider.token_endpoint_auth_method) == ("orcid", "APP-TEST", "https://orcid.org", "client_secret_post")
-    assert provider.legacy_callback is False
 
 
 class FakeProvider:
@@ -444,9 +421,3 @@ async def test_discovery_address_drops_a_trailing_slash_but_the_issuer_stays_exa
     providers.forget_clients()
     with pytest.raises(providers.ProviderUnavailable):
         await providers.authorization_url(get_settings().auth.providers[0], CALLBACK, "s", "n")
-
-
-def test_compose_bundle_finds_people_by_their_recorded_logins():
-    environment = yaml.safe_load((REPO / "deploy/compose/compose.yaml").read_text())["x-api"]["environment"]
-    assert environment["CRUCIBLE_AUTH_IDENTITY_LOOKUP"] == "${CRUCIBLE_AUTH_IDENTITY_LOOKUP:-true}"
-

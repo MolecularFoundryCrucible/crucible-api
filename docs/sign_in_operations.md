@@ -1,6 +1,6 @@
 # Authentication configuration
 
-This page is for operators. Client-side usage is covered in [Authentication](sign_in.md). The Docker Compose bundle configures most of these settings; see [Sign-in methods](../deploy/compose/docs/sign_in.md) in its installation guide.
+This page is for operators. Client-side usage is covered in [Authentication](sign_in.md). The Docker Compose bundle configures most of these settings; see [Sign-in methods](https://github.com/MolecularFoundryCrucible/crucible-selfhost/blob/main/compose/docs/sign_in.md) in crucible-selfhost.
 
 ## Settings overview
 
@@ -24,7 +24,7 @@ Authentication is enabled when at least one client is registered, and requires a
 
 ## The provider list
 
-`CRUCIBLE_AUTH_PROVIDERS` is a JSON list. Every field is required, and an unknown field stops the server at startup. [`auth-providers.example.json`](../deploy/compose/auth-providers.example.json) is a complete example.
+`CRUCIBLE_AUTH_PROVIDERS` is a JSON list. Every field is required, and an unknown field stops the server at startup. [`auth-providers.example.json`](https://github.com/MolecularFoundryCrucible/crucible-selfhost/blob/main/compose/auth-providers.example.json) is a complete example.
 
 | Field | Description |
 |---|---|

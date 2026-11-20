@@ -6,7 +6,7 @@ The [OpenAPI document](https://crucible.lbl.gov/api/v4/docs) served by each depl
 
 | Page | Description |
 |---|---|
-| [Installation guide](../deploy/compose/README.md) | Self-hosting with Docker Compose: quick start, with pages for HTTPS, sign-in methods, the Hub, file storage and operations |
+| [crucible-selfhost](https://github.com/MolecularFoundryCrucible/crucible-selfhost) | Installing and running your own Crucible, with the Docker Compose bundle |
 | [Upgrading from 3.3.1 to 4.0.0](upgrading/3.3-to-4.0.md) | Upgrade checklists for Kubernetes, Docker Compose and client authors |
 | [Authentication configuration](sign_in_operations.md) | Identity providers, OAuth clients, passwords, administrative commands |
 | [Database migrations](../migrations/README.md) | Applying migrations, schema changes, data corrections |

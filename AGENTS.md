@@ -25,7 +25,6 @@ FastAPI and SQLModel service on PostgreSQL that stores scientific records and de
 | `app/cli/` | Server commands: `python -m app.cli --help` |
 | `app/config.py` | Settings, read through `get_settings()` |
 | `migrations/` | Alembic revisions and the schema baseline |
-| `deploy/compose/` | The self-hosting bundle and its guide |
 | `docs/` | Reference pages and guides: start at `docs/README.md` |
 
 ## Skills

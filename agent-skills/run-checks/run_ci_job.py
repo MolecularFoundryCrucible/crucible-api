@@ -1,6 +1,6 @@
 """Run one job of .github/workflows/tests.yml on this machine, in a temporary copy of the checkout.
 
-    uv run python agent-skills/run-checks/run_ci_job.py compose-smoke
+    uv run python agent-skills/run-checks/run_ci_job.py selfhost
 
 Only `run` steps are executed. A checkout step that names another repository is cloned from a
 sibling directory of this checkout when one exists, else with `gh repo clone`.
@@ -30,8 +30,9 @@ def clone_other_repository(step: dict, root: Path) -> None:
     options = step.get("with", {})
     name = options["repository"].split("/")[-1]
     sibling = REPO.parent / name
-    source = ["git", "clone", "-q", str(sibling)] if sibling.is_dir() else ["gh", "repo", "clone", options["repository"], "--", "-q"]
-    subprocess.run([*source, str(root / options["path"])], check=True)
+    target = str(root / options["path"])
+    command = ["git", "clone", "-q", str(sibling), target] if sibling.is_dir() else ["gh", "repo", "clone", options["repository"], target, "--", "-q"]
+    subprocess.run(command, check=True)
     subprocess.run(["git", "checkout", "-q", options["ref"]], cwd=root / options["path"], check=True)
 
 

@@ -18,6 +18,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - `python -m app.cli api-keys import`: the migration copies the keys.
 
+### Added
+
+- Release images are published to `ghcr.io/molecularfoundrycrucible/crucible-api` for amd64 and arm64.
+
 ### Changed
 
 - New MFIDs follow the final UUIDv7 standard (mfid 2.0), so they sort before MFIDs created earlier; MFIDs are tie-breakers only, never a creation order.

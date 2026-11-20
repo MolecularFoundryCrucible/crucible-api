@@ -233,7 +233,8 @@ def test_dex_code_at_the_other_providers_callback_is_refused(api, monkeypatch, s
     configure(monkeypatch, entry("dex", DEX_ISSUER), entry("second", SECOND_DEX_ISSUER))
     with httpx.Client(timeout=30) as browser:
         callback = dex_sign_in(browser, start(api, "dex"), "ada")
-    refused = api.get(callback.removeprefix(API_URL).replace("/oidc/dex/", "/oidc/second/"), follow_redirects=False)
+    assert "/oauth/callback/dex?" in callback
+    refused = api.get(callback.removeprefix(API_URL).replace("/oauth/callback/dex?", "/oauth/callback/second?"), follow_redirects=False)
     assert hub_answer(refused)["error"] == "access_denied"
     assert seen == []
 

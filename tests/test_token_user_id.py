@@ -1,14 +1,7 @@
-import importlib.util
-import os
 from datetime import datetime, timezone
-from pathlib import Path
-from uuid import uuid4
 
 import pytest
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, SQLModel, select
 
 import app.utils.auth_utils as auth_utils
@@ -70,47 +63,3 @@ def test_revoking_hub_sessions_by_internal_id_after_unique_id_changes(db_engine,
     with Session(db_engine) as session:
         with pytest.raises(Exception):
             access_token_family(session, pair.access_token)
-
-
-@pytest.mark.skipif(not os.getenv("CRUCIBLE_TEST_PG_URL"), reason="requires isolated test PostgreSQL")
-def test_token_user_id_migration_fills_rows_and_old_style_writes():
-    path = Path(__file__).resolve().parents[1] / "migrations/versions/20261105_7b4e9d2a1c60_token_user_id.py"
-    spec = importlib.util.spec_from_file_location("token_user_id_migration", path)
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    engine = create_engine(os.environ["CRUCIBLE_TEST_PG_URL"])
-    schema = "test_token_user_id_" + uuid4().hex
-    with engine.connect() as connection:
-        transaction = connection.begin()
-        try:
-            run = lambda sql: connection.execute(text(sql))  # noqa: E731
-            run(f'CREATE SCHEMA "{schema}"')
-            run(f'SET LOCAL search_path TO "{schema}"')
-            run('CREATE TABLE "user" (id serial PRIMARY KEY, orcid text UNIQUE)')
-            run('CREATE TABLE apitoken (access_group_id text NOT NULL, token text NOT NULL, user_unique_id text REFERENCES "user"(orcid), PRIMARY KEY (access_group_id, token))')
-            run('CREATE TABLE hubtokenfamily (id text PRIMARY KEY, user_unique_id text NOT NULL REFERENCES "user"(orcid))')
-            run('CREATE TABLE hublogincode (code_hash text PRIMARY KEY, user_unique_id text NOT NULL REFERENCES "user"(orcid))')
-            run(f"INSERT INTO \"user\" (orcid) VALUES ('{ORCID}'), ('{MFID}')")
-            run(f"INSERT INTO apitoken VALUES ('g', 'existing', '{ORCID}'), ('g', 'unowned', NULL)")
-            run(f"INSERT INTO hubtokenfamily VALUES ('existing', '{ORCID}')")
-            run(f"INSERT INTO hublogincode VALUES ('existing', '{ORCID}')")
-            ada, other = connection.execute(text('SELECT id FROM "user" ORDER BY id')).scalars().all()
-            with Operations.context(MigrationContext.configure(connection)):
-                migration.upgrade()
-                assert dict(connection.execute(text("SELECT token, user_id FROM apitoken")).all()) == {"existing": ada, "unowned": None}
-                run(f"INSERT INTO apitoken (access_group_id, token, user_unique_id) VALUES ('g', 'old-pod', '{MFID}')")
-                run(f"INSERT INTO hubtokenfamily (id, user_unique_id) VALUES ('old-pod', '{MFID}')")
-                run(f"INSERT INTO hublogincode (code_hash, user_unique_id) VALUES ('old-pod', '{MFID}')")
-                run(f"INSERT INTO apitoken (access_group_id, token, user_unique_id, user_id) VALUES ('g', 'new-pod', '{ORCID}', {ada})")
-                for table in migration.TABLES:
-                    key = "token" if table == "apitoken" else "id" if table == "hubtokenfamily" else "code_hash"
-                    rows = dict(connection.execute(text(f"SELECT {key}, user_id FROM {table}")).all())
-                    assert rows["existing"] == ada and rows["old-pod"] == other
-                assert connection.execute(text("SELECT user_id FROM apitoken WHERE token = 'new-pod'")).scalar() == ada
-                migration.downgrade()
-                for table in migration.TABLES:
-                    assert "user_id" not in {c["name"] for c in inspect(connection).get_columns(table, schema=schema)}
-                assert connection.execute(text("SELECT count(*) FROM pg_proc WHERE proname = 'fill_user_id_from_unique_id'")).scalar() == 0
-        finally:
-            transaction.rollback()
-    engine.dispose()

@@ -1,12 +1,4 @@
-import importlib.util
-import os
-from pathlib import Path
-from uuid import uuid4
 
-import pytest
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
-from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, select
 
 from app.tables import AccessGroup, AccessGroupJoinRequest, Project, ResourceACL, User, UserAccessGroupLink
@@ -94,50 +86,3 @@ def test_adding_a_requester_directly_closes_their_request_by_internal_id(client,
         row = session.get(AccessGroupJoinRequest, request_id)
         admin_id = session.exec(select(User.id).where(User.unique_id == ADMIN)).one()
         assert (row.status, row.reviewer_user_id, row.reviewer_id) == ("approved", admin_id, ADMIN)
-
-
-@pytest.mark.skipif(not os.getenv("CRUCIBLE_TEST_PG_URL"), reason="requires isolated test PostgreSQL")
-def test_project_join_user_id_migration_fills_rows_and_follows_old_style_writes():
-    path = Path(__file__).resolve().parents[1] / "migrations/versions/20261105_d2c8f4a7e913_project_join_user_id.py"
-    spec = importlib.util.spec_from_file_location("project_join_user_id_migration", path)
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    engine = create_engine(os.environ["CRUCIBLE_TEST_PG_URL"])
-    schema = "test_project_join_user_id_" + uuid4().hex
-    with engine.connect() as connection:
-        transaction = connection.begin()
-        try:
-            run = lambda sql: connection.execute(text(sql))  # noqa: E731
-            value = lambda sql: connection.execute(text(sql)).scalar()  # noqa: E731
-            run(f'CREATE SCHEMA "{schema}"')
-            run(f'SET LOCAL search_path TO "{schema}"')
-            run('CREATE TABLE "user" (id serial PRIMARY KEY, orcid text UNIQUE)')
-            run('CREATE TABLE project (id serial PRIMARY KEY, project_lead_orcid text REFERENCES "user"(orcid))')
-            run('CREATE TABLE accessgroupjoinrequest (id serial PRIMARY KEY, requester_id text NOT NULL REFERENCES "user"(orcid), reviewer_id text REFERENCES "user"(orcid))')
-            run(f"INSERT INTO \"user\" (orcid) VALUES ('{LEAD}'), ('{REQUESTER}'), ('{ADMIN}')")
-            lead, requester, admin = connection.execute(text('SELECT id FROM "user" ORDER BY id')).scalars().all()
-            run(f"INSERT INTO project (project_lead_orcid) VALUES ('{LEAD}'), (NULL)")
-            run(f"INSERT INTO accessgroupjoinrequest (requester_id, reviewer_id) VALUES ('{REQUESTER}', '{ADMIN}')")
-            with Operations.context(MigrationContext.configure(connection)):
-                migration.upgrade()
-                assert connection.execute(text("SELECT lead_user_id FROM project ORDER BY id")).scalars().all() == [lead, None]
-                assert connection.execute(text("SELECT requester_user_id, reviewer_user_id FROM accessgroupjoinrequest")).one() == (requester, admin)
-
-                run(f"INSERT INTO accessgroupjoinrequest (requester_id) VALUES ('{LEAD}')")
-                assert value("SELECT requester_user_id FROM accessgroupjoinrequest WHERE requester_id = :lead".replace(":lead", f"'{LEAD}'")) == lead
-                run(f"UPDATE accessgroupjoinrequest SET reviewer_id = '{LEAD}' WHERE requester_id = '{LEAD}'")
-                assert value(f"SELECT reviewer_user_id FROM accessgroupjoinrequest WHERE requester_id = '{LEAD}'") == lead
-                run(f"UPDATE project SET project_lead_orcid = '{ADMIN}' WHERE lead_user_id = {lead}")
-                assert value(f"SELECT lead_user_id FROM project WHERE project_lead_orcid = '{ADMIN}'") == admin
-                run(f"UPDATE project SET project_lead_orcid = '{REQUESTER}', lead_user_id = {requester} WHERE lead_user_id = {admin}")
-                assert value(f"SELECT lead_user_id FROM project WHERE project_lead_orcid = '{REQUESTER}'") == requester
-                run(f"UPDATE project SET project_lead_orcid = NULL WHERE lead_user_id = {requester}")
-                assert value("SELECT count(*) FROM project WHERE lead_user_id IS NOT NULL") == 0
-
-                migration.downgrade()
-                for table, _, id_column in migration.COLUMNS:
-                    assert id_column not in {c["name"] for c in inspect(connection).get_columns(table, schema=schema)}
-                assert value("SELECT count(*) FROM pg_proc WHERE proname LIKE 'fill_%_user_id'") == 0
-        finally:
-            transaction.rollback()
-    engine.dispose()

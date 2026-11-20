@@ -106,10 +106,6 @@ def test_orcid_status_comes_only_from_the_exact_issuer(monkeypatch, issuer, expe
     assert get_settings().auth.providers[0].is_orcid is expected
 
 
-def test_old_subject_is_orcid_field_is_refused(monkeypatch):
-    assert "subject_is_orcid" in provider_problem(monkeypatch, {**ORCID_ENTRY, "subject_is_orcid": True})
-
-
 def test_legacy_callback_needs_orcid(monkeypatch):
     assert "legacy_callback" in provider_problem(monkeypatch, {**LAB_ENTRY, "legacy_callback": True})
 

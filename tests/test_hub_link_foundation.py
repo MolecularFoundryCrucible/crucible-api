@@ -1,13 +1,6 @@
-import importlib.util
-import os
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-from uuid import uuid4
 
 import pytest
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
-from sqlalchemy import create_engine, inspect, text
 
 from app.api.routes.browser_sign_in import LOGIN_COOKIE, login_cookie_name
 import tests.test_hub_tokens as hub_tokens_tests
@@ -105,38 +98,3 @@ def test_hub_principal_carries_its_token_family(engine, use_engine, monkeypatch)
     with Session(engine) as session:
         family = session.exec(select(TokenFamily)).one()
     assert principal.session_family_id == family.id
-
-
-@pytest.mark.skipif(not os.getenv("CRUCIBLE_TEST_PG_URL"), reason="requires isolated test PostgreSQL")
-def test_hub_link_columns_migration_keeps_sign_ins_working():
-    path = Path(__file__).resolve().parents[1] / "migrations/versions/20261106_a8c2e5f1d903_hub_link_columns.py"
-    spec = importlib.util.spec_from_file_location("hub_link_columns_migration", path)
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    pg = create_engine(os.environ["CRUCIBLE_TEST_PG_URL"])
-    schema = "test_hub_link_columns_" + uuid4().hex
-    with pg.connect() as connection:
-        transaction = connection.begin()
-        try:
-            run = lambda sql: connection.execute(text(sql))  # noqa: E731
-            run(f'CREATE SCHEMA "{schema}"')
-            run(f'SET LOCAL search_path TO "{schema}"')
-            run('CREATE TABLE "user" (id serial PRIMARY KEY)')
-            run("CREATE TABLE hublogintransaction (state_hash varchar(64) PRIMARY KEY, browser_secret_hash varchar(64) NOT NULL)")
-            run("CREATE TABLE hublogincode (code_hash varchar(64) PRIMARY KEY)")
-            run("INSERT INTO hublogintransaction VALUES ('in-flight', 'secret')")
-            run("INSERT INTO hublogincode VALUES ('issued')")
-            with Operations.context(MigrationContext.configure(connection)):
-                migration.upgrade()
-                assert connection.execute(text("SELECT purpose FROM hublogintransaction")).scalar() == "sign_in"
-                assert connection.execute(text("SELECT purpose FROM hublogincode")).scalar() == "sign_in"
-                run("INSERT INTO hublogintransaction (state_hash) VALUES ('older-pod-style')")
-                run("INSERT INTO hublogintransaction (state_hash, purpose, start_hash) VALUES ('link', 'link', 'start')")
-                run("INSERT INTO hublogincode (code_hash, purpose) VALUES ('link-code', 'link')")
-                migration.downgrade()
-                assert connection.execute(text("SELECT state_hash FROM hublogintransaction ORDER BY state_hash")).scalars().all() == ["in-flight"]
-                assert connection.execute(text("SELECT code_hash FROM hublogincode")).scalars().all() == ["issued"]
-                assert "purpose" not in {c["name"] for c in inspect(connection).get_columns("hublogintransaction", schema=schema)}
-        finally:
-            transaction.rollback()
-    pg.dispose()

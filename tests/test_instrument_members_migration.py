@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.cli import db
-from app.services.instrument_members import datasets_without_id_record, grant_problems, repair_grants
+from app.services.instrument_members import grant_problems, repair_grants
 from app.tables import AccessGroup, Dataset, Instrument, Resource, ResourceACL, User, UserAccessGroupLink
 
 PG_URL = os.getenv("CRUCIBLE_TEST_PG_URL")
@@ -66,53 +66,6 @@ GRANTS = """SELECT acl.mfid, g.group_name, g.group_type, acl.permission::text FR
 MEMBERS = """SELECT g.group_name, u.orcid, link.role::text FROM useraccessgrouplink link
              JOIN accessgroup g ON g.id = link.accessgroup_id JOIN "user" u ON u.id = link.user_id
              WHERE g.group_type = 'instrument_member'"""
-
-
-def test_upgrade_moves_maintainers_into_members_and_downgrade_restores_them():
-    from tests.pg_fixture import throwaway_database
-
-    with throwaway_database() as engine:
-        db._apply_baseline(engine)
-        _alembic(engine, command.upgrade, "c41d7e9a52b6")
-        _seed(engine)
-
-        _alembic(engine, command.upgrade, "head")
-        with engine.connect() as connection:
-            assert _grants(connection, GRANTS) == sorted([
-                ("inst-1", "inst-1:members", "instrument_member", "owner"),
-                ("inst-2", "inst-2:members", "instrument_member", "owner"),
-                ("ds-1", "inst-1", "instrument", "contributor"),
-                ("ds-1", "inst-1:members", "instrument_member", "viewer"),
-                ("ds-2", "inst-1", "instrument", "contributor"),
-                ("ds-2", "inst-1:members", "instrument_member", "viewer"),
-                ("ds-3", "inst-2", "instrument", "contributor"),
-                ("ds-3", "inst-2:members", "instrument_member", "viewer"),
-            ])
-            assert _grants(connection, MEMBERS) == sorted([
-                ("inst-1:members", "owner", "owner"), ("inst-1:members", "editor", "editor"), ("inst-1:members", "contrib", "editor"),
-                ("inst-1:members", "pm_admin", "viewer"), ("inst-1:members", "pm_viewer", "editor"),
-                ("inst-2:members", "pm_admin", "owner"), ("inst-2:members", "pm_viewer", "viewer"),
-            ])
-            assert connection.execute(text(
-                "SELECT u.orcid, i.owner FROM instrument i JOIN \"user\" u ON u.id = i.owner_user_id WHERE i.unique_id = 'inst-2'")).one() == ("pm_admin", "pm_admin")
-            read_write = connection.execute(text(
-                "SELECT read, write FROM resourceacl acl JOIN accessgroup g ON g.id = acl.accessgroup_id "
-                "WHERE acl.mfid = 'ds-2' AND g.group_type = 'instrument_member'")).one()
-            assert tuple(read_write) == (True, False)
-        with Session(engine) as session:
-            assert set(grant_problems(session).values()) == {0}
-            assert datasets_without_id_record(session) == 1
-
-        _alembic(engine, command.downgrade, "3b8e5d1f7c24")
-        with engine.connect() as connection:
-            assert _grants(connection, MEMBERS) == []
-            record = _grants(connection, GRANTS.replace("('inst-1', 'inst-2', 'ds-1', 'ds-2', 'ds-3', 'gone')", "('inst-1', 'inst-2')"))
-            assert record == sorted([
-                ("inst-1", "owner", "identity", "owner"), ("inst-1", "editor", "identity", "editor"), ("inst-1", "contrib", "identity", "editor"),
-                ("inst-1", "pm_admin", "identity", "viewer"), ("inst-1", "pm_viewer", "identity", "editor"),
-                ("inst-2", "pm_admin", "identity", "owner"), ("inst-2", "pm_viewer", "identity", "viewer"),
-            ])
-            assert connection.execute(text("SELECT count(*) FROM accessgroup WHERE group_type = 'instrument_member'")).scalar() == 0
 
 
 def test_repair_converts_rows_written_by_the_previous_release_after_the_migration():

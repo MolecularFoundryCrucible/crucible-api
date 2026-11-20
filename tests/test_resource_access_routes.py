@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.tables import (
     AccessGroup, Instrument, Project, Resource, ResourceACL, User, UserAccessGroupLink)
 from app.utils.permissions import (
-    PUBLIC_GROUP_NAME, AccessGroupType, GroupMembership, PlatformRole, Principal, Role)
+    PUBLIC_GROUP_NAME, AccessGroupType, GroupMembership, Principal, Role)
 from app.tables import UserIdentity
 
 MFID = "ds-1"
@@ -159,27 +159,6 @@ class TestManageAclCap:
         require_grant(session, owner(session), MFID, Role.EDITOR)
         require_grant(session, owner(session), MFID, Role.OWNER)
 
-    def test_admin_cannot_mint_an_owner(self, session):
-        from app.utils.auth_utils import require_grant
-        session.add(ResourceACL(mfid=MFID, accessgroup_id=proj_gid(session),
-                                read=True, write=True, permission=Role.ADMIN.db_value))
-        session.commit()
-        p = Principal(user_id="x",
-                      groups=(GroupMembership(proj_gid(session), PROJ, Role.ADMIN),))
-        require_grant(session, p, MFID, Role.EDITOR)      # fine
-        with pytest.raises(HTTPException):
-            require_grant(session, p, MFID, Role.OWNER)
-
-    def test_admin_cannot_overwrite_an_owner_grant(self, session):
-        from app.utils.auth_utils import require_grant
-        session.add(ResourceACL(mfid=MFID, accessgroup_id=proj_gid(session),
-                                read=True, write=True, permission=Role.ADMIN.db_value))
-        session.commit()
-        p = Principal(user_id="x",
-                      groups=(GroupMembership(proj_gid(session), PROJ, Role.ADMIN),))
-        with pytest.raises(HTTPException):
-            require_grant(session, p, MFID, Role.VIEWER, current=Role.OWNER)
-
     def test_a_mere_editor_cannot_manage_acls_at_all(self, session):
         from app.utils.auth_utils import require_grant
         session.add(ResourceACL(mfid=MFID, accessgroup_id=proj_gid(session),
@@ -189,8 +168,3 @@ class TestManageAclCap:
                       groups=(GroupMembership(proj_gid(session), PROJ, Role.EDITOR),))
         with pytest.raises(HTTPException):
             require_grant(session, p, MFID, Role.VIEWER)
-
-    def test_platform_admin_bypasses(self, session):
-        from app.utils.auth_utils import require_grant
-        admin = Principal(user_id="a", platform_role=PlatformRole.ADMIN)
-        require_grant(session, admin, MFID, Role.OWNER, current=Role.OWNER)

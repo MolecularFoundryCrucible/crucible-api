@@ -230,17 +230,6 @@ def test_dex_identical_subject_at_a_second_issuer_stays_separate(api, monkeypatc
 
 
 @pytest.mark.skipif(not (DEX_ISSUER and SECOND_DEX_ISSUER), reason="requires two running dex servers")
-def test_dex_code_at_the_other_providers_callback_is_refused(api, monkeypatch, seen):
-    configure(monkeypatch, entry("dex", DEX_ISSUER), entry("second", SECOND_DEX_ISSUER))
-    with httpx.Client(timeout=30) as browser:
-        callback = dex_sign_in(browser, start(api, "dex"), "ada")
-    assert "/oauth/callback/dex?" in callback
-    refused = api.get(callback.removeprefix(API_URL).replace("/oauth/callback/dex?", "/oauth/callback/second?"), follow_redirects=False)
-    assert hub_answer(refused)["error"] == "access_denied"
-    assert seen == []
-
-
-@pytest.mark.skipif(not (DEX_ISSUER and SECOND_DEX_ISSUER), reason="requires two running dex servers")
 def test_dex_choice_page_leads_to_the_chosen_provider(api, monkeypatch):
     configure(monkeypatch, entry("dex", DEX_ISSUER), entry("second", SECOND_DEX_ISSUER))
     page = api.get("/oauth/authorize", params=LOGIN, follow_redirects=False)

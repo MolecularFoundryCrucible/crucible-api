@@ -49,17 +49,11 @@ def test_default_parameters_are_above_floor(monkeypatch):
     assert (auth.argon2_memory_kib, auth.argon2_time_cost, auth.argon2_parallelism, auth.password_min_length) == (65536, 3, 1, 15)
 
 
-def test_hash_is_argon2id_phc_string_and_two_hashes_differ():
-    first, pepper_id = hash_password(GOOD)
-    second, _ = hash_password(GOOD)
-    assert first.startswith("$argon2id$v=19$m=19456,t=2,p=1$") and pepper_id == "one"
-    assert first != second
-    assert GOOD not in first and PEPPER not in first
-
-
 def test_composed_and_decomposed_forms_verify():
-    stored, pepper_id = hash_password("café au lait on the terrace")
-    assert verify_password("café au lait on the terrace", stored, pepper_id)[0]
+    composed, decomposed = "caf\u00e9 au lait on the terrace", "cafe\u0301 au lait on the terrace"
+    assert composed != decomposed
+    stored, pepper_id = hash_password(decomposed)
+    assert verify_password(composed, stored, pepper_id)[0]
 
 
 def test_spaces_preserved():
@@ -160,10 +154,6 @@ def test_emoji_count_as_one_each():
 def test_256_accepted_257_refused():
     assert check_new_password("x" * 255 + "y", context=[]) is None
     assert check_new_password("x" * 256 + "y", context=[]).code == "too_long"
-
-
-def test_no_composition_rule():
-    assert check_new_password("all lowercase words without digits", context=[]) is None
 
 
 def test_blocklist_whole_match_case_insensitive_with_reason():

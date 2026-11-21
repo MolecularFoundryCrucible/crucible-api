@@ -87,9 +87,12 @@ def test_the_sign_in_page_links_to_registration_only_when_it_is_open(client, mon
 
 @pytest.mark.parametrize("taken", [{"username": "ada"}, {"username": "a-da"}, {"email": "ADA@example.org"}])
 def test_a_username_or_email_in_use_gets_one_answer(client, setup, taken):
+    with Session(setup) as session:
+        before = len(session.exec(select(User)).all())
     answer = submit(client, **taken)
     assert answer.status_code == 409 and "This username or email is already in use" in answer.text
-    assert person(setup, taken.get("username", "rfranklin")) is None or taken.get("username") == "ada"
+    with Session(setup) as session:
+        assert len(session.exec(select(User)).all()) == before
 
 
 @pytest.mark.parametrize("change,status,text", [

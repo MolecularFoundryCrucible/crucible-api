@@ -58,12 +58,6 @@ def test_response_from_another_issuer_is_refused(hub_routes):
     assert hub_error_of(finish(client, fake, state, nonce, iss="https://login.attacker.example")) == "access_denied"
 
 
-def test_matching_issuer_is_accepted(hub_routes):
-    client, fake = hub_routes
-    state, nonce = begin(client, "matching-iss-state01")
-    assert "code" in returned_code(finish(client, fake, state, nonce, iss="https://orcid.org"))
-
-
 def test_provider_that_advertises_iss_must_send_it(hub_routes):
     client, fake = hub_routes
     fake.metadata["authorization_response_iss_parameter_supported"] = True

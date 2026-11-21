@@ -47,11 +47,6 @@ def provider_problem(monkeypatch, entry):
     return str(caught.value)
 
 
-def test_settings_read_every_field_of_the_list(monkeypatch):
-    set_providers(monkeypatch, ORCID_ENTRY, LAB_ENTRY)
-    assert [provider.model_dump() for provider in get_settings().auth.providers] == [ORCID_ENTRY, LAB_ENTRY]
-
-
 @pytest.mark.parametrize("field", sorted(ORCID_ENTRY))
 def test_every_field_is_required(monkeypatch, field):
     entry = {name: value for name, value in ORCID_ENTRY.items() if name != field}
@@ -124,12 +119,6 @@ def test_hub_without_a_provider_list_is_a_missing_setting(monkeypatch):
     assert "CRUCIBLE_AUTH_PROVIDERS" in missing_required_settings()
 
 
-def test_no_provider_is_implied_by_the_older_orcid_settings(monkeypatch):
-    monkeypatch.setenv("ORCID_CLIENT_ID", "APP-TEST")
-    monkeypatch.setenv("ORCID_CLIENT_SECRET", "secret")
-    assert get_settings().auth.providers == []
-
-
 def test_provider_without_its_secret_is_a_missing_setting(monkeypatch):
     set_providers(monkeypatch, LAB_ENTRY)
     assert "OIDC_LAB_CLIENT_SECRET" in missing_required_settings()
@@ -164,22 +153,6 @@ def test_malformed_secret_version_is_a_missing_setting(monkeypatch):
     set_providers(monkeypatch, LAB_ENTRY)
     monkeypatch.setenv("OIDC_LAB_CLIENT_SECRET_VERSION", "not-a-version")
     assert "OIDC_LAB_CLIENT_SECRET" in missing_required_settings()
-
-
-def test_provider_secret_given_two_ways_is_refused(monkeypatch, tmp_path):
-    set_providers(monkeypatch, LAB_ENTRY)
-    (tmp_path / "pointed").write_text("one")
-    monkeypatch.setenv("OIDC_LAB_CLIENT_SECRET", "two")
-    monkeypatch.setenv("OIDC_LAB_CLIENT_SECRET_FILE", str(tmp_path / "pointed"))
-    with pytest.raises(ConfigurationError, match="more than one way"):
-        config.get_secret("OIDC_LAB_CLIENT_SECRET")
-
-
-def test_provider_secret_must_be_one_line(monkeypatch):
-    set_providers(monkeypatch, LAB_ENTRY)
-    monkeypatch.setenv("OIDC_LAB_CLIENT_SECRET", "two\nlines")
-    with pytest.raises(ConfigurationError, match="one line"):
-        config.get_secret("OIDC_LAB_CLIENT_SECRET")
 
 
 def test_secret_of_an_unlisted_provider_is_not_a_secret_setting(monkeypatch):

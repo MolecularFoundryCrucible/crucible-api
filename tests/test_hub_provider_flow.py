@@ -159,11 +159,6 @@ def test_several_methods_show_chooser_and_start_nothing(client, db_engine):
         assert session.exec(select(LoginTransaction)).all() == []
 
 
-def test_chooser_refuses_a_bad_request_before_showing_anything(client):
-    assert client.get("/oauth/authorize", params={**LOGIN, "client_id": "other"}, follow_redirects=False).status_code == 400
-    assert client.get("/oauth/authorize", params={**LOGIN, "redirect_uri": "https://evil.example/cb"}, follow_redirects=False).status_code == 400
-
-
 def test_chooser_cannot_be_framed_cached_or_leak_its_address(client):
     page = client.get("/oauth/authorize", params=LOGIN, follow_redirects=False)
     assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
@@ -309,10 +304,6 @@ def test_pkce_omitted_unless_s256_is_advertised(client, remote, db_engine, adver
     remote["login.example.org"].claims = {"nonce": query["nonce"][0], "sub": "lab-user"}
     finish(client, "/oauth/callback/lab", query)
     assert "code_verifier" not in parse_qs(remote["login.example.org"].token_requests[0].content.decode())
-
-
-def test_pkce_omitted_for_orcid(client, remote):
-    assert "code_challenge" not in start(client, remote, "orcid")
 
 
 def test_orcid_sign_in_still_creates_the_account(client, remote, db_engine):

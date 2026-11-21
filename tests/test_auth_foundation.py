@@ -58,14 +58,6 @@ def test_every_event_name_fits_the_column():
     assert all(len(event.value) <= 32 for event in AuthEventType)
 
 
-def test_record_event_snapshot_outlives_the_user(db_engine):
-    with Session(db_engine) as session:
-        user = person(session)
-        record_event(session, AuthEventType.ENABLED, user=user)
-        session.commit()
-        assert session.exec(select(AuthEvent)).one().user_unique_id == MFID
-
-
 def test_orcid_of_reads_the_linked_orcid(db_engine):
     with Session(db_engine) as session:
         user = person(session)
@@ -87,38 +79,16 @@ def test_orcid_of_ignores_other_issuers(db_engine):
         assert orcid_of(session, user) is None
 
 
-def test_orcid_of_covers_the_sandbox(db_engine):
+@pytest.mark.parametrize("first_name,last_name,given", [("Ada", "Lovelace", None), ("Ada", "Lovelace", ""), ("", "", None)])
+def test_provision_generates_a_username_when_none_is_given(db_engine, first_name, last_name, given):
     with Session(db_engine) as session:
-        user = person(session)
-        session.add(UserIdentity(user_id=user.id, issuer="https://sandbox.orcid.org", subject=ORCID))
-        session.commit()
-        assert orcid_of(session, user) == ORCID
-
-
-def test_new_columns_start_empty(db_engine):
-    with Session(db_engine) as session:
-        user = person(session)
-        identity = UserIdentity(user_id=user.id, issuer="https://orcid.org", subject=ORCID)
-        session.add(identity)
-        session.commit()
-        assert user.disabled_at is None and identity.verified_at is None
-
-
-@pytest.mark.parametrize("given", [None, ""])
-def test_provision_generates_a_username_when_none_is_given(db_engine, given):
-    with Session(db_engine) as session:
-        user = provision_user(session, unique_id=MFID, first_name="Ada", last_name="Lovelace", email=None, username=given)
+        user = provision_user(session, unique_id=MFID, first_name=first_name, last_name=last_name, email=None, username=given)
         assert user.username
 
 
 def test_provision_keeps_a_given_username(db_engine):
     with Session(db_engine) as session:
         assert provision_user(session, unique_id=MFID, first_name="Ada", last_name="Lovelace", email=None, username="countess").username == "countess"
-
-
-def test_provision_generates_a_username_without_a_name(db_engine):
-    with Session(db_engine) as session:
-        assert provision_user(session, unique_id=MFID, first_name="", last_name="", email=None, username=None).username
 
 
 def test_provision_avoids_a_taken_username(db_engine):

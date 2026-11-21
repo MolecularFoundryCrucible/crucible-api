@@ -204,7 +204,7 @@ def test_preview_names_the_status(world, subject, provider, status):
     assert confirm.status_code == (200 if status == "already_yours" else 409)
 
 
-def test_second_orcid_and_another_persons_unique_id_are_refused(world):
+def test_a_second_orcid_is_refused_even_when_it_is_another_persons_id(world):
     _, client, engine = world
     with Session(engine) as session:
         session.add(User(unique_id="0000-0003-0000-0003", username="carl", first_name="C", last_name="D", email=None))

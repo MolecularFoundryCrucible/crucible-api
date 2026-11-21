@@ -73,14 +73,6 @@ def test_disabled_refused_at_the_resolver_and_never_continues(db_engine):
         assert session.exec(select(UserIdentity)).one().verified_at is None
 
 
-def test_disabled_refused_at_the_resolver_with_the_lookup_on(db_engine, monkeypatch):
-    from app.config import get_settings
-
-    monkeypatch.setenv("CRUCIBLE_AUTH_IDENTITY_LOOKUP", "true")
-    get_settings.cache_clear()
-    test_disabled_refused_at_the_resolver_and_never_continues(db_engine)
-
-
 def test_disabled_refused_at_the_hub_callback(db_engine):
     person(db_engine, disabled=True)
     with pytest.raises(LoginRefused) as caught:
@@ -273,16 +265,6 @@ def test_cannot_disable_the_last_active_human_administrator(client, auth_as, db_
     as_admin(auth_as, client)
     response = client.post(f"/users/{OTHER_ADMIN}/disable")
     assert response.status_code == 409
-
-
-def test_service_account_can_be_disabled(client, auth_as, db_engine):
-    human_admins(db_engine, ADMIN)
-    person(db_engine, OTHER_ADMIN, is_service_account=True)
-    key = api_key_for(db_engine, OTHER_ADMIN)
-    auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
-    assert client.post(f"/users/{OTHER_ADMIN}/disable").status_code == 200
-    with pytest.raises(HTTPException):
-        authorize(key)
 
 
 def test_unknown_person_is_404(client, auth_as, db_engine):

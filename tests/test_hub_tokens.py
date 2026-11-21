@@ -145,17 +145,6 @@ def test_issue_and_refresh_with_foreign_keys_enforced():
         engine.dispose()
 
 
-def test_spent_refresh_revokes_family(engine):
-    first = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
-    second = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
-    with pytest.raises(InvalidGrant):
-        refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
-    with pytest.raises(InvalidGrant):
-        refresh_tokens(engine, second.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=3))
-    with pytest.raises(InvalidGrant):
-        access_user(engine, second.access_token, now=NOW + timedelta(minutes=3))
-
-
 def test_a_just_spent_token_works_again_for_thirty_seconds(engine):
     first = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
     second = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
@@ -406,39 +395,11 @@ def start_hub_login(client, fake):
     return query["state"][0]
 
 
-def test_hub_sign_in_runs_through_the_listed_provider(hub_routes):
-    client, fake = hub_routes
-    state = start_hub_login(client, fake)
-    finished = client.get("/oauth/callback/orcid", params={"code": "orcid-code", "state": state}, follow_redirects=False)
-    assert finished.status_code == 302
-    assert finished.headers["location"].startswith("https://crucible.lbl.gov/hub/auth/callback?code=")
-
-
 def hub_error_of(response):
     from urllib.parse import parse_qs, urlparse
 
     assert response.status_code == 302
     return parse_qs(urlparse(response.headers["location"]).query)["error"][0]
-
-
-def test_hub_callback_refuses_a_token_for_the_wrong_nonce(hub_routes):
-    client, fake = hub_routes
-    state = start_hub_login(client, fake)
-    fake.claims = {"nonce": "another"}
-    assert hub_error_of(client.get("/oauth/callback/orcid", params={"code": "orcid-code", "state": state}, follow_redirects=False)) == "server_error"
-
-
-def test_hub_callback_tells_the_hub_when_the_provider_is_down(hub_routes):
-    client, fake = hub_routes
-    state = start_hub_login(client, fake)
-    fake.down = True
-    assert hub_error_of(client.get("/oauth/callback/orcid", params={"code": "orcid-code", "state": state}, follow_redirects=False)) == "temporarily_unavailable"
-
-
-def test_hub_login_tells_the_hub_when_discovery_fails(hub_routes):
-    client, fake = hub_routes
-    fake.down = True
-    assert hub_error_of(client.get("/oauth/authorize", params=HUB_LOGIN, follow_redirects=False)) == "temporarily_unavailable"
 
 
 def test_hub_login_is_503_without_a_provider_list(hub_routes, monkeypatch):

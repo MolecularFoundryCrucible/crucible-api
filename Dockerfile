@@ -21,15 +21,12 @@ ENV API_VERSION=$api_version
 COPY app/ /app/app/
 COPY alembic.ini LICENSE /app/
 COPY migrations/ /app/migrations/
-COPY scripts/cleanup_hub_auth.py /app/scripts/cleanup_hub_auth.py
 
-RUN /bin/uv sync --locked && python -m compileall -q /app/app /app/migrations /app/scripts
+RUN /bin/uv sync --locked && python -m compileall -q /app/app /app/migrations
 
-# The code stays owned by root, so the API cannot change it. The old /root paths remain as links
-# until every deployment calls /app directly.
+# The code stays owned by root, so the API cannot change it.
 RUN groupadd --system --gid 10001 crucible \
-  && useradd --system --uid 10001 --gid crucible --no-create-home --home-dir /tmp --shell /usr/sbin/nologin crucible \
-  && ln -s /app/.venv /root/.venv && ln -s /app/scripts /root/scripts && chmod 755 /root
+  && useradd --system --uid 10001 --gid crucible --no-create-home --home-dir /tmp --shell /usr/sbin/nologin crucible
 ENV HOME=/tmp
 USER 10001:10001
 

@@ -2,13 +2,13 @@
 
 The server behind the Crucible Data Platform. It is a FastAPI service on PostgreSQL with S3-compatible file storage.
 
-The Molecular Foundry deploys Crucible at [crucible.lbl.gov](https://crucible.lbl.gov/api/v4/docs). The Crucible ecosystem is open-source and can be self-hosted by any lab or institution.
+The Molecular Foundry deploys Crucible at [crucible.lbl.gov](https://crucible.lbl.gov/api/v4/docs). The Crucible ecosystem is open source and can be self-hosted by any lab or institution.
 
 ## Features
 
 - **Data model**: datasets, samples, projects and instruments with persistent identifiers (MFIDs), free-form scientific metadata, and links between records that form a provenance graph.
 - **Access control**: role-based permissions granted through projects and access groups.
-- **Authentication**: OAuth 2.0 authorization code flow backed by OpenID Connect and API keys for scripts and instruments.
+- **Authentication**: OAuth 2.0 authorization code flow backed by OpenID Connect, and API keys for scripts and instruments.
 - **File storage**: multipart uploads and downloads through signed URLs on S3-compatible object storage, with versioned file replacement.
 - **Search**: filtering, sorting, and search of resources and their metadata.
 - **Operations**: Alembic migrations, an administrative CLI, health and Prometheus metrics endpoints, and a published container image.
@@ -25,7 +25,7 @@ The Molecular Foundry deploys Crucible at [crucible.lbl.gov](https://crucible.lb
 
 Each release is published as `ghcr.io/molecularfoundrycrucible/crucible-api:<version>` for amd64 and arm64.
 
-For self-hosting, follow instruction at [crucible-selfhost](https://github.com/MolecularFoundryCrucible/crucible-selfhost). For other environments, refer to the [authentication settings](docs/sign_in_operations.md), [storage settings](docs/uploads.md) and [database migrations](migrations/README.md) to customize your deployment.
+For self-hosting, follow the instructions in [crucible-selfhost](https://github.com/MolecularFoundryCrucible/crucible-selfhost). For other environments, refer to the [authentication settings](docs/sign_in_operations.md), [storage settings](docs/uploads.md) and [database migrations](migrations/README.md) to customize your deployment.
 
 ### Development
 
@@ -53,13 +53,13 @@ Each release is listed in the [changelog](CHANGELOG.md) and published with its O
 
 ## Contributing
 
-Changes are submitted as pull requests against `main`, add a changelog entry under `Unreleased` for any change visible to API users, operators or clients. Agentic documentation starts at [AGENTS.md](AGENTS.md) with references to [`.agents/skills/`](.agents/skills/).
+Changes are submitted as pull requests against `main`. Add a changelog entry under `Unreleased` for any change visible to API users, operators or clients. Agentic documentation starts at [AGENTS.md](AGENTS.md) with references to [`.agents/skills/`](.agents/skills/).
 
 ## Crucible ecosystem
 
 | Repository | Role |
 |---|---|
-| [crucible-hub](https://github.com/MolecularFoundryCrucible/crucible-hub) | Crucible Web interface |
+| [crucible-hub](https://github.com/MolecularFoundryCrucible/crucible-hub) | Web interface |
 | [nano-crucible](https://github.com/MolecularFoundryCrucible/nano-crucible) | Python client and CLI |
 | [crucible-selfhost](https://github.com/MolecularFoundryCrucible/crucible-selfhost) | Guides and example configurations for running your own Crucible |
 | [crucible-ingestion](https://github.com/MolecularFoundryCrucible/crucible-ingestion) | Ingestion of instrument data |

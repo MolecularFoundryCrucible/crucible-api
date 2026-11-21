@@ -28,7 +28,7 @@ VERIFIER = "v" * 43
 CHALLENGE = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest()).rstrip(b"=").decode()
 ORCID = OidcProvider(
     key="orcid", display_name="ORCID", issuer="https://orcid.org", client_id="APP-TEST", scopes="openid",
-    token_endpoint_auth_method="client_secret_post", registration="open", legacy_callback=True,
+    token_endpoint_auth_method="client_secret_post", registration="open",
 )
 HUB = {"key": "hub", "client_id": "crucible-hub", "display_name": "Crucible Hub", "type": "confidential", "redirect_uris": ["https://hub.example.org/auth/callback"]}
 NOTES = {"key": "notes", "client_id": "lab-notes", "display_name": "Lab notes", "type": "confidential", "redirect_uris": ["http://localhost:8080/callback"]}
@@ -268,16 +268,6 @@ def test_errors_carry_no_internal_details(api, db_engine):
     assert "Traceback" not in refused.text and "hublogincode" not in refused.text
 
 
-def test_the_hub_routes_and_the_standard_route_share_one_server(api, db_engine):
-    via_hub = api.post("/auth/hub/token", auth=HUB_AUTH, json={"code": signed_in(db_engine, HUB), "code_verifier": VERIFIER, "redirect_uri": HUB["redirect_uris"][0]})
-    assert via_hub.status_code == 200, via_hub.text
-    refreshed = api.post("/oauth/token", auth=HUB_AUTH, data={"grant_type": "refresh_token", "refresh_token": via_hub.json()["refresh_token"]})
-    assert refreshed.status_code == 200
-    past_the_grace(db_engine)
-    again = api.post("/auth/hub/refresh", auth=HUB_AUTH, json={"refresh_token": via_hub.json()["refresh_token"]})
-    assert again.status_code == 401
-
-
 CLI = {"key": "nanocrucible", "client_id": "nano-crucible", "display_name": "nano-crucible", "type": "public", "redirect_uris": ["http://127.0.0.1/callback", "http://[::1]/callback"]}
 
 
@@ -317,9 +307,8 @@ def test_public_client_exchanges_its_code_with_pkce_and_no_secret(with_cli, api,
     assert api.post("/oauth/revoke", data={"client_id": "nano-crucible", "token": refreshed.json()["refresh_token"]}).status_code == 200
 
 
-def test_public_client_cannot_use_the_hubs_secret_routes_or_a_secret(with_cli, api, db_engine):
+def test_public_client_cannot_use_a_secret_or_the_hubs_client(with_cli, api, db_engine):
     code = signed_in(db_engine, {**CLI, "redirect_uris": ["http://127.0.0.1:53817/callback"]})
-    assert api.post("/auth/hub/token", auth=("nano-crucible", "x" * 40), json={"code": code, "code_verifier": VERIFIER, "redirect_uri": "http://127.0.0.1:53817/callback"}).status_code == 401
     assert api.post("/oauth/token", auth=("nano-crucible", "x" * 40), data={"grant_type": "authorization_code", "code": code, "code_verifier": VERIFIER, "redirect_uri": "http://127.0.0.1:53817/callback"}).json()["error"] == "invalid_client"
     assert api.post("/oauth/token", data={"grant_type": "authorization_code", "client_id": "crucible-hub", "code": signed_in(db_engine, HUB), "code_verifier": VERIFIER, "redirect_uri": HUB["redirect_uris"][0]}).json()["error"] == "invalid_client"
 

@@ -24,7 +24,7 @@ Authentication is enabled when at least one client is registered, and requires a
 
 ## The provider list
 
-`CRUCIBLE_AUTH_PROVIDERS` is a JSON list. Every field is required, and an unknown field stops the server at startup. [`auth-providers.example.json`](https://github.com/MolecularFoundryCrucible/crucible-selfhost/blob/main/compose/auth-providers.example.json) is a complete example.
+`CRUCIBLE_AUTH_PROVIDERS` is a JSON list. Every field below is required, and an unknown field stops the server at startup. [`auth-providers.example.json`](https://github.com/MolecularFoundryCrucible/crucible-selfhost/blob/main/compose/auth-providers.example.json) is a complete example.
 
 | Field | Description |
 |---|---|
@@ -35,7 +35,8 @@ Authentication is enabled when at least one client is registered, and requires a
 | `scopes` | Space-separated, including `openid` |
 | `token_endpoint_auth_method` | `client_secret_post` for ORCID; otherwise usually `client_secret_basic` |
 | `registration` | Handling of a new user: `closed` refuses them, `approval` creates an account pending administrator approval, `open` admits them |
-| `legacy_callback` | `false`. `true` only for an ORCID application registered before 4.0.0 with `<API>/auth/hub/callback`. |
+
+An older list may still carry `"legacy_callback": false`, which is accepted and ignored; `true` stops the server, since `<API>/auth/hub/callback` no longer exists.
 
 - The provider's secret is `OIDC_{KEY}_CLIENT_SECRET`, for example `OIDC_ORCID_CLIENT_SECRET`.
 - Register `<API>/oauth/callback/{key}` with the provider as the redirect URI.
@@ -134,4 +135,4 @@ Remove every client from the list (and unset `HUB_AUTH_ENABLED`), then restart. 
 
 - The API never logs query strings, request bodies, keys or tokens, and its own access log is disabled, because authentication callbacks carry one-time codes in the URL.
 - Configure every reverse proxy, load balancer and tracer in front of the API the same way: no query strings, `Authorization` headers, cookies or redirect `Location` headers in logs.
-- Limit authentication routes (`/oauth/*`, `/auth/hub/*`) to small request bodies; the Caddy configuration in crucible-selfhost allows 8 KB.
+- Limit authentication routes (`/oauth/*`) to small request bodies; the Caddy configuration in crucible-selfhost allows 8 KB.

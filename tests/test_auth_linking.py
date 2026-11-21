@@ -72,7 +72,7 @@ def provider_sign_in(world, start_url, *, subject, provider="lab", auth_time=0, 
     fake.claims = {"nonce": query["nonce"][0], "sub": subject, "email": email, **({} if auth_time is None else {"auth_time": int(time.time()) - auth_time})}
     if not keep_cookie:
         client.cookies.clear()
-    path = "/oauth/callback/lab" if provider == "lab" else "/auth/hub/callback"
+    path = "/oauth/callback/lab" if provider == "lab" else "/oauth/callback/orcid"
     return client.get(path, params={"code": "provider-code", "state": query["state"][0]}, follow_redirects=False)
 
 
@@ -152,18 +152,18 @@ def test_link_code_is_single_use_and_cannot_sign_in(world):
     _, client, engine = world
     ada = hub_session(engine, ADA)
     code = link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab"))
-    assert client.post("/auth/hub/token", auth=HUB, json={"code": code, "code_verifier": VERIFIER, "redirect_uri": LINK_CALLBACK}).status_code == 401
+    assert client.post("/oauth/token", auth=HUB, data={"grant_type": "authorization_code", "code": code, "code_verifier": VERIFIER, "redirect_uri": LINK_CALLBACK}).json()["error"] == "invalid_grant"
     assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 200
     assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 401
 
 
 def test_sign_in_code_cannot_confirm_a_link(world):
     fakes, client, engine = world
-    started = client.get("/auth/hub/login", params={"client_id": "crucible-hub", "redirect_uri": SIGN_IN_CALLBACK, "state": "sign-in-state-00001", "code_challenge": CHALLENGE,
-                                                    "code_challenge_method": "S256", "provider": "orcid"}, follow_redirects=False)
+    started = client.get("/oauth/authorize", params={"client_id": "crucible-hub", "redirect_uri": SIGN_IN_CALLBACK, "state": "sign-in-state-00001", "code_challenge": CHALLENGE,
+                                                    "code_challenge_method": "S256", "response_type": "code", "provider": "orcid"}, follow_redirects=False)
     query = parse_qs(urlparse(started.headers["location"]).query)
     fakes["orcid.org"].claims = {"nonce": query["nonce"][0], "sub": ADA_ORCID}
-    finished = client.get("/auth/hub/callback", params={"code": "c", "state": query["state"][0]}, follow_redirects=False)
+    finished = client.get("/oauth/callback/orcid", params={"code": "c", "state": query["state"][0]}, follow_redirects=False)
     sign_in_code = parse_qs(urlparse(finished.headers["location"]).query)["code"][0]
     assert client.post("/oauth/link/confirm", auth=HUB, json={**code_body(sign_in_code, hub_session(engine, ADA)), "redirect_uri": SIGN_IN_CALLBACK}).status_code == 401
 
@@ -338,10 +338,8 @@ def test_link_starts_are_limited(world):
     assert (refused.status_code, refused.json()["detail"]["code"], refused.headers["retry-after"]) == (429, "too_many_links", "600")
 
 
-def test_link_routes_live_only_under_oauth_and_record_the_client(world):
+def test_link_routes_record_the_client(world):
     _, client, engine = world
-    for path in ("/auth/hub/link/preview", "/auth/hub/link/confirm"):
-        assert client.post(path, auth=HUB, json={}).status_code == 404
     ada = hub_session(engine, ADA)
     start_url = start_link(world, ada)
     assert urlparse(start_url).path == "/oauth/link/start"

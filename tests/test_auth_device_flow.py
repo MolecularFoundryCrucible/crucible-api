@@ -52,7 +52,7 @@ def client(db_engine, monkeypatch):
         session.commit()
     app = FastAPI()
     app.add_exception_handler(RequestValidationError, main.handle_request_validation)
-    for router in (routes.router, routes.callback_router, routes.password_router, oauth_routes.router, oauth_routes.discovery, device_routes.router):
+    for router in (routes.callback_router, routes.password_router, oauth_routes.router, oauth_routes.discovery, device_routes.router):
         app.include_router(router)
     app.dependency_overrides[get_engine] = lambda: db_engine
     with TestClient(app, base_url=API_URL) as test_client:

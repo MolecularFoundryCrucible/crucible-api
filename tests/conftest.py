@@ -131,7 +131,7 @@ def orcid_provider_settings(monkeypatch):
 
         monkeypatch.setenv("CRUCIBLE_AUTH_PROVIDERS", json.dumps([{
             "key": "orcid", "display_name": "ORCID", "issuer": issuer, "client_id": client_id, "scopes": "openid",
-            "token_endpoint_auth_method": "client_secret_post", "registration": "open", "legacy_callback": True,
+            "token_endpoint_auth_method": "client_secret_post", "registration": "open",
         }]))
         monkeypatch.setenv("OIDC_ORCID_CLIENT_SECRET", "test-orcid-secret")
         config.get_settings.cache_clear()

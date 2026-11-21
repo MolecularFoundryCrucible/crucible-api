@@ -21,7 +21,6 @@ ORCID_ENTRY = {
     "scopes": "openid",
     "token_endpoint_auth_method": "client_secret_post",
     "registration": "open",
-    "legacy_callback": True,
 }
 LAB_ENTRY = {
     "key": "lab",
@@ -31,10 +30,9 @@ LAB_ENTRY = {
     "scopes": "openid profile",
     "token_endpoint_auth_method": "client_secret_basic",
     "registration": "closed",
-    "legacy_callback": False,
 }
 HUB_ENVIRONMENT = {"HUB_AUTH_ENABLED": "true", "HUB_AUTH_CLIENT_SECRET": "hub-secret-padded-to-at-least-32-chars00", "HUB_AUTH_CALLBACK_URI": "https://hub.example/callback"}
-CALLBACK = "https://api.example/auth/hub/callback"
+CALLBACK = "https://api.example/oauth/callback/orcid"
 
 
 def set_providers(monkeypatch, *entries):
@@ -106,8 +104,8 @@ def test_orcid_status_comes_only_from_the_exact_issuer(monkeypatch, issuer, expe
     assert get_settings().auth.providers[0].is_orcid is expected
 
 
-def test_legacy_callback_needs_orcid(monkeypatch):
-    assert "legacy_callback" in provider_problem(monkeypatch, {**LAB_ENTRY, "legacy_callback": True})
+def test_legacy_callback_is_refused(monkeypatch):
+    assert "/oauth/callback/" in provider_problem(monkeypatch, {**ORCID_ENTRY, "legacy_callback": True})
 
 
 @pytest.mark.parametrize("second", [

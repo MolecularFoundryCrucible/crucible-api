@@ -11,13 +11,12 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_engine
 from app.api.dependencies import get_api_root_path
 from app.auth.providers import TOKEN_FAILURES, IssuerMismatch, ProviderUnavailable, authorization_url, check_response_issuer, new_code_verifier, verified_identity
 from app.auth.clients import ClientUnavailable, authenticate_client, require_client_secrets
-from app.auth.oauth_server import FormRequest, authorization_server, check_authorization_request
+from app.auth.oauth_server import check_authorization_request
 from authlib.oauth2 import OAuth2Error
 from app.config import ConfigurationError, OidcProvider, get_settings
 from app.tables import LoginTransaction
@@ -29,11 +28,9 @@ from app.auth.login_transactions import (
 from app.auth.linking import LinkRefused, LinkSessionStale, LinkingUnavailable, confirm_link, create_link_code, identity_read, open_link, preview_link, provider_fields
 from app.config import ORCID_ISSUERS
 from app.models.identities import IdentityRead, LinkCode, LinkPreviewRead
-from app.auth.tokens import InvalidGrant, TokenPair
-from app.models.timestamps import UtcDatetime
+from app.auth.tokens import InvalidGrant
 
 
-router = APIRouter(prefix="/auth/hub", tags=["auth"])
 callback_router = APIRouter(prefix="/oauth/callback", tags=["auth"])
 link_router = APIRouter(prefix="/oauth/link", tags=["auth"])
 client_security = HTTPBasic(auto_error=False)
@@ -45,36 +42,12 @@ def login_cookie_name(state: str) -> str:
     return f"{LOGIN_COOKIE}_{hashlib.sha256(state.encode()).hexdigest()[:16]}"
 
 
-def _cookie_path(provider: OidcProvider) -> str:
+def _cookie_path() -> str:
     """The sign-in cookie goes only to the address the provider sends the browser back to."""
-    return f"{get_api_root_path()}{'/auth/hub' if provider.legacy_callback else '/oauth/callback'}"
+    return f"{get_api_root_path()}/oauth/callback"
 _PROVIDER_ERRORS = frozenset({"access_denied", "temporarily_unavailable"})
 _templates = Jinja2Templates(directory=FilePath(__file__).resolve().parents[2] / "templates")
 logger = logging.getLogger(__name__)
-
-
-class HubCodeExchangeRequest(BaseModel):
-    code: str = Field(min_length=32, max_length=128)
-    code_verifier: str = Field(min_length=43, max_length=128)
-    redirect_uri: str = Field(min_length=1, max_length=512)
-
-
-class HubRefreshRequest(BaseModel):
-    refresh_token: str = Field(min_length=50, max_length=128)
-
-
-class HubRevokeRequest(BaseModel):
-    token: str = Field(min_length=50, max_length=128)
-
-
-class HubTokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "Bearer"
-    access_expires_at: UtcDatetime
-    refresh_expires_at: UtcDatetime
-    user_unique_id: str
-    auth_time: UtcDatetime | None = None
 
 
 def require_client(credentials: HTTPBasicCredentials | None = Depends(client_security)) -> str:
@@ -89,34 +62,6 @@ def require_client(credentials: HTTPBasicCredentials | None = Depends(client_sec
     if client is None:
         raise HTTPException(status_code=401, detail="Invalid client credentials", headers={"WWW-Authenticate": "Basic"})
     return client.client_id
-
-
-def _server_request(request: Request, path: str, fields: list[tuple[str, str]], engine) -> FormRequest:
-    try:
-        base = public_api_url()
-    except SignInUnavailable:
-        raise HTTPException(status_code=503, detail="Hub authentication is unavailable") from None
-    return FormRequest(f"{base}{path}", {"Authorization": request.headers["authorization"]}, fields, engine)
-
-
-def _through_server(request: Request, path: str, fields: list[tuple[str, str]], engine) -> TokenPair | None:
-    """The Hub's JSON routes run the same OAuth server as /oauth/token and keep their own answers."""
-    prepared = _server_request(request, path, fields, engine)
-    status, _, _ = authorization_server().create_token_response(prepared)
-    return prepared.token_pair if status == 200 else None
-
-
-def _token_response(pair: TokenPair, response: Response) -> HubTokenResponse:
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Pragma"] = "no-cache"
-    return HubTokenResponse(
-        access_token=pair.access_token,
-        refresh_token=pair.refresh_token,
-        access_expires_at=pair.access_expires_at,
-        refresh_expires_at=pair.refresh_expires_at,
-        user_unique_id=pair.user_unique_id,
-        auth_time=pair.auth_time,
-    )
 
 
 def _browser_headers(response: Response) -> Response:
@@ -172,24 +117,6 @@ def _chooser(request: Request, listed: list[OidcProvider], hub_request: dict[str
     return _browser_headers(response)
 
 
-@router.get("/login", deprecated=True, response_class=RedirectResponse, status_code=302, responses={200: {"description": "A page to choose how to sign in, when several providers are listed and none is named", "content": {"text/html": {}}}, 302: {"description": "Redirect to the provider, or to the Hub with an error when the provider cannot be reached"}, 400: {"description": "Invalid sign-in request"}, 503: {"description": "Hub sign-in unavailable"}})
-async def begin_hub_login(
-    request: Request,
-    client_id: str = Query(min_length=1, max_length=100),
-    redirect_uri: str = Query(min_length=1, max_length=512),
-    state: str = Query(min_length=16, max_length=256),
-    code_challenge: str = Query(min_length=43, max_length=43),
-    code_challenge_method: str = Query(pattern="^S256$"),
-    max_age: int | None = Query(default=None, ge=0, le=86400, description="Maximum seconds since the user's last authentication at the provider. 0 forces the provider to re-authenticate; use it before credential-creating operations that require a recent sign-in."),
-    provider: str | None = Query(default=None, max_length=32, description="The provider to use, a key from GET /auth/methods. When omitted, the only listed provider is used, or a page offers the choice."),
-    required_user: str | None = Query(default=None, min_length=1, max_length=255, description="The unique_id that must sign in. Any other account gets error=login_required and no code. It passes through the browser, so the Hub must still compare the account it receives."),
-    engine=Depends(get_engine),
-) -> Response:
-    """Deprecated: use GET /oauth/authorize with response_type=code, which this calls. Kept for Hub releases before 1.8.0."""
-    return await start_sign_in(request, engine, path="/auth/hub/login", response_type="code", client_id=client_id, redirect_uri=redirect_uri, state=state,
-                               code_challenge=code_challenge, code_challenge_method=code_challenge_method, max_age=max_age, provider=provider, required_user=required_user)
-
-
 _AUTHORIZATION_PARAMETERS = frozenset({"response_type", "client_id", "redirect_uri", "state", "scope", "code_challenge", "code_challenge_method"})
 
 
@@ -202,8 +129,6 @@ async def start_sign_in(request: Request, engine, *, path: str, response_type: s
     except SignInUnavailable:
         raise HTTPException(status_code=503, detail="Hub sign-in is unavailable")
     standard = [(name, value) for name, value in request.query_params.multi_items() if name in _AUTHORIZATION_PARAMETERS and value]
-    if path == "/auth/hub/login":
-        standard.append(("response_type", "code"))
     try:
         check_authorization_request(f"{config.public_api_url}{path}", standard)
     except OAuth2Error as error:
@@ -222,7 +147,7 @@ async def start_sign_in(request: Request, engine, *, path: str, response_type: s
     passwords = get_settings().auth.password_enabled
     if provider is None and len(listed) > 1 and not passwords:
         return _chooser(request, listed, {
-            "response_type": response_type if path != "/auth/hub/login" else None,
+            "response_type": response_type,
             "client_id": client_id, "redirect_uri": redirect_uri, "state": state, "code_challenge": code_challenge,
             "code_challenge_method": code_challenge_method, "max_age": max_age, "required_user": required_user,
         })
@@ -249,7 +174,7 @@ async def start_sign_in(request: Request, engine, *, path: str, response_type: s
         login_cookie_name(provider_state),
         browser_secret,
         max_age=600,
-        path=_cookie_path(chosen),
+        path=_cookie_path(),
         secure=config.public_api_url.startswith("https://"),
         httponly=True,
         samesite="lax",
@@ -258,21 +183,16 @@ async def start_sign_in(request: Request, engine, *, path: str, response_type: s
 
 
 def _callback_provider(transaction: LoginTransaction, served: OidcProvider | None) -> OidcProvider:
-    """The provider this callback address serves, if it is the one the sign-in started with. A row
-    with no key came from a pod older than the key, when only the legacy provider existed."""
-    auth = get_settings().auth
-    started = auth.provider(transaction.provider_key) if transaction.provider_key else auth.legacy_callback_provider
+    """The provider this callback address serves, if it is the one the sign-in started with."""
+    started = get_settings().auth.provider(transaction.provider_key) if transaction.provider_key else None
     if served is None or started is None or served.key != started.key:
         raise LoginRefused("access_denied")
     return served
 
 
-async def _finish_sign_in(request: Request, engine, served_by, cookie_directory: str, code: str | None, state: str | None, error: str | None, iss: str | None) -> Response:
+async def _finish_sign_in(request: Request, engine, served: OidcProvider | None, code: str | None, state: str | None, error: str | None, iss: str | None) -> Response:
     cookie = login_cookie_name(state or "")
-    # Sign-ins started on a pod from before per-sign-in cookies set the shared name.
-    browser_secret = request.cookies.get(cookie) or request.cookies.get(LOGIN_COOKIE)
-    if request.cookies.get(cookie) is None:
-        cookie = LOGIN_COOKIE
+    browser_secret = request.cookies.get(cookie)
     try:
         config = await run_in_threadpool(load_login_config)
         transaction = await run_in_threadpool(consume_login, engine, state or "", browser_secret)
@@ -280,7 +200,7 @@ async def _finish_sign_in(request: Request, engine, served_by, cookie_directory:
         return _browser_headers(PlainTextResponse("Sign-in failed. Please return to the Hub and try again.", status_code=400))
     else:
         try:
-            provider = _callback_provider(transaction, served_by(get_settings().auth))
+            provider = _callback_provider(transaction, served)
             await check_response_issuer(provider, iss)
             if error is not None:
                 raise LoginRefused(error if error in _PROVIDER_ERRORS else "server_error")
@@ -307,7 +227,7 @@ async def _finish_sign_in(request: Request, engine, served_by, cookie_directory:
         except TOKEN_FAILURES as failure:
             logger.warning("Hub sign-in failed: %s%s", type(failure).__name__, _provider_answer(failure, code))
             response = _client_error(transaction.callback_uri, transaction.hub_state, "server_error")
-    response.delete_cookie(cookie, path=f"{get_api_root_path()}{cookie_directory}")
+    response.delete_cookie(cookie, path=_cookie_path())
     return response
 
 
@@ -328,19 +248,6 @@ def _provider_answer(failure: Exception, code: str | None) -> str:
 _CALLBACK_RESPONSES = {302: {"description": "Redirect to the Hub with a sign-in code, or with state and an RFC 6749 error"}, 400: {"description": "The sign-in cannot be matched to this browser, so nothing is trusted enough to redirect to"}}
 
 
-@router.get("/callback", deprecated=True, response_class=RedirectResponse, status_code=302, responses=_CALLBACK_RESPONSES)
-async def finish_hub_login(
-    request: Request,
-    code: str | None = Query(default=None, max_length=2048),
-    state: str | None = Query(default=None, max_length=128),
-    error: str | None = Query(default=None, max_length=256),
-    iss: str | None = Query(default=None, max_length=512),
-    engine=Depends(get_engine),
-) -> Response:
-    """Deprecated: the provider callback for an ORCID application registered with this address (`legacy_callback`). New registrations use GET /oauth/callback/{key}."""
-    return await _finish_sign_in(request, engine, lambda auth: auth.legacy_callback_provider, "/auth/hub", code, state, error, iss)
-
-
 @callback_router.get("/{key}", response_class=RedirectResponse, status_code=302, responses=_CALLBACK_RESPONSES)
 async def finish_provider_login(
     request: Request,
@@ -352,11 +259,7 @@ async def finish_provider_login(
     engine=Depends(get_engine),
 ) -> Response:
     """Where a provider sends the browser back after sign-in: register `<API address>/oauth/callback/{key}` with the provider."""
-    def served_by(auth) -> OidcProvider | None:
-        provider = auth.provider(key)
-        return provider if provider is not None and not provider.legacy_callback else None
-
-    return await _finish_sign_in(request, engine, served_by, "/oauth/callback", code, state, error, iss)
+    return await _finish_sign_in(request, engine, get_settings().auth.provider(key), code, state, error, iss)
 
 
 @link_router.get("/start", response_class=RedirectResponse, status_code=302, responses={302: {"description": "Redirect to the provider, which asks the person to sign in again, or to the Hub with an error"}, 400: {"description": "Unknown, used or expired start address"}})
@@ -376,7 +279,7 @@ async def link_start(request: Request, token: str = Query(min_length=1, max_leng
         logger.warning("Linking could not reach provider %s: %s", provider.key, type(error).__name__)
         return _client_error(transaction.callback_uri, transaction.hub_state, "temporarily_unavailable")
     response = _browser_headers(RedirectResponse(destination, status_code=302))
-    response.set_cookie(login_cookie_name(provider_state), browser_secret, max_age=600, path=_cookie_path(provider), secure=config.public_api_url.startswith("https://"), httponly=True, samesite="lax")
+    response.set_cookie(login_cookie_name(provider_state), browser_secret, max_age=600, path=_cookie_path(), secure=config.public_api_url.startswith("https://"), httponly=True, samesite="lax")
     return response
 
 
@@ -413,54 +316,6 @@ def link_confirm(body: LinkCode, response: Response, client_id: str = Depends(re
         raise HTTPException(status_code=409, detail={"code": refused.reason, "message": "This login cannot be added to the account"})
     response.headers["Cache-Control"] = "no-store"
     return identity_read(identity)
-
-
-@router.post("/token", deprecated=True, response_model=HubTokenResponse, responses={401: {"description": "Invalid client or sign-in code"}, 503: {"description": "Hub sign-in unavailable"}})
-def exchange_hub_code(
-    body: HubCodeExchangeRequest,
-    request: Request,
-    response: Response,
-    client_id: str = Depends(require_client),
-    engine=Depends(get_engine),
-) -> HubTokenResponse:
-    """Deprecated: use POST /oauth/token with grant_type=authorization_code, which this calls. Kept for Hub releases before 1.8.0."""
-    pair = _through_server(request, "/auth/hub/token", [("grant_type", "authorization_code"), ("code", body.code), ("code_verifier", body.code_verifier), ("redirect_uri", body.redirect_uri)], engine)
-    if pair is None:
-        raise HTTPException(status_code=401, detail="Invalid or expired sign-in code")
-    return _token_response(pair, response)
-
-
-@router.post("/refresh", deprecated=True, response_model=HubTokenResponse, responses={401: {"description": "Invalid client or refresh token"}, 503: {"description": "Hub sign-in unavailable"}})
-def refresh_hub_credential(
-    body: HubRefreshRequest,
-    request: Request,
-    response: Response,
-    client_id: str = Depends(require_client),
-    engine=Depends(get_engine),
-) -> HubTokenResponse:
-    """Deprecated: use POST /oauth/token with grant_type=refresh_token, which this calls. Kept for Hub releases before 1.8.0."""
-    pair = _through_server(request, "/auth/hub/refresh", [("grant_type", "refresh_token"), ("refresh_token", body.refresh_token)], engine)
-    if pair is None:
-        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
-    return _token_response(pair, response)
-
-
-@router.post(
-    "/revoke",
-    deprecated=True,
-    status_code=204,
-    description="Requires HTTP Basic Hub client authentication and JSON containing token. Revokes the entire login token family, including all access and refresh generations. A previously rotated refresh token can revoke the family. Repeated requests, unknown tokens, and tokens belonging to another client return 204 without disclosing token validity. Subsequent authentication checks reject revoked tokens; already-authorized requests may finish. Other login sessions, legacy API keys, and the ORCID session are unaffected. The Hub must also delete its own session and browser cookie.",
-    responses={204: {"description": "Revocation processed; no-store response"}, 401: {"description": "Invalid client"}, 503: {"description": "Hub sign-in unavailable"}},
-)
-def revoke_hub_credential(
-    body: HubRevokeRequest,
-    request: Request,
-    client_id: str = Depends(require_client),
-    engine=Depends(get_engine),
-) -> Response:
-    """Deprecated: use POST /oauth/revoke, which this calls. Kept for Hub releases before 1.8.0."""
-    authorization_server().create_endpoint_response("revocation", _server_request(request, "/auth/hub/revoke", [("token", body.token)], engine))
-    return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
 password_router = APIRouter(prefix="/oauth", tags=["auth"])

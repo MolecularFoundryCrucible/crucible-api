@@ -153,7 +153,7 @@ def test_unknown_container_is_an_error():
 
 
 def orcid_list(issuer):
-    return json.dumps([{"key": "orcid", "display_name": "ORCID", "issuer": issuer, "client_id": "APP-TEST", "scopes": "openid", "token_endpoint_auth_method": "client_secret_post", "registration": "open", "legacy_callback": True}])
+    return json.dumps([{"key": "orcid", "display_name": "ORCID", "issuer": issuer, "client_id": "APP-TEST", "scopes": "openid", "token_endpoint_auth_method": "client_secret_post", "registration": "open"}])
 
 
 ISSUER_WARNING = "The ORCID provider's issuer (https://sandbox.orcid.org) and ORCID_ISSUER (https://orcid.org) differ, so a person signing in through both is refused"

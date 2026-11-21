@@ -13,7 +13,7 @@ pytestmark = pytest.mark.usefixtures("hub_client_registered")
 
 
 def begin(client, hub_state):
-    started = client.get("/auth/hub/login", params={**HUB_LOGIN, "state": hub_state}, follow_redirects=False)
+    started = client.get("/oauth/authorize", params={**HUB_LOGIN, "state": hub_state}, follow_redirects=False)
     assert started.status_code == 302
     query = parse_qs(urlparse(started.headers["location"]).query)
     return query["state"][0], query["nonce"][0]
@@ -21,7 +21,7 @@ def begin(client, hub_state):
 
 def finish(client, fake, state, nonce, **extra):
     fake.claims = {"nonce": nonce}
-    return client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state, **extra}, follow_redirects=False)
+    return client.get("/oauth/callback/orcid", params={"code": "orcid-code", "state": state, **extra}, follow_redirects=False)
 
 
 def login_cookies(client):
@@ -47,17 +47,8 @@ def test_parallel_sign_ins_keep_their_own_cookies(hub_routes):
 def test_unmatched_callback_leaves_the_sign_in_alone(hub_routes):
     client, fake = hub_routes
     state, nonce = begin(client, "the-only-tab-state-1")
-    assert client.get("/auth/hub/callback", params={"code": "x", "state": "forged-state"}, follow_redirects=False).status_code == 400
+    assert client.get("/oauth/callback/orcid", params={"code": "x", "state": "forged-state"}, follow_redirects=False).status_code == 400
     assert login_cookies(client) == {login_cookie_name(state)}
-    assert "code" in returned_code(finish(client, fake, state, nonce))
-
-
-def test_sign_in_started_on_an_older_pod_still_finishes(hub_routes):
-    client, fake = hub_routes
-    state, nonce = begin(client, "older-pod-tab-state1")
-    secret = client.cookies.get(login_cookie_name(state))
-    client.cookies.clear()
-    client.cookies.set(LOGIN_COOKIE, secret, path="/auth/hub")
     assert "code" in returned_code(finish(client, fake, state, nonce))
 
 

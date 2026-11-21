@@ -97,7 +97,3 @@ An administrator's session acts with ordinary privileges unless a request carrie
 | `POST /account/password` | Set or change the caller's password |
 | `GET /account/auth-events` | The caller's sign-in history |
 | `POST /users/{user_ref}/disable`, `/enable` | Administrators disable or enable an account; a disabled account's sessions and keys stop working |
-
-## Deprecated routes
-
-`/auth/hub/login`, `/auth/hub/token`, `/auth/hub/refresh` and `/auth/hub/revoke` provide the same functions as the standard routes with JSON bodies. They are retained for Hub releases before 1.8.0 and will be removed. The browser pages that issued a single API key (`/user_apikey`, `/auth/apikey`) return 410.

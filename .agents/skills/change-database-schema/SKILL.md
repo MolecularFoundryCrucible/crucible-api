@@ -1,6 +1,6 @@
 ---
 name: change-database-schema
-description: Add or change a database table or column, write the Alembic migration for it, or add a data change that upgraded installations must run. Use for any edit to app/tables.py or anything under migrations/.
+description: Use when adding or changing a database table or column, writing an Alembic migration, or adding a data step that upgraded installations must run - any edit to app/tables.py or under migrations/.
 ---
 
 # Change the database schema
@@ -8,7 +8,7 @@ description: Add or change a database table or column, write the Alembic migrati
 ## 1. Model and migration together
 
 1. Edit the table in `app/tables.py`.
-2. Write the revision in `migrations/versions/`, named `YYYYMMDD_<revision>_<what>.py`, with a one-line docstring saying what it adds. Autogenerate needs a migrated local database: `DB_CONF_FILE=.env.local uv run alembic revision --autogenerate -m "<what>"`, then review it by hand.
+2. Write the revision in `migrations/versions/`, named `YYYYMMDD_<revision>_<what>.py`, with a one-line docstring saying what it does. Autogenerate needs a migrated local database: `DB_CONF_FILE=.env.local uv run alembic revision --autogenerate -m "<what>"`, then review it by hand.
 3. Keep one head: `uv run alembic heads` prints a single revision.
 4. Write `downgrade`.
 
@@ -28,10 +28,10 @@ A migration runs before the new code and while the old code still serves.
 
 ## 4. Check and record
 
-- Run the PostgreSQL-backed tests (skill `run-checks`).
+- Run the PostgreSQL-backed tests (skill `run-checks`). Test the behavior the change enables, not the migration itself: no test for a single revision or a dropped table.
 - Add a line under `Unreleased` in `CHANGELOG.md` naming the revision: "Needs migration `<revision>`."
 - If operators must do something, add the step to the upgrade guide in `docs/upgrading/`.
 
 ## Never
 
-Run a migration or a data write against staging or production. The user runs those; you may verify afterwards with read-only queries when asked.
+Run a migration or a data write against a shared deployment (staging, production). Its operators run those; afterwards you may verify with read-only queries when asked.

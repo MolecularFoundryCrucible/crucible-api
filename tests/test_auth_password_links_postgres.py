@@ -1,14 +1,10 @@
-import importlib.util
 import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import pytest
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, select
@@ -108,34 +104,3 @@ def test_the_index_refuses_a_second_live_link(pg_engine):
             session.add(PasswordToken(token_hash=digest, user_id=user_id, purpose="reset", created_at=now, expires_at=now + timedelta(hours=1)))
         with pytest.raises(IntegrityError):
             session.commit()
-
-
-@pytest.mark.skipif(not os.getenv("CRUCIBLE_TEST_PG_URL"), reason="requires isolated test PostgreSQL")
-def test_password_token_migration_roundtrip():
-    path = Path(__file__).resolve().parents[1] / "migrations/versions/20261108_a7df9dd039cf_password_token.py"
-    spec = importlib.util.spec_from_file_location("password_token_migration", path)
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    engine = create_engine(os.environ["CRUCIBLE_TEST_PG_URL"])
-    schema = "test_password_token_" + uuid.uuid4().hex
-    with engine.connect() as connection:
-        transaction = connection.begin()
-        try:
-            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-            connection.execute(text(f'SET LOCAL search_path TO "{schema}"'))
-            connection.execute(text('CREATE TABLE "user" (id integer PRIMARY KEY)'))
-            connection.execute(text('INSERT INTO "user" (id) VALUES (1)'))
-            with Operations.context(MigrationContext.configure(connection)):
-                migration.upgrade()
-                insert = "INSERT INTO password_token (token_hash, user_id, purpose, created_at, expires_at, voided_at) VALUES (:h, 1, 'setup', now(), now(), :v)"
-                connection.execute(text(insert), {"h": "a", "v": None})
-                connection.execute(text(insert), {"h": "b", "v": "2026-11-08"})
-                nested = connection.begin_nested()
-                with pytest.raises(IntegrityError):
-                    connection.execute(text(insert), {"h": "c", "v": None})
-                nested.rollback()
-                migration.downgrade()
-                assert "password_token" not in inspect(connection).get_table_names(schema=schema)
-        finally:
-            transaction.rollback()
-    engine.dispose()

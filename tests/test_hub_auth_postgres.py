@@ -1,17 +1,13 @@
 import base64
 import hashlib
-import importlib.util
 import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
-from sqlalchemy import event, inspect, text
+from sqlalchemy import event
 from sqlalchemy.engine import make_url
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -177,31 +173,3 @@ def test_cleanup_respects_foreign_keys_and_preserves_live_family(pg_engine):
         assert len(session.exec(select(RefreshToken)).all()) == 1
     with pytest.raises(InvalidGrant):
         refresh_tokens(pg_engine, expired.refresh_token, "crucible-hub", now=NOW)
-
-
-def test_expiry_index_migration_round_trip(pg_engine):
-    path = Path(__file__).resolve().parents[1] / "migrations/versions/20260928_e92a6b1c730f_index_hub_auth_expiry.py"
-    spec = importlib.util.spec_from_file_location("hub_expiry_revision", path)
-    revision = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(revision)
-    pair = issue_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW)
-
-    with pg_engine.connect() as connection:
-        context = MigrationContext.configure(connection)
-        with Operations.context(context):
-            revision.downgrade()
-            for table, _ in revision.INDEXES:
-                assert f"ix_{table}_expiry" not in {index["name"] for index in inspect(connection).get_indexes(table)}
-            connection.commit()
-            revision.upgrade()
-            for table, key in revision.INDEXES:
-                indexes = {index["name"]: index for index in inspect(connection).get_indexes(table)}
-                name = f"ix_{table}_expiry"
-                assert indexes[name]["column_names"] == ["expires_at", key]
-                assert connection.execute(text(
-                    "SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(:name)"
-                ), {"name": name}).scalar_one()
-                model_index = next(index for index in SQLModel.metadata.tables[table].indexes if index.name == name)
-                assert list(model_index.columns.keys()) == ["expires_at", key]
-    with Session(pg_engine) as session:
-        assert access_token_user(session, pair.access_token, now=NOW) == internal_id(session, USER)

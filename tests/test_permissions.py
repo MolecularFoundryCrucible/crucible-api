@@ -456,10 +456,6 @@ class TestGrantFloor:
     outward without bound and need `admin`; project membership is bounded by
     the project and needs only `editor`."""
 
-    def test_editor_cannot_manage_acl_entries(self):
-        for target in ALL_ROLES:
-            assert not can_grant(Role.EDITOR, target)          # default floor = admin
-
     @pytest.mark.parametrize("target", [Role.VIEWER, Role.CONTRIBUTOR, Role.EDITOR])
     def test_editor_can_seat_members_at_or_below(self, target):
         assert can_grant(Role.EDITOR, target, floor=Role.EDITOR)

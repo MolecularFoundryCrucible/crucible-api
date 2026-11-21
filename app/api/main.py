@@ -74,7 +74,7 @@ def _path(request: Request) -> str:
 
 def _is_sign_in_request(request: Request) -> bool:
     path = _path(request)
-    return path == "/auth/hub" or path.startswith(("/auth/hub/", "/oauth/"))
+    return path.startswith("/oauth/")
 
 
 @app.exception_handler(RequestValidationError)
@@ -335,7 +335,6 @@ app.include_router(account.router)
 app.include_router(identities.router)
 app.include_router(api_keys.router)
 app.include_router(auth.router)
-app.include_router(browser_sign_in.router)
 app.include_router(browser_sign_in.callback_router)
 app.include_router(browser_sign_in.link_router)
 app.include_router(browser_sign_in.password_router)
@@ -407,7 +406,7 @@ def custom_openapi():
         for operation in path_item.values():
             if not isinstance(operation, dict):
                 continue
-            if path.startswith(("/auth/hub/", "/oauth/callback/")):
+            if path.startswith("/oauth/callback/"):
                 operation["responses"].setdefault("500", {
                     "description": "Authentication request failed; response contains no internal error details",
                 })

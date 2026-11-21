@@ -2,29 +2,30 @@
 
 The server behind the Crucible Data Platform. It is a FastAPI service on PostgreSQL with S3-compatible file storage.
 
-The Molecular Foundry runs it at [crucible.lbl.gov](https://crucible.lbl.gov/api/v4/docs). The service can be self-hosted by any lab or institution.
+The Molecular Foundry deploys Crucible at [crucible.lbl.gov](https://crucible.lbl.gov/api/v4/docs). The Crucible ecosystem is open source and can be self-hosted by any lab or institution.
 
 ## Features
 
 - **Data model**: datasets, samples, projects and instruments with persistent identifiers (MFIDs), free-form scientific metadata, and links between records that form a provenance graph.
-- **Access control**: role-based permissions granted through projects and access groups, with an explicit elevated mode for platform administrators.
-- **Authentication**: OAuth 2.0 authorization code flow with PKCE and device authorization, backed by OpenID Connect providers such as ORCID or by local passwords, plus named API keys for scripts and instruments.
+- **Access control**: role-based permissions granted through projects and access groups.
+- **Authentication**: OAuth 2.0 authorization code flow backed by OpenID Connect, and API keys for scripts and instruments.
 - **File storage**: multipart uploads and downloads through signed URLs on S3-compatible object storage, with versioned file replacement.
-- **Search**: filtering, sorting and pagination on list endpoints, with trigram and full-text search over names and metadata.
+- **Search**: filtering, sorting, and search of resources and their metadata.
 - **Operations**: Alembic migrations, an administrative CLI, health and Prometheus metrics endpoints, and a published container image.
-- **Optional integrations**: data ingestion and post-processing over RabbitMQ, label printing over MQTT, and project membership from a proposal database.
 
 ## Getting started
 
 ### API usage
 
 - [Interactive API reference](https://crucible.lbl.gov/api/v4/docs) of the Molecular Foundry deployment.
-- [nano-crucible](https://github.com/MolecularFoundryCrucible/nano-crucible), the Python client and command-line interface.
+- [nano-crucible](https://github.com/MolecularFoundryCrucible/nano-crucible), the Python client and CLI.
 - [Authentication](docs/sign_in.md) and [permissions](docs/permissions.md).
 
 ### Deployment
 
-Each release is published as `ghcr.io/molecularfoundrycrucible/crucible-api:<version>` for amd64 and arm64. [crucible-selfhost](https://github.com/MolecularFoundryCrucible/crucible-selfhost) installs it with PostgreSQL, the file store, the Hub and a reverse proxy. For other environments, refer to the [authentication settings](docs/sign_in_operations.md), [storage settings](docs/uploads.md) and [database migrations](migrations/README.md).
+Each release is published as `ghcr.io/molecularfoundrycrucible/crucible-api:<version>` for amd64 and arm64.
+
+For self-hosting, follow the instructions in [crucible-selfhost](https://github.com/MolecularFoundryCrucible/crucible-selfhost). For other environments, refer to the [authentication settings](docs/sign_in_operations.md), [storage settings](docs/uploads.md) and [database migrations](migrations/README.md) to customize your deployment.
 
 ### Development
 
@@ -37,8 +38,6 @@ DB_CONF_FILE=.env.local uv run python -m app.cli db upgrade
 DB_CONF_FILE=.env.local uv run uvicorn app.api.main:app --reload --port 7777
 ```
 
-Run the test suite with `uv run pytest -q`.
-
 ## Documentation
 
 | Document | Contents |
@@ -50,17 +49,22 @@ Run the test suite with `uv run pytest -q`.
 
 ## Versioning
 
-Releases follow [Semantic Versioning](https://semver.org/) and are tagged `vX.Y.Z`. Each release is listed in the [changelog](CHANGELOG.md) and published with its OpenAPI document. Releases that require operator action include an upgrade guide in [`docs/upgrading/`](docs/upgrading/). The path prefix is a deployment setting (`API_PATH`); the Molecular Foundry serves 4.x at `/api/v4`.
+Each release is listed in the [changelog](CHANGELOG.md) and published with its OpenAPI document. Releases that require it include an upgrade guide in [`docs/upgrading/`](docs/upgrading/).
 
 ## Contributing
 
-Changes are submitted as pull requests against `main`. Run the test suite before opening one, and add a changelog entry under `Unreleased` for any change visible to API users, operators or clients. Repository conventions are in [AGENTS.md](AGENTS.md), with step-by-step workflows for schema changes, routes and releases in [`agent-skills/`](agent-skills/).
+Changes are submitted as pull requests against `main`. Add a changelog entry under `Unreleased` for any change visible to API users, operators or clients. Agentic documentation starts at [AGENTS.md](AGENTS.md) with references to [`.agents/skills/`](.agents/skills/).
 
-## Related projects
+## Crucible ecosystem
 
-- [Crucible Hub](https://github.com/MolecularFoundryCrucible/crucible-hub): web interface.
-- [nano-crucible](https://github.com/MolecularFoundryCrucible/nano-crucible): Python client and command-line interface.
-- [crucible-ingestion](https://github.com/MolecularFoundryCrucible/crucible-ingestion): ingestion of instrument data.
+| Repository | Role |
+|---|---|
+| [crucible-hub](https://github.com/MolecularFoundryCrucible/crucible-hub) | Web interface |
+| [nano-crucible](https://github.com/MolecularFoundryCrucible/nano-crucible) | Python client and CLI |
+| [crucible-selfhost](https://github.com/MolecularFoundryCrucible/crucible-selfhost) | Guides and example configurations for running your own Crucible |
+| [crucible-ingestion](https://github.com/MolecularFoundryCrucible/crucible-ingestion) | Ingestion of instrument data |
+| [crucible-ingestion-worker](https://github.com/MolecularFoundryCrucible/crucible-ingestion-worker) | RabbitMQ consumer that runs ingestion in the cloud |
+| [crucible-upload-uis](https://github.com/MolecularFoundryCrucible/crucible-upload-uis) | Upload interfaces for instrument computers |
 
 ## License
 

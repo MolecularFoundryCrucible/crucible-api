@@ -16,6 +16,7 @@ from sqlmodel import Session, SQLModel, select
 
 from app.api.dependencies import get_engine
 from app.api.routes import browser_sign_in as routes
+from app.api.routes import oauth as oauth_routes
 from app.config import get_settings
 from app.tables import AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User, UserIdentity
 
@@ -25,7 +26,7 @@ PASSWORD = "ci-only-password-not-real"
 CLIENT_SECRET = "ci-only-client-secret"
 VERIFIER = "v" * 43
 CHALLENGE = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest()).rstrip(b"=").decode()
-LOGIN = {"client_id": "crucible-hub", "redirect_uri": HUB_CALLBACK, "state": "hub-state-123456789", "code_challenge": CHALLENGE, "code_challenge_method": "S256"}
+LOGIN = {"client_id": "crucible-hub", "redirect_uri": HUB_CALLBACK, "state": "hub-state-123456789", "code_challenge": CHALLENGE, "code_challenge_method": "S256", "response_type": "code"}
 DEX_ISSUER = os.getenv("OIDC_TEST_DEX_ISSUER")
 SECOND_DEX_ISSUER = os.getenv("OIDC_TEST_DEX_SECOND_ISSUER")
 AUTHENTIK_ISSUER = os.getenv("OIDC_TEST_AUTHENTIK_ISSUER")
@@ -34,7 +35,7 @@ AUTHENTIK_ISSUER = os.getenv("OIDC_TEST_AUTHENTIK_ISSUER")
 def entry(key, issuer):
     return {
         "key": key, "display_name": f"{key} login", "issuer": issuer, "client_id": "crucible", "scopes": "openid profile email",
-        "token_endpoint_auth_method": "client_secret_basic", "registration": "closed", "legacy_callback": False,
+        "token_endpoint_auth_method": "client_secret_basic", "registration": "closed",
     }
 
 
@@ -126,7 +127,7 @@ def api(db_engine, monkeypatch, seen):
         monkeypatch.setenv(f"OIDC_{key}_CLIENT_SECRET", CLIENT_SECRET)
     monkeypatch.setattr(routes, "get_api_root_path", lambda: "")
     app = FastAPI()
-    app.include_router(routes.router)
+    app.include_router(oauth_routes.router)
     app.include_router(routes.callback_router)
     app.dependency_overrides[get_engine] = lambda: db_engine
     with TestClient(app, base_url=API_URL) as client:
@@ -139,7 +140,7 @@ def configure(monkeypatch, *entries):
 
 
 def start(api, key, **extra):
-    started = api.get("/auth/hub/login", params={**LOGIN, "provider": key, **extra}, follow_redirects=False)
+    started = api.get("/oauth/authorize", params={**LOGIN, "provider": key, **extra}, follow_redirects=False)
     assert started.status_code == 302, started.text
     return started.headers["location"]
 
@@ -184,10 +185,10 @@ def test_full_code_flow_and_the_same_subject_on_the_next_sign_in(api, provider, 
     unique_id = link(db_engine, issuer, seen[0].subject)
     answer = hub_answer(sign_in(api, key, at_provider))
     assert seen[1].subject == seen[0].subject
-    tokens = api.post("/auth/hub/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), json={"code": answer["code"], "code_verifier": VERIFIER, "redirect_uri": HUB_CALLBACK})
+    tokens = api.post("/oauth/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), data={"grant_type": "authorization_code", "code": answer["code"], "code_verifier": VERIFIER, "redirect_uri": HUB_CALLBACK})
     assert tokens.status_code == 200, tokens.text
     assert tokens.json()["user_unique_id"] == unique_id
-    refreshed = api.post("/auth/hub/refresh", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), json={"refresh_token": tokens.json()["refresh_token"]})
+    refreshed = api.post("/oauth/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), data={"grant_type": "refresh_token", "refresh_token": tokens.json()["refresh_token"]})
     assert refreshed.status_code == 200, refreshed.text
 
 
@@ -229,22 +230,11 @@ def test_dex_identical_subject_at_a_second_issuer_stays_separate(api, monkeypatc
 
 
 @pytest.mark.skipif(not (DEX_ISSUER and SECOND_DEX_ISSUER), reason="requires two running dex servers")
-def test_dex_code_at_the_other_providers_callback_is_refused(api, monkeypatch, seen):
-    configure(monkeypatch, entry("dex", DEX_ISSUER), entry("second", SECOND_DEX_ISSUER))
-    with httpx.Client(timeout=30) as browser:
-        callback = dex_sign_in(browser, start(api, "dex"), "ada")
-    assert "/oauth/callback/dex?" in callback
-    refused = api.get(callback.removeprefix(API_URL).replace("/oauth/callback/dex?", "/oauth/callback/second?"), follow_redirects=False)
-    assert hub_answer(refused)["error"] == "access_denied"
-    assert seen == []
-
-
-@pytest.mark.skipif(not (DEX_ISSUER and SECOND_DEX_ISSUER), reason="requires two running dex servers")
 def test_dex_choice_page_leads_to_the_chosen_provider(api, monkeypatch):
     configure(monkeypatch, entry("dex", DEX_ISSUER), entry("second", SECOND_DEX_ISSUER))
-    page = api.get("/auth/hub/login", params=LOGIN, follow_redirects=False)
+    page = api.get("/oauth/authorize", params=LOGIN, follow_redirects=False)
     assert page.status_code == 200
     links = [unescape(link) for link in re.findall(r'href="(\?[^"]+)"', page.text)]
     assert len(links) == 2
-    chosen = api.get(f"/auth/hub/login{links[1]}", follow_redirects=False)
+    chosen = api.get(f"/oauth/authorize{links[1]}", follow_redirects=False)
     assert chosen.headers["location"].startswith(f"{SECOND_DEX_ISSUER}/auth?")

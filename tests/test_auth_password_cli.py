@@ -23,8 +23,8 @@ def engine(db_engine, use_engine, monkeypatch):
         "CRUCIBLE_AUTH_PASSWORD_ENABLED": "true", "CRUCIBLE_AUTH_PEPPER": "p" * 40, "CRUCIBLE_AUTH_PEPPER_ID": "one",
         "CRUCIBLE_AUTH_ARGON2_MEMORY_KIB": "19456", "CRUCIBLE_AUTH_ARGON2_TIME_COST": "2", "HUB_AUTH_PUBLIC_API_URL": "http://localhost:7777",
         "CRUCIBLE_AUTH_PROVIDERS": json.dumps([
-            {"key": "lab", "display_name": "Lab", "issuer": LAB, "client_id": "c", "scopes": "openid", "token_endpoint_auth_method": "client_secret_basic", "registration": "closed", "legacy_callback": False},
-            {"key": "newlab", "display_name": "New lab", "issuer": NEW_LAB, "client_id": "c", "scopes": "openid", "token_endpoint_auth_method": "client_secret_basic", "registration": "closed", "legacy_callback": False},
+            {"key": "lab", "display_name": "Lab", "issuer": LAB, "client_id": "c", "scopes": "openid", "token_endpoint_auth_method": "client_secret_basic", "registration": "closed"},
+            {"key": "newlab", "display_name": "New lab", "issuer": NEW_LAB, "client_id": "c", "scopes": "openid", "token_endpoint_auth_method": "client_secret_basic", "registration": "closed"},
         ]),
     }.items():
         monkeypatch.setenv(name, value)

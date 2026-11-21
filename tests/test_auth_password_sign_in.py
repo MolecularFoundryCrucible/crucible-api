@@ -54,7 +54,7 @@ def client(db_engine, settings):
 
     app = FastAPI()
     app.add_exception_handler(RequestValidationError, main.handle_request_validation)
-    for router in (routes.router, routes.password_router, oauth_routes.router):
+    for router in (routes.callback_router, routes.password_router, oauth_routes.router):
         app.include_router(router)
     app.dependency_overrides[get_engine] = lambda: db_engine
     with TestClient(app, base_url=API_URL) as test_client:
@@ -104,10 +104,6 @@ def test_password_sign_in_returns_a_code_that_gives_a_recent_session(client, db_
     with Session(db_engine) as session:
         event = session.exec(select(AuthEvent).where(AuthEvent.event == "sign_in")).one()
     assert (event.issuer, event.client_id) == (API_URL, "crucible-hub")
-
-
-def test_a_password_only_deployment_goes_straight_to_the_form(client):
-    assert start(client)
 
 
 def test_the_password_form_comes_first_and_offers_the_providers_below(client, db_engine, orcid_provider_settings):

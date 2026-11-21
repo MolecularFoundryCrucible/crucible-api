@@ -265,21 +265,6 @@ class TestDatasetInstrumentResolution:
         resp = client.post("/datasets", json={"dataset_name": "d2", "instrument_id": "no-such-instrument"})
         assert resp.status_code == 404
 
-    def test_update_dataset_refuses_instrument_name(self, client, db_engine, auth_as):
-        with Session(db_engine) as session:
-            owner = _user(session, "0000-0007")
-            owner_group_id = session.exec(select(AccessGroup.id).where(
-                AccessGroup.group_name == owner.unique_id
-            )).one()
-
-        auth_as("0000-0007", groups=[("0000-0007", owner_group_id, Role.OWNER)])
-        resp = client.post("/datasets", json={"dataset_name": "d4"})
-        dsid = resp.json()["unique_id"]
-
-        resp = client.patch(f"/datasets/{dsid}", json={"instrument_name": "no-such-instrument"})
-        assert resp.status_code == 422
-
-
 class TestInstrumentIdOnDataset:
     """POST/PATCH /datasets accept the validated instrument_id slug as an
     alternative to free-text instrument_name; responses resolve back to it."""

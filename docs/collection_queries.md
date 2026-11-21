@@ -4,7 +4,7 @@ This page describes the filtering, sorting, pagination and facet behavior that l
 
 ## Validation
 
-Dataset, sample, project and instrument collections, `GET /users/{user_ref}/projects`, the dataset and sample facet routes, the dataset, sample, project and instrument search routes, and singleton routes reject unknown query parameters with 422. `GET /users` ignores unknown parameters, logs them and adds the header `Deprecation: @1799280000`.
+Dataset, sample, project and instrument collections, `GET /users/{user_ref}/projects`, the dataset and sample facet routes, the dataset, sample, project and instrument search routes, and singleton routes reject unknown query parameters with 422.
 
 Repeated values of one filter use OR semantics unless stated otherwise; different filters combine with AND. Authorization and the exclusion of records pending deletion apply before pagination.
 

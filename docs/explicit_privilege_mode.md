@@ -6,8 +6,8 @@ The `Crucible-Privilege-Mode` request header selects whether a platform administ
 
 | Mode | Effect |
 |---|---|
-| `normal` | The caller is authorized only through their own groups and grants. Platform role `admin` is ignored; platform role `contributor` still applies. |
-| `elevated` | Platform role `admin` applies, and the caller passes every permission check. |
+| `normal` | The caller is authorized only through their own groups and grants. Platform role is ignored. |
+| `elevated` | Platform role applies, and the caller bypasses permission checks accordingly. |
 
 Routes that require authentication accept the optional header with either value. Any other value returns 422.
 
@@ -20,8 +20,7 @@ Routes that require authentication accept the optional header with either value.
 | `normal` | `normal` | `normal` | `normal` |
 | `elevated` | `elevated` | 403 | 403 |
 
-- Only a human platform administrator may request `elevated`. Any other caller, including a service account with platform role `admin`, receives 403 "Caller is not eligible for elevated privilege mode".
-- The compatibility default applies to API keys only: an administrator's API key, human or service account, acts elevated when the header is omitted. A script that should not act with administrator rights sends `normal`. A session, from the authorization code flow or the device authorization flow, acts normal unless the request carries `elevated`.
+- The compatibility default applies to API keys only: an administrator's API key, human or service account, acts elevated when the header is omitted. This will be changed in a later revision.
 - The API never retries a request or falls back to elevated mode.
 - Making a service account a platform administrator (`PATCH /service_accounts/{service_account_ref}` with `platform_role: admin`) requires a human administrator in elevated mode in a browser session authenticated within the last ten minutes. An API key receives 403 `hub_session_required`; see [Authentication](sign_in.md#operations-that-require-recent-browser-authentication).
 
@@ -67,7 +66,7 @@ In elevated mode this replaces any `Cache-Control` set by the route. In normal m
 }
 ```
 
-`platform_role` is the assigned platform role. `can_elevate` is true only for a human platform administrator. `effective_privilege_mode` and `capabilities` describe the mode applied to the profile request, and resource-specific `capabilities` in other responses describe the mode of their own request. A client discovers eligibility with one profile request in normal mode, and requests the profile again in elevated mode to obtain the elevated capabilities.
+`platform_role` is the assigned platform role. `effective_privilege_mode` and `capabilities` describe the mode applied to the profile request, and resource-specific `capabilities` in other responses describe the mode of their own request. A client discovers eligibility with one profile request in normal mode, and requests the profile again in elevated mode to obtain the elevated capabilities.
 
 ## Implementation
 

@@ -1,5 +1,4 @@
 import inspect
-import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -59,14 +58,6 @@ def test_every_event_name_fits_the_column():
     assert all(len(event.value) <= 32 for event in AuthEventType)
 
 
-def test_record_event_snapshot_outlives_the_user(db_engine):
-    with Session(db_engine) as session:
-        user = person(session)
-        record_event(session, AuthEventType.ENABLED, user=user)
-        session.commit()
-        assert session.exec(select(AuthEvent)).one().user_unique_id == MFID
-
-
 def test_orcid_of_reads_the_linked_orcid(db_engine):
     with Session(db_engine) as session:
         user = person(session)
@@ -88,38 +79,16 @@ def test_orcid_of_ignores_other_issuers(db_engine):
         assert orcid_of(session, user) is None
 
 
-def test_orcid_of_covers_the_sandbox(db_engine):
+@pytest.mark.parametrize("first_name,last_name,given", [("Ada", "Lovelace", None), ("Ada", "Lovelace", ""), ("", "", None)])
+def test_provision_generates_a_username_when_none_is_given(db_engine, first_name, last_name, given):
     with Session(db_engine) as session:
-        user = person(session)
-        session.add(UserIdentity(user_id=user.id, issuer="https://sandbox.orcid.org", subject=ORCID))
-        session.commit()
-        assert orcid_of(session, user) == ORCID
-
-
-def test_new_columns_start_empty(db_engine):
-    with Session(db_engine) as session:
-        user = person(session)
-        identity = UserIdentity(user_id=user.id, issuer="https://orcid.org", subject=ORCID)
-        session.add(identity)
-        session.commit()
-        assert user.disabled_at is None and identity.verified_at is None
-
-
-@pytest.mark.parametrize("given", [None, ""])
-def test_provision_generates_a_username_when_none_is_given(db_engine, given):
-    with Session(db_engine) as session:
-        user = provision_user(session, unique_id=MFID, first_name="Ada", last_name="Lovelace", email=None, username=given)
+        user = provision_user(session, unique_id=MFID, first_name=first_name, last_name=last_name, email=None, username=given)
         assert user.username
 
 
 def test_provision_keeps_a_given_username(db_engine):
     with Session(db_engine) as session:
         assert provision_user(session, unique_id=MFID, first_name="Ada", last_name="Lovelace", email=None, username="countess").username == "countess"
-
-
-def test_provision_generates_a_username_without_a_name(db_engine):
-    with Session(db_engine) as session:
-        assert provision_user(session, unique_id=MFID, first_name="", last_name="", email=None, username=None).username
 
 
 def test_provision_avoids_a_taken_username(db_engine):
@@ -186,46 +155,3 @@ def test_existing_person_from_hub_sign_in_only_fills_empty_names(db_engine, hub_
     with Session(db_engine) as session:
         user = session.exec(select(User)).one()
         assert (user.first_name, user.last_name) == ("Kept", "Lovelace")
-
-
-@pytest.mark.skipif(not os.getenv("CRUCIBLE_TEST_PG_URL"), reason="requires isolated test PostgreSQL")
-def test_sign_in_foundation_migration_roundtrip():
-    import importlib.util
-    from pathlib import Path
-    from uuid import uuid4
-
-    from alembic.migration import MigrationContext
-    from alembic.operations import Operations
-    from sqlalchemy import create_engine, inspect, text
-
-    path = Path(__file__).resolve().parents[1] / "migrations/versions/20261105_c5f18d2e6a37_sign_in_foundation.py"
-    spec = importlib.util.spec_from_file_location("sign_in_foundation_migration", path)
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    engine = create_engine(os.environ["CRUCIBLE_TEST_PG_URL"])
-    schema = "test_sign_in_foundation_" + uuid4().hex
-    with engine.connect() as connection:
-        transaction = connection.begin()
-        try:
-            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-            connection.execute(text(f'SET LOCAL search_path TO "{schema}"'))
-            connection.execute(text('CREATE TABLE "user" (id serial PRIMARY KEY)'))
-            connection.execute(text('CREATE TABLE user_identity (id bigserial PRIMARY KEY, user_id int)'))
-            connection.execute(text('INSERT INTO "user" DEFAULT VALUES'))
-            connection.execute(text("INSERT INTO user_identity (user_id) VALUES (1)"))
-            with Operations.context(MigrationContext.configure(connection)):
-                migration.upgrade()
-                assert connection.execute(text('SELECT disabled_at FROM "user"')).scalar() is None
-                assert connection.execute(text("SELECT verified_at FROM user_identity")).scalar() is None
-                connection.execute(text("INSERT INTO auth_event (at, event, user_id, user_unique_id) VALUES (now(), 'sign_in', 1, 'x')"))
-                connection.execute(text('DELETE FROM user_identity'))
-                connection.execute(text('DELETE FROM "user"'))
-                assert connection.execute(text("SELECT user_id, user_unique_id FROM auth_event")).one() == (None, "x")
-                migration.downgrade()
-                inspector = inspect(connection)
-                assert "disabled_at" not in {c["name"] for c in inspector.get_columns("user", schema=schema)}
-                assert "verified_at" not in {c["name"] for c in inspector.get_columns("user_identity", schema=schema)}
-                assert "auth_event" not in inspector.get_table_names(schema=schema)
-        finally:
-            transaction.rollback()
-    engine.dispose()

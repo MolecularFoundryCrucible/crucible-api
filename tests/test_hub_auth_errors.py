@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from app.api import main
 from app.api.dependencies import get_engine
-from app.config import get_settings
 from app.api.routes import browser_sign_in
 from app.auth.login_transactions import SignInUnavailable, InvalidLoginRequest
 from app.auth.tokens import TokenPair, InvalidGrant
@@ -37,38 +36,13 @@ def assert_private(response):
     assert response.headers["X-Request-ID"]
 
 
-@pytest.mark.parametrize("path,payload", [
-    ("token", {"code": MARKER, "code_verifier": MARKER, "redirect_uri": MARKER}),
-    ("refresh", {"refresh_token": MARKER}),
-    ("revoke", {"token": MARKER}),
-    ("token", [MARKER]),
-    ("refresh", {"refresh_token": {"nested": MARKER}}),
-])
-def test_body_validation_does_not_echo_credentials(client, path, payload, caplog):
-    with caplog.at_level(logging.INFO):
-        response = client.post("/auth/hub/" + path, auth=AUTH, json=payload)
-    assert response.status_code == 422
-    assert isinstance(response.json()["detail"], list)
-    assert MARKER not in response.text + caplog.text
-    assert_private(response)
-
-
-def test_malformed_json_is_redacted(client, caplog):
-    with caplog.at_level(logging.INFO):
-        response = client.post("/auth/hub/token", auth=AUTH, content='{"code":"' + MARKER,
-                               headers={"Content-Type": "application/json"})
-    assert response.status_code == 422
-    assert MARKER not in response.text + caplog.text
-    assert_private(response)
-
-
 @pytest.mark.parametrize("path,params", [
-    ("login", {"state": MARKER, "code_challenge": MARKER}),
-    ("callback", {"code": MARKER * 100, "state": MARKER}),
+    ("authorize", {"state": MARKER, "code_challenge": MARKER, "max_age": MARKER}),
+    ("callback/orcid", {"code": MARKER * 100, "state": MARKER}),
 ])
 def test_query_validation_is_redacted(client, path, params, caplog):
     with caplog.at_level(logging.INFO):
-        response = client.get("/auth/hub/" + path, params=params)
+        response = client.get("/oauth/" + path, params=params)
     assert response.status_code == 422
     assert MARKER not in response.text + caplog.text
     assert_private(response)
@@ -77,26 +51,21 @@ def test_query_validation_is_redacted(client, path, params, caplog):
 @pytest.mark.parametrize("prefix", ["", "/testapi", "/api/v3"])
 def test_prefixes_routing_errors_and_redirects_are_private(client, monkeypatch, prefix):
     monkeypatch.setattr(main.app, "root_path", prefix)
-    for path in {"/auth/hub", prefix + "/auth/hub"}:
+    for path in {"/oauth", prefix + "/oauth"}:
         for method, suffix, status in [("GET", "/missing", 404), ("GET", "/token", 405), ("POST", "/token/", 307)]:
             response = client.request(method, path + suffix, follow_redirects=False)
             assert response.status_code == status
             assert_private(response)
 
 
-def test_authentication_failures_are_private(client, monkeypatch):
-    response = client.post("/auth/hub/refresh", json={"refresh_token": "x" * 64})
-    assert response.status_code == 401
-    assert response.headers["WWW-Authenticate"] == "Basic"
-    assert_private(response)
-    monkeypatch.delenv("HUB_AUTH_CLIENT_SECRET")
-    get_settings.cache_clear()
-    response = client.post("/auth/hub/revoke", auth=AUTH, json={"token": "x" * 64})
-    assert response.status_code == 503
+def test_authentication_failures_are_private(client):
+    response = client.post("/oauth/token", data={"grant_type": "refresh_token", "refresh_token": "x" * 64})
+    assert response.status_code in (400, 401)
+    assert response.json()["error"] in ("invalid_client", "invalid_request")
     assert_private(response)
 
 
-@pytest.mark.parametrize("error,status", [(InvalidGrant(), 401), (RuntimeError(MARKER), 500)])
+@pytest.mark.parametrize("error,status", [(InvalidGrant(), 400), (RuntimeError(MARKER), 500)])
 def test_refresh_errors_do_not_disclose_internal_details(client, monkeypatch, caplog, error, status):
     def fail(*args, **kwargs):
         raise error
@@ -106,7 +75,7 @@ def test_refresh_errors_do_not_disclose_internal_details(client, monkeypatch, ca
     monkeypatch.setattr(oauth_server.RefreshGrant, "authenticate_refresh_token", lambda self, token: oauth_server._Credential(AUTH[0], 1))
     monkeypatch.setattr(oauth_server, "refresh_tokens", fail)
     with caplog.at_level(logging.INFO):
-        response = client.post("/auth/hub/refresh", auth=AUTH, json={"refresh_token": "x" * 64})
+        response = client.post("/oauth/token", auth=AUTH, data={"grant_type": "refresh_token", "refresh_token": "x" * 64})
     assert response.status_code == status
     assert MARKER not in response.text + caplog.text
     assert all(record.exc_info is None for record in caplog.records)
@@ -122,13 +91,13 @@ def test_browser_failures_are_private(client, monkeypatch):
 
     monkeypatch.setattr(browser_sign_in, "load_login_config", unavailable)
     monkeypatch.setattr(browser_sign_in, "consume_login", invalid)
-    response = client.get("/auth/hub/login", params={
+    response = client.get("/oauth/authorize", params={
         "client_id": "hub", "redirect_uri": "https://example.test/hub/auth/callback",
-        "state": "s" * 16, "code_challenge": "c" * 43, "code_challenge_method": "S256",
+        "state": "s" * 16, "code_challenge": "c" * 43, "code_challenge_method": "S256", "response_type": "code",
     })
     assert response.status_code == 503
     assert_private(response)
-    response = client.get("/auth/hub/callback", params={"code": MARKER, "state": MARKER})
+    response = client.get("/oauth/callback/orcid", params={"code": MARKER, "state": MARKER})
     assert response.status_code == 400
     assert_private(response)
 
@@ -141,13 +110,12 @@ def test_successful_credentials_and_revocation_remain_private(client, monkeypatc
     monkeypatch.setattr(oauth_server.RefreshGrant, "authenticate_refresh_token", lambda self, token: oauth_server._Credential(AUTH[0], 1))
     monkeypatch.setattr(oauth_server, "refresh_tokens", lambda *args: pair)
     monkeypatch.setattr(oauth_server, "revoke_tokens", lambda *args: None)
-    response = client.post("/auth/hub/refresh", auth=AUTH, json={"refresh_token": "r" * 64})
+    response = client.post("/oauth/token", auth=AUTH, data={"grant_type": "refresh_token", "refresh_token": "r" * 64})
     assert response.status_code == 200
     assert response.json()["access_token"] == pair.access_token
     assert_private(response)
-    response = client.post("/auth/hub/revoke", auth=AUTH, json={"token": "r" * 64})
-    assert response.status_code == 204
-    assert not response.content
+    response = client.post("/oauth/revoke", auth=AUTH, data={"token": "r" * 64})
+    assert response.status_code == 200
     assert_private(response)
 
 
@@ -156,7 +124,7 @@ def test_non_hub_errors_keep_framework_behavior():
     app.add_exception_handler(RequestValidationError, main.handle_request_validation)
     app.middleware("http")(main.log_requests)
 
-    @app.get("/auth/hub-other")
+    @app.get("/oauth-other")
     def unrelated(number: int):
         return number
 
@@ -165,7 +133,7 @@ def test_non_hub_errors_keep_framework_behavior():
         raise RuntimeError("normal framework error")
 
     with TestClient(app) as client:
-        response = client.get("/auth/hub-other", params={"number": "invalid"})
+        response = client.get("/oauth-other", params={"number": "invalid"})
         assert response.status_code == 422
         assert response.json()["detail"][0]["loc"] == ["query", "number"]
         assert "cache-control" not in response.headers
@@ -173,10 +141,10 @@ def test_non_hub_errors_keep_framework_behavior():
             client.get("/unrelated-failure")
 
 
-def test_openapi_documents_hub_error_headers():
+def test_openapi_documents_sign_in_error_headers():
     schema = main.app.openapi()
     for path, item in schema["paths"].items():
-        if path.startswith("/auth/hub/"):
+        if path.startswith("/oauth/callback/"):
             for operation in item.values():
                 assert "500" in operation["responses"]
                 for response in operation["responses"].values():

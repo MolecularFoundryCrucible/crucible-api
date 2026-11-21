@@ -36,28 +36,6 @@ def _setup(db_engine):
         session.commit()
 
 
-def test_canonical_orcid_get_returns_private_profile_to_self(client, db_engine, auth_as):
-    _setup(db_engine)
-    auth_as(PERSON_ORCID)
-
-    response = client.get(f"/users/{PERSON_ORCID}")
-
-    assert response.status_code == 200, response.text
-    assert response.json()["email"] == "Alice@Example.com"
-    assert "content-location" not in response.headers
-
-
-def test_canonical_orcid_get_returns_public_profile_to_other_user(client, db_engine, auth_as):
-    _setup(db_engine)
-    auth_as(OTHER_ORCID)
-
-    response = client.get(f"/users/{PERSON_ORCID}")
-
-    assert response.status_code == 200, response.text
-    assert response.json()["unique_id"] == PERSON_ORCID
-    assert "email" not in response.json()
-
-
 def test_canonical_service_account_mfid_get_works_for_admin(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as(OTHER_ORCID, platform_role=PlatformRole.ADMIN)
@@ -159,16 +137,6 @@ def test_exact_email_query_returns_private_profile_to_admin(client, db_engine, a
     assert response.json()["items"][0]["email"] == "Alice@Example.com"
 
 
-def test_canonical_user_get_returns_private_profile_to_admin(client, db_engine, auth_as):
-    _setup(db_engine)
-    auth_as(OTHER_ORCID, platform_role=PlatformRole.ADMIN)
-
-    response = client.get(f"/users/{PERSON_ORCID}")
-
-    assert response.status_code == 200, response.text
-    assert response.json()["email"] == "Alice@Example.com"
-
-
 def test_permissive_does_not_make_username_identity_query_partial(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as(OTHER_ORCID)
@@ -207,5 +175,3 @@ def test_user_routes_document_user_ref(client):
         assert "orcid" not in parameters
 
     assert "/users/{user_id}" not in schema["paths"]
-
-

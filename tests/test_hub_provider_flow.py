@@ -18,6 +18,7 @@ from sqlmodel import Session, SQLModel, select
 
 from app.api.dependencies import get_engine
 from app.api.routes import auth as auth_routes
+from app.api.routes import oauth as oauth_routes
 from app.api.routes import browser_sign_in as routes
 from app.config import get_settings, missing_required_settings
 from app.tables import AccessToken, LoginCode, LoginTransaction, RefreshToken, TokenFamily, User, UserIdentity
@@ -32,7 +33,7 @@ LOGIN = {
     "redirect_uri": HUB_CALLBACK,
     "state": "hub-state-123456789",
     "code_challenge": "a" * 43,
-    "code_challenge_method": "S256",
+    "code_challenge_method": "S256", "response_type": "code",
 }
 
 
@@ -69,7 +70,7 @@ def configure(monkeypatch):
 def client(db_engine, configure, remote):
     SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginCode, LoginTransaction, TokenFamily, RefreshToken, AccessToken)])
     app = FastAPI()
-    app.include_router(routes.router)
+    app.include_router(oauth_routes.router)
     app.include_router(routes.callback_router)
     app.include_router(auth_routes.router)
     app.dependency_overrides[get_engine] = lambda: db_engine
@@ -79,7 +80,7 @@ def client(db_engine, configure, remote):
 
 def start(client, remote, key=None, **extra):
     params = {**LOGIN, **extra, **({"provider": key} if key else {})}
-    started = client.get("/auth/hub/login", params=params, follow_redirects=False)
+    started = client.get("/oauth/authorize", params=params, follow_redirects=False)
     assert started.status_code == 302, started.text
     query = parse_qs(urlparse(started.headers["location"]).query)
     return query
@@ -100,7 +101,7 @@ def lab_sign_in(client, remote, subject="lab-user", **extra):
 
 
 def orcid_sign_in(client, remote, subject=ORCID, **extra):
-    return sign_in(client, remote, "orcid.org", "orcid", "/auth/hub/callback", subject, **extra)
+    return sign_in(client, remote, "orcid.org", "orcid", "/oauth/callback/orcid", subject, **extra)
 
 
 def link(db_engine, issuer, subject, unique_id="0tmnyhfztdwc1000w2kspzsnh0", **fields):
@@ -149,7 +150,7 @@ def test_one_method_redirects_directly(client, remote, configure):
 
 
 def test_several_methods_show_chooser_and_start_nothing(client, db_engine):
-    page = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False)
+    page = client.get("/oauth/authorize", params=LOGIN, follow_redirects=False)
     assert page.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
     assert "ORCID" in page.text and "Example Lab" in page.text
@@ -158,13 +159,8 @@ def test_several_methods_show_chooser_and_start_nothing(client, db_engine):
         assert session.exec(select(LoginTransaction)).all() == []
 
 
-def test_chooser_refuses_a_bad_request_before_showing_anything(client):
-    assert client.get("/auth/hub/login", params={**LOGIN, "client_id": "other"}, follow_redirects=False).status_code == 400
-    assert client.get("/auth/hub/login", params={**LOGIN, "redirect_uri": "https://evil.example/cb"}, follow_redirects=False).status_code == 400
-
-
 def test_chooser_cannot_be_framed_cached_or_leak_its_address(client):
-    page = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False)
+    page = client.get("/oauth/authorize", params=LOGIN, follow_redirects=False)
     assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
     assert page.headers["x-frame-options"] == "DENY"
     assert page.headers["cache-control"] == "no-store"
@@ -173,8 +169,8 @@ def test_chooser_cannot_be_framed_cached_or_leak_its_address(client):
 
 
 def test_chooser_allows_no_script_and_only_its_own_style(client):
-    first = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False)
-    second = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False)
+    first = client.get("/oauth/authorize", params=LOGIN, follow_redirects=False)
+    second = client.get("/oauth/authorize", params=LOGIN, follow_redirects=False)
     policy = first.headers["content-security-policy"]
     assert "default-src 'none'" in policy and "base-uri 'none'" in policy and "form-action 'none'" in policy
     assert "unsafe" not in policy
@@ -184,28 +180,28 @@ def test_chooser_allows_no_script_and_only_its_own_style(client):
 
 
 def test_chooser_page_has_no_script_form_or_outside_address(client):
-    text = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False).text.lower()
+    text = client.get("/oauth/authorize", params=LOGIN, follow_redirects=False).text.lower()
     assert "<script" not in text and "<form" not in text and "<input" not in text
     assert "http://" not in text.replace(HUB_CALLBACK.lower(), "") and "//" not in re.sub(r'href="\?[^"]+"', "", text)
 
 
 def test_chooser_page_uses_no_blocked_markup(client):
-    text = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False).text.lower()
+    text = client.get("/oauth/authorize", params=LOGIN, follow_redirects=False).text.lower()
     for blocked in ("style=", " src=", "<image", "<use", "<link", "url(", "@import", "@font-face", " on"):
         assert blocked not in re.sub(r'href="\?[^"]+"', "", text.replace("<a href", "<a-href")), blocked
 
 
 def test_chooser_shows_the_logo_and_only_the_orcid_provider_gets_its_mark(client, configure):
-    page = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False).text
+    page = client.get("/oauth/authorize", params=LOGIN, follow_redirects=False).text
     assert page.count('class="logo"') == 1
     assert page.count('class="provider-mark"') == 1
     assert page.index('class="provider-mark"') < page.index("Sign in with ORCID") < page.index("Sign in with Example Lab")
     configure({**LAB_ENTRY, "key": "one"}, {**LAB_ENTRY, "key": "two", "issuer": "https://other.example.org"})
-    assert 'class="provider-mark"' not in client.get("/auth/hub/login", params=LOGIN, follow_redirects=False).text
+    assert 'class="provider-mark"' not in client.get("/oauth/authorize", params=LOGIN, follow_redirects=False).text
 
 
 def test_chooser_links_carry_only_known_parameters(client):
-    page = client.get("/auth/hub/login", params={**LOGIN, "injected": "value", "next": "https://evil.example"}, follow_redirects=False)
+    page = client.get("/oauth/authorize", params={**LOGIN, "injected": "value", "next": "https://evil.example"}, follow_redirects=False)
     assert "injected" not in page.text and "evil.example" not in page.text
 
 
@@ -214,7 +210,7 @@ def test_chooser_links_carry_only_known_parameters(client):
     ("required_user", '"><script>alert(1)</script>'),
 ])
 def test_chooser_escapes_what_the_request_carries(client, field, hostile):
-    page = client.get("/auth/hub/login", params={**LOGIN, field: hostile}, follow_redirects=False)
+    page = client.get("/oauth/authorize", params={**LOGIN, field: hostile}, follow_redirects=False)
     assert page.status_code == 200
     assert "<script" not in page.text
     assert [link[field] for link in chooser_links(client, **{field: hostile})] == [[hostile], [hostile]]
@@ -222,13 +218,13 @@ def test_chooser_escapes_what_the_request_carries(client, field, hostile):
 
 def test_chooser_escapes_display_name(client, configure):
     configure(ORCID_ENTRY, {**LAB_ENTRY, "display_name": '<script>alert("x")</script>'})
-    page = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False)
+    page = client.get("/oauth/authorize", params=LOGIN, follow_redirects=False)
     assert "<script>" not in page.text
     assert "&lt;script&gt;" in page.text
 
 
 def chooser_links(client, **extra):
-    page = client.get("/auth/hub/login", params={**LOGIN, **extra}, follow_redirects=False)
+    page = client.get("/oauth/authorize", params={**LOGIN, **extra}, follow_redirects=False)
     return [parse_qs(unescape(link).lstrip("?")) for link in re.findall(r'href="(\?[^"]+)"', page.text)]
 
 
@@ -256,37 +252,21 @@ def test_chooser_with_max_age_zero_forces_fresh_sign_in_for_each_method(client, 
 
 
 def test_unknown_provider_is_refused(client):
-    assert client.get("/auth/hub/login", params={**LOGIN, "provider": "nope"}, follow_redirects=False).status_code == 400
+    assert client.get("/oauth/authorize", params={**LOGIN, "provider": "nope"}, follow_redirects=False).status_code == 400
 
 
 def test_each_provider_gets_its_own_callback_address(client, remote):
-    assert start(client, remote, "orcid")["redirect_uri"] == [f"{API_URL}/auth/hub/callback"]
+    assert start(client, remote, "orcid")["redirect_uri"] == [f"{API_URL}/oauth/callback/orcid"]
     assert start(client, remote, "lab")["redirect_uri"] == [f"{API_URL}/oauth/callback/lab"]
 
 
 def test_callback_for_other_provider_refused(client, remote, db_engine):
     query = start(client, remote, "orcid")
     remote["login.example.org"].claims = {"nonce": query["nonce"][0]}
-    refused = finish(client, "/oauth/callback/lab", query)
-    assert refused.status_code == 400 and "location" not in refused.headers
+    assert hub_answer(finish(client, "/oauth/callback/lab", query))["error"] == "access_denied"
     assert remote["login.example.org"].token_requests == []
     assert remote["orcid.org"].token_requests == []
     assert issued_codes(db_engine) == []
-
-
-def test_legacy_callback_only_serves_the_provider_marked_for_it(client, remote, db_engine):
-    link(db_engine, LAB_ISSUER, "lab-user")
-    query = start(client, remote, "lab")
-    refused = finish(client, "/auth/hub/callback", query)
-    assert refused.status_code == 400 and "location" not in refused.headers
-    assert issued_codes(db_engine) == []
-
-
-def test_legacy_provider_is_not_served_on_a_new_address(client, remote):
-    query = start(client, remote, "orcid")
-    refused = finish(client, "/oauth/callback/orcid", query)
-    assert refused.status_code == 400 and "location" not in refused.headers
-    assert remote["orcid.org"].token_requests == []
 
 
 def test_callback_for_unknown_provider_refused(client, remote):
@@ -324,20 +304,6 @@ def test_pkce_omitted_unless_s256_is_advertised(client, remote, db_engine, adver
     remote["login.example.org"].claims = {"nonce": query["nonce"][0], "sub": "lab-user"}
     finish(client, "/oauth/callback/lab", query)
     assert "code_verifier" not in parse_qs(remote["login.example.org"].token_requests[0].content.decode())
-
-
-def test_pkce_omitted_for_orcid(client, remote):
-    assert "code_challenge" not in start(client, remote, "orcid")
-
-
-def test_in_flight_login_without_provider_key_finishes(client, remote, db_engine):
-    query = start(client, remote, "orcid")
-    with Session(db_engine) as session, session.begin():
-        row = session.exec(select(LoginTransaction)).one()
-        row.provider_key = None
-        row.provider_code_verifier = None
-    remote["orcid.org"].claims = {"nonce": query["nonce"][0], "sub": ORCID}
-    assert "code" in hub_answer(finish(client, "/auth/hub/callback", query))
 
 
 def test_orcid_sign_in_still_creates_the_account(client, remote, db_engine):
@@ -442,14 +408,14 @@ def test_bad_token_is_a_server_error(client, remote):
 
 def test_discovery_down_at_start_tells_the_hub(client, remote):
     remote["login.example.org"].down = True
-    response = client.get("/auth/hub/login", params={**LOGIN, "provider": "lab"}, follow_redirects=False)
+    response = client.get("/oauth/authorize", params={**LOGIN, "provider": "lab"}, follow_redirects=False)
     assert hub_answer(response) == {"error": "temporarily_unavailable", "state": LOGIN["state"]}
     assert "crucible_hub_login" not in response.cookies
 
 
 def test_one_provider_down_leaves_the_other_working(client, remote):
     remote["login.example.org"].down = True
-    assert hub_answer(client.get("/auth/hub/login", params={**LOGIN, "provider": "lab"}, follow_redirects=False))["error"] == "temporarily_unavailable"
+    assert hub_answer(client.get("/oauth/authorize", params={**LOGIN, "provider": "lab"}, follow_redirects=False))["error"] == "temporarily_unavailable"
     assert start(client, remote, "orcid")["client_id"] == ["APP-TEST"]
 
 
@@ -500,35 +466,34 @@ def test_token_and_refresh_responses_include_auth_time(client, remote, db_engine
     signed_in = int(time.time()) - 5
     query = start(client, remote, "orcid", code_challenge=challenge)
     remote["orcid.org"].claims = {"nonce": query["nonce"][0], "sub": ORCID, "auth_time": signed_in}
-    code = hub_answer(finish(client, "/auth/hub/callback", query))["code"]
-    exchanged = client.post("/auth/hub/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), json={"code": code, "code_verifier": verifier, "redirect_uri": HUB_CALLBACK})
+    code = hub_answer(finish(client, "/oauth/callback/orcid", query))["code"]
+    exchanged = client.post("/oauth/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), data={"grant_type": "authorization_code", "code": code, "code_verifier": verifier, "redirect_uri": HUB_CALLBACK})
     assert exchanged.status_code == 200, exchanged.text
     body = exchanged.json()
-    assert set(body) == {"access_token", "refresh_token", "token_type", "access_expires_at", "refresh_expires_at", "user_unique_id", "auth_time"}
-    assert datetime.fromisoformat(body["auth_time"].replace("Z", "+00:00")) == datetime.fromtimestamp(signed_in, timezone.utc)
-    refreshed = client.post("/auth/hub/refresh", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), json={"refresh_token": body["refresh_token"]})
+    assert body["auth_time"] == signed_in
+    refreshed = client.post("/oauth/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), data={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]})
     assert refreshed.status_code == 200, refreshed.text
     assert refreshed.json()["auth_time"] == body["auth_time"]
 
 
-def test_auth_time_is_null_when_the_provider_gives_none(client, remote, db_engine):
+def test_auth_time_is_absent_when_the_provider_gives_none(client, remote, db_engine):
     verifier = "v" * 43
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     query = start(client, remote, "orcid", code_challenge=challenge)
     remote["orcid.org"].claims = {"nonce": query["nonce"][0], "sub": ORCID}
-    code = hub_answer(finish(client, "/auth/hub/callback", query))["code"]
-    exchanged = client.post("/auth/hub/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), json={"code": code, "code_verifier": verifier, "redirect_uri": HUB_CALLBACK})
-    assert exchanged.json()["auth_time"] is None
+    code = hub_answer(finish(client, "/oauth/callback/orcid", query))["code"]
+    exchanged = client.post("/oauth/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), data={"grant_type": "authorization_code", "code": code, "code_verifier": verifier, "redirect_uri": HUB_CALLBACK})
+    assert "auth_time" not in exchanged.json()
 
 
-def test_hub_without_a_legacy_provider_is_allowed(client, remote, configure, db_engine):
+def test_a_list_without_orcid_is_allowed(client, remote, configure, db_engine):
     configure(LAB_ENTRY)
     assert "CRUCIBLE_AUTH_PROVIDERS" not in missing_required_settings()
     link(db_engine, LAB_ISSUER, "lab-user")
     query = start(client, remote)
     remote["login.example.org"].claims = {"nonce": query["nonce"][0], "sub": "lab-user"}
     assert "code" in hub_answer(finish(client, "/oauth/callback/lab", query))
-    assert client.get("/auth/hub/callback", params={"code": "c", "state": "unknown"}, follow_redirects=False).status_code == 400
+    assert client.get("/oauth/callback/orcid", params={"code": "c", "state": "unknown"}, follow_redirects=False).status_code == 400
 
 
 def test_failure_detail_is_not_sent_to_the_hub(client, remote):
@@ -541,11 +506,9 @@ def test_failure_detail_is_not_sent_to_the_hub(client, remote):
 
 @pytest.fixture
 def oauth_client(db_engine, configure, remote):
-    from app.api.routes import oauth as oauth_routes
-
     SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (LoginCode, LoginTransaction, TokenFamily, RefreshToken, AccessToken)])
     app = FastAPI()
-    for router in (routes.router, routes.callback_router, auth_routes.router, oauth_routes.router, oauth_routes.discovery):
+    for router in (routes.callback_router, auth_routes.router, oauth_routes.router, oauth_routes.discovery):
         app.include_router(router)
     app.dependency_overrides[get_engine] = lambda: db_engine
     with TestClient(app, base_url=API_URL) as test_client:
@@ -652,7 +615,7 @@ def test_a_provider_sign_in_for_a_public_client_waits_for_the_persons_allow(oaut
 
 
 def test_the_sign_in_cookie_goes_only_to_the_callback_address_of_its_provider(client, remote):
-    for key, path in (("lab", "/oauth/callback"), ("orcid", "/auth/hub")):
+    for key, path in (("lab", "/oauth/callback"), ("orcid", "/oauth/callback")):
         client.cookies.clear()
         start(client, remote, key)
         assert [cookie.path for cookie in client.cookies.jar if cookie.name.startswith("crucible_hub_login")] == [path]

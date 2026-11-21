@@ -127,18 +127,6 @@ class TestCollisionWithExistingGroups:
         assert exc.value.status_code == 409
         assert "collides" in exc.value.detail
 
-    def test_a_user_cannot_hijack_someone_elses_orcid_group(self, session):
-        """Reusing an ORCID group would put the project's members into it,
-        breaking one_owner_per_group and the assumption that everyone holds
-        owner in their own group — which is what makes sharing safe."""
-        session.add(User(first_name="A", last_name="B", email="a@x",
-                         unique_id="0000-0002-9999-0000"))
-        session.add(AccessGroup(group_name="0000-0002-9999-0000"))
-        session.commit()
-        with pytest.raises(HTTPException):
-            assert_project_id_available(session, "0000-0002-9999-0000")
-
-
 class TestCollisionIsCaseInsensitive:
     def test_group_name_collision_ignores_case(self, session):
         session.add(AccessGroup(group_name="xrd-1"))

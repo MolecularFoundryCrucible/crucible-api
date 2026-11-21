@@ -66,7 +66,7 @@ def servers(tmp_path, monkeypatch):
         session.commit()
 
     app = FastAPI()
-    for router in (browser_sign_in.router, browser_sign_in.password_router, oauth.router, passwords.pages):
+    for router in (browser_sign_in.password_router, oauth.router, passwords.pages):
         app.include_router(router)
     app.dependency_overrides[get_engine] = lambda: engine
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=api_port, log_level="warning"))

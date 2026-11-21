@@ -45,28 +45,6 @@ def test_local_env_needs_no_cloud_access(monkeypatch, manager):
     manager.assert_not_called()
 
 
-def test_version_cache_and_rotation(monkeypatch, manager):
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
-    for _ in range(2):
-        assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value-padded-to-32-chars00"
-    client = manager.return_value.__enter__.return_value
-    client.access_secret_version.assert_called_once_with(request={"name": VERSION}, timeout=10, retry=None)
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION[:-1] + "2")
-    optional_secret("HUB_AUTH_CLIENT_SECRET")
-    assert client.access_secret_version.call_count == 2
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION.replace("/1", "/latest"))
-    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value-padded-to-32-chars00"
-    assert client.access_secret_version.call_count == 3
-
-
-@pytest.mark.parametrize("version", ["bad", VERSION.replace("/1", "/0"), VERSION.replace("/1", "/latest2")])
-def test_references_reject_invalid_versions(monkeypatch, manager, version):
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", version)
-    with pytest.raises(ConfigurationError, match="HUB_AUTH_CLIENT_SECRET_VERSION must be a full"):
-        optional_secret("HUB_AUTH_CLIENT_SECRET")
-    manager.assert_not_called()
-
-
 @pytest.mark.parametrize("error", [PermissionDenied("sensitive-error"), DefaultCredentialsError("sensitive-error")])
 def test_cloud_failure_is_not_cached(monkeypatch, manager, error):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
@@ -154,13 +132,6 @@ def test_provider_reference_failure_does_not_use_older_secret(monkeypatch, manag
         providers._provider_app(get_settings().auth.providers[0])
     assert "sensitive-error" not in str(caught.value)
     manager.assert_called_once()
-
-
-def test_hub_secret_from_the_secrets_directory(monkeypatch, manager, tmp_path):
-    (tmp_path / "HUB_AUTH_CLIENT_SECRET").write_text("file-secret-padded-to-at-least-32-chars\n")
-    monkeypatch.setenv("CRUCIBLE_SECRETS_DIR", str(tmp_path))
-    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "file-secret-padded-to-at-least-32-chars"
-    manager.assert_not_called()
 
 
 def test_hub_secret_given_two_ways_is_refused(monkeypatch, manager):

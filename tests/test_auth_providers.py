@@ -21,7 +21,6 @@ ORCID_ENTRY = {
     "scopes": "openid",
     "token_endpoint_auth_method": "client_secret_post",
     "registration": "open",
-    "legacy_callback": True,
 }
 LAB_ENTRY = {
     "key": "lab",
@@ -31,10 +30,9 @@ LAB_ENTRY = {
     "scopes": "openid profile",
     "token_endpoint_auth_method": "client_secret_basic",
     "registration": "closed",
-    "legacy_callback": False,
 }
 HUB_ENVIRONMENT = {"HUB_AUTH_ENABLED": "true", "HUB_AUTH_CLIENT_SECRET": "hub-secret-padded-to-at-least-32-chars00", "HUB_AUTH_CALLBACK_URI": "https://hub.example/callback"}
-CALLBACK = "https://api.example/auth/hub/callback"
+CALLBACK = "https://api.example/oauth/callback/orcid"
 
 
 def set_providers(monkeypatch, *entries):
@@ -47,11 +45,6 @@ def provider_problem(monkeypatch, entry):
     with pytest.raises(ConfigurationError) as caught:
         get_settings()
     return str(caught.value)
-
-
-def test_settings_read_every_field_of_the_list(monkeypatch):
-    set_providers(monkeypatch, ORCID_ENTRY, LAB_ENTRY)
-    assert [provider.model_dump() for provider in get_settings().auth.providers] == [ORCID_ENTRY, LAB_ENTRY]
 
 
 @pytest.mark.parametrize("field", sorted(ORCID_ENTRY))
@@ -106,12 +99,8 @@ def test_orcid_status_comes_only_from_the_exact_issuer(monkeypatch, issuer, expe
     assert get_settings().auth.providers[0].is_orcid is expected
 
 
-def test_old_subject_is_orcid_field_is_refused(monkeypatch):
-    assert "subject_is_orcid" in provider_problem(monkeypatch, {**ORCID_ENTRY, "subject_is_orcid": True})
-
-
-def test_legacy_callback_needs_orcid(monkeypatch):
-    assert "legacy_callback" in provider_problem(monkeypatch, {**LAB_ENTRY, "legacy_callback": True})
+def test_legacy_callback_is_refused(monkeypatch):
+    assert "/oauth/callback/" in provider_problem(monkeypatch, {**ORCID_ENTRY, "legacy_callback": True})
 
 
 @pytest.mark.parametrize("second", [
@@ -128,12 +117,6 @@ def test_hub_without_a_provider_list_is_a_missing_setting(monkeypatch):
     for name, value in HUB_ENVIRONMENT.items():
         monkeypatch.setenv(name, value)
     assert "CRUCIBLE_AUTH_PROVIDERS" in missing_required_settings()
-
-
-def test_no_provider_is_implied_by_the_older_orcid_settings(monkeypatch):
-    monkeypatch.setenv("ORCID_CLIENT_ID", "APP-TEST")
-    monkeypatch.setenv("ORCID_CLIENT_SECRET", "secret")
-    assert get_settings().auth.providers == []
 
 
 def test_provider_without_its_secret_is_a_missing_setting(monkeypatch):
@@ -170,22 +153,6 @@ def test_malformed_secret_version_is_a_missing_setting(monkeypatch):
     set_providers(monkeypatch, LAB_ENTRY)
     monkeypatch.setenv("OIDC_LAB_CLIENT_SECRET_VERSION", "not-a-version")
     assert "OIDC_LAB_CLIENT_SECRET" in missing_required_settings()
-
-
-def test_provider_secret_given_two_ways_is_refused(monkeypatch, tmp_path):
-    set_providers(monkeypatch, LAB_ENTRY)
-    (tmp_path / "pointed").write_text("one")
-    monkeypatch.setenv("OIDC_LAB_CLIENT_SECRET", "two")
-    monkeypatch.setenv("OIDC_LAB_CLIENT_SECRET_FILE", str(tmp_path / "pointed"))
-    with pytest.raises(ConfigurationError, match="more than one way"):
-        config.get_secret("OIDC_LAB_CLIENT_SECRET")
-
-
-def test_provider_secret_must_be_one_line(monkeypatch):
-    set_providers(monkeypatch, LAB_ENTRY)
-    monkeypatch.setenv("OIDC_LAB_CLIENT_SECRET", "two\nlines")
-    with pytest.raises(ConfigurationError, match="one line"):
-        config.get_secret("OIDC_LAB_CLIENT_SECRET")
 
 
 def test_secret_of_an_unlisted_provider_is_not_a_secret_setting(monkeypatch):

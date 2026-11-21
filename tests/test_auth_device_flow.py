@@ -52,7 +52,7 @@ def client(db_engine, monkeypatch):
         session.commit()
     app = FastAPI()
     app.add_exception_handler(RequestValidationError, main.handle_request_validation)
-    for router in (routes.router, routes.callback_router, routes.password_router, oauth_routes.router, oauth_routes.discovery, device_routes.router):
+    for router in (routes.callback_router, routes.password_router, oauth_routes.router, oauth_routes.discovery, device_routes.router):
         app.include_router(router)
     app.dependency_overrides[get_engine] = lambda: db_engine
     with TestClient(app, base_url=API_URL) as test_client:
@@ -154,7 +154,8 @@ def test_codes_are_stored_only_as_hashes(client, db_engine):
     assert body["device_code"] not in stored and normalized_user_code(body["user_code"]) not in stored and body["user_code"] not in stored
 
 
-def test_a_decision_from_another_browser_is_refused(client, db_engine):
+@pytest.mark.parametrize("tamper", ["another browser", "another person"])
+def test_a_tampered_decision_is_refused(client, db_engine, tamper):
     body = start_device(client).json()
     entered = client.post("/oauth/device", data={"user_code": body["user_code"]}, follow_redirects=False)
     authorize = client.get(entered.headers["location"].removeprefix(API_URL), follow_redirects=False)
@@ -162,25 +163,13 @@ def test_a_decision_from_another_browser_is_refused(client, db_engine):
     signed_in = client.post("/oauth/password", data={"username": "ada.lovelace", "password": RIGHT, "state": state}, follow_redirects=False)
     confirm = client.get(signed_in.headers["location"].removeprefix(API_URL))
     token = re.search(r'name="decision_token" value="([^"]+)"', confirm.text).group(1)
-    client.cookies.clear()
+    if tamper == "another browser":
+        client.cookies.clear()
+    else:
+        serializer = device_routes._serializer(get_secret("CRUCIBLE_SECRET_KEY"), "decision")
+        genuine = serializer.loads(token)
+        token = serializer.dumps({**genuine, "u": genuine["u"] + 1})
     refused = client.post("/oauth/device/approve", data={"decision_token": token, "decision": "approve"})
-    assert refused.status_code == 400
-    allow_polling(db_engine)
-    assert poll(client, body["device_code"]).json()["error"] == "authorization_pending"
-
-
-def test_a_decision_naming_someone_who_did_not_sign_in_is_refused(client, db_engine):
-    body = start_device(client).json()
-    entered = client.post("/oauth/device", data={"user_code": body["user_code"]}, follow_redirects=False)
-    authorize = client.get(entered.headers["location"].removeprefix(API_URL), follow_redirects=False)
-    state = parse_qs(urlparse(authorize.headers["location"]).query)["state"][0]
-    signed_in = client.post("/oauth/password", data={"username": "ada.lovelace", "password": RIGHT, "state": state}, follow_redirects=False)
-    confirm = client.get(signed_in.headers["location"].removeprefix(API_URL))
-    serializer = device_routes._serializer(get_secret("CRUCIBLE_SECRET_KEY"), "decision")
-    genuine = serializer.loads(re.search(r'name="decision_token" value="([^"]+)"', confirm.text).group(1))
-    assert set(genuine) == {"d", "u", "n"}
-    forged = serializer.dumps({**genuine, "u": genuine["u"] + 1})
-    refused = client.post("/oauth/device/approve", data={"decision_token": forged, "decision": "approve"})
     assert refused.status_code == 400
     allow_polling(db_engine)
     assert poll(client, body["device_code"]).json()["error"] == "authorization_pending"

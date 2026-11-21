@@ -103,8 +103,8 @@ def hub(remote, client, db_engine, monkeypatch):
 
 def hub_sign_in(hub, subject, *, valid=True):
     fakes, client = hub
-    started = client.get("/auth/hub/login", params={"client_id": "crucible-hub", "redirect_uri": SIGN_IN_CALLBACK, "state": "hub-state-0123456789", "code_challenge": "a" * 43,
-                                                    "code_challenge_method": "S256", "provider": "lab"}, follow_redirects=False)
+    started = client.get("/oauth/authorize", params={"client_id": "crucible-hub", "redirect_uri": SIGN_IN_CALLBACK, "state": "hub-state-0123456789", "code_challenge": "a" * 43,
+                                                    "code_challenge_method": "S256", "response_type": "code", "provider": "lab"}, follow_redirects=False)
     query = parse_qs(urlparse(started.headers["location"]).query)
     fakes["login.example.org"].claims = {"nonce": query["nonce"][0] if valid else "wrong", "sub": subject, "auth_time": int(time.time())}
     return client.get("/oauth/callback/lab", params={"code": "c", "state": query["state"][0]}, follow_redirects=False)

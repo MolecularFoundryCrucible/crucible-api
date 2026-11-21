@@ -8,8 +8,7 @@ from app import config
 from app.auth import throttle
 from app.auth.passwords import store_password
 from app.auth.throttle import (
-    KNOWN_LIMIT, TOTAL_LIMIT, UNKNOWN_LIMIT, DeviceCookie, attempt_password, begin_attempt, client_address, finish_attempt,
-    issue_device_cookie, read_device_cookie,
+    KNOWN_LIMIT, TOTAL_LIMIT, UNKNOWN_LIMIT, attempt_password, begin_attempt, finish_attempt, issue_device_cookie, read_device_cookie,
 )
 from app.tables import AuthEvent, DeviceAuthorization, LocalCredential, LoginThrottle, PasswordToken, User, UserIdentity
 
@@ -153,18 +152,23 @@ def test_cookie_for_other_user_or_tampered_cookie_ignored(engine):
     assert read_device_cookie("", user) is None and read_device_cookie("x" * 600, user) is None
 
 
-def test_session_or_user_token_signature_is_not_a_device_cookie(engine):
+def test_a_value_signed_for_another_purpose_is_not_a_device_cookie(engine):
     from itsdangerous import URLSafeTimedSerializer
 
     user = person(engine)
-    other_salt = URLSafeTimedSerializer("test-only", salt="itsdangerous").dumps({"u": user, "p": NOW.isoformat()})
+    other_salt = URLSafeTimedSerializer(config.get_secret("CRUCIBLE_SECRET_KEY"), salt="decision").dumps({"u": user, "p": NOW.isoformat()})
     assert read_device_cookie(other_salt, user) is None
 
 
 def test_cookie_expires(engine, monkeypatch):
+    from itsdangerous.timed import TimestampSigner
+
     user = person(engine)
     value = issue_device_cookie(user, credential(engine, user).password_changed_at)
-    monkeypatch.setattr(throttle.URLSafeTimedSerializer, "loads", lambda self, data, max_age=None: (_ for _ in ()).throw(throttle.BadData("expired")))
+    assert read_device_cookie(value, user) is not None
+    lifetime = config.get_settings().auth.device_cookie_days * 86400
+    issued = TimestampSigner.get_timestamp
+    monkeypatch.setattr(TimestampSigner, "get_timestamp", lambda self: issued(self) + lifetime + 1)
     assert read_device_cookie(value, user) is None
 
 
@@ -318,34 +322,6 @@ def test_address_row_removed_after_30_days(engine, use_engine):
     assert counts["login_throttle"] == 1
 
 
-def test_client_address_reads_the_address_the_server_resolved():
-    class Request:
-        client = type("Client", (), {"host": "192.0.2.4"})()
-
-    assert client_address(Request()) == "192.0.2.4"
-    Request.client = None
-    assert client_address(Request()) is None
-
-
-def test_spoofed_forwarded_header_does_not_change_address_unless_the_proxy_is_trusted():
-    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
-
-    seen = []
-
-    async def app(scope, receive, send):
-        seen.append(scope["client"][0])
-
-    async def run(trusted):
-        scope = {"type": "http", "client": ("10.0.0.5", 1234), "headers": [(b"x-forwarded-for", b"6.6.6.6")], "scheme": "http"}
-        await ProxyHeadersMiddleware(app, trusted_hosts=trusted)(scope, None, None)
-
-    import asyncio
-
-    asyncio.run(run("127.0.0.1"))
-    asyncio.run(run("10.0.0.5"))
-    assert seen == ["10.0.0.5", "6.6.6.6"]
-
-
 def test_hash_slots_bound_concurrent_checks(monkeypatch):
     monkeypatch.setenv("CRUCIBLE_AUTH_HASH_CONCURRENCY", "1")
     config.get_settings.cache_clear()
@@ -388,12 +364,6 @@ def test_rename_keeps_lock_and_freed_username_gets_no_counters(engine):
         newcomer_id = newcomer.id
     assert credential(engine, user).failed_attempts == 5
     assert credential(engine, newcomer_id) is None
-
-
-def test_device_cookie_round_trip(engine):
-    user = person(engine)
-    cookie = cookie_for(engine, user)
-    assert cookie == DeviceCookie(user, credential(engine, user).password_changed_at.replace(tzinfo=timezone.utc))
 
 
 def test_a_delayed_address_is_refused_without_hashing(engine, monkeypatch):

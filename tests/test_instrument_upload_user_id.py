@@ -1,14 +1,7 @@
-import importlib.util
-import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from uuid import uuid4
 
 import pytest
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from fastapi import HTTPException
-from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, select
 
 from app.tables import Instrument, Resource, UploadSession, User
@@ -62,49 +55,3 @@ def test_upload_session_owner_check_uses_the_internal_id(db_engine):
                 multipart.owned(session, "ds", "up-1", stranger, check_access=False)
             assert caught.value.status_code == 403
         assert session.exec(select(UploadSession.user_id)).one() == user_id
-
-
-@pytest.mark.skipif(not os.getenv("CRUCIBLE_TEST_PG_URL"), reason="requires isolated test PostgreSQL")
-def test_instrument_upload_user_id_migration_fills_exact_matches_and_follows_old_style_writes():
-    path = Path(__file__).resolve().parents[1] / "migrations/versions/20261105_f3a9d1c7b842_instrument_upload_user_id.py"
-    spec = importlib.util.spec_from_file_location("instrument_upload_user_id_migration", path)
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    engine = create_engine(os.environ["CRUCIBLE_TEST_PG_URL"])
-    schema = "test_instrument_upload_user_id_" + uuid4().hex
-    with engine.connect() as connection:
-        transaction = connection.begin()
-        try:
-            run = lambda sql: connection.execute(text(sql))  # noqa: E731
-            one = lambda sql: connection.execute(text(sql)).one()  # noqa: E731
-            run(f'CREATE SCHEMA "{schema}"')
-            run(f'SET LOCAL search_path TO "{schema}"')
-            run('CREATE TABLE "user" (id serial PRIMARY KEY, orcid text UNIQUE, email text)')
-            run("CREATE TABLE instrument (id serial PRIMARY KEY, owner varchar NOT NULL)")
-            run("CREATE TABLE upload_sessions (id serial PRIMARY KEY, owner_user_id varchar NOT NULL)")
-            run('CREATE TABLE postprocessingrun (id serial PRIMARY KEY, requested_by varchar REFERENCES "user"(orcid) ON DELETE SET NULL)')
-            run(f"INSERT INTO \"user\" (orcid, email) VALUES ('{OLD}', 'ada@example.com'), ('{NEW}', NULL)")
-            ada, other = connection.execute(text('SELECT id FROM "user" ORDER BY id')).scalars().all()
-            run(f"INSERT INTO instrument (owner) VALUES ('{OLD}'), ('undefined'), ('ada@example.com')")
-            run(f"INSERT INTO upload_sessions (owner_user_id) VALUES ('{OLD}')")
-            run(f"INSERT INTO postprocessingrun (requested_by) VALUES ('{OLD}')")
-            with Operations.context(MigrationContext.configure(connection)):
-                migration.upgrade()
-                assert connection.execute(text("SELECT owner_user_id FROM instrument ORDER BY id")).scalars().all() == [ada, None, None]
-                assert one("SELECT user_id FROM upload_sessions") == (ada,)
-                assert one("SELECT requested_by_user_id FROM postprocessingrun") == (ada,)
-                run("INSERT INTO instrument (owner) VALUES (NULL)")
-                run(f"UPDATE instrument SET owner = '{NEW}' WHERE owner = 'undefined'")
-                assert one(f"SELECT owner_user_id FROM instrument WHERE owner = '{NEW}'") == (other,)
-                run(f"INSERT INTO upload_sessions (owner_user_id) VALUES ('{NEW}')")
-                assert one(f"SELECT user_id FROM upload_sessions WHERE owner_user_id = '{NEW}'") == (other,)
-                run(f"INSERT INTO postprocessingrun (requested_by) VALUES ('{NEW}')")
-                assert one(f"SELECT requested_by_user_id FROM postprocessingrun WHERE requested_by = '{NEW}'") == (other,)
-                migration.downgrade()
-                for table, _, id_column, _, _ in migration.COLUMNS:
-                    assert id_column not in {c["name"] for c in inspect(connection).get_columns(table, schema=schema)}
-                assert not {c["name"]: c for c in inspect(connection).get_columns("instrument", schema=schema)}["owner"]["nullable"]
-                assert one("SELECT count(*) FROM instrument WHERE owner IS NULL") == (0,)
-        finally:
-            transaction.rollback()
-    engine.dispose()

@@ -59,7 +59,10 @@ def identity_of(db_engine, subject):
         return session.exec(select(UserIdentity).where(UserIdentity.subject == subject)).one()
 
 
-def test_known_identity_signs_in(db_engine, lookup_on):
+@pytest.mark.parametrize("flag", [False, True])
+def test_known_identity_signs_in_whatever_the_lookup_setting(db_engine, monkeypatch, flag):
+    monkeypatch.setenv("CRUCIBLE_AUTH_IDENTITY_LOOKUP", str(flag).lower())
+    get_settings.cache_clear()
     person(db_engine, MFID, LAB_ISSUER, "lab-user")
     assert sign_in(db_engine, LAB_ISSUER, "lab-user") == MFID
 
@@ -93,11 +96,6 @@ def test_flag_off_refuses_an_orcid_linked_to_someone_else(db_engine):
     assert people(db_engine) == [MFID]
 
 
-def test_flag_off_other_providers_still_use_the_identity_table(db_engine):
-    person(db_engine, MFID, LAB_ISSUER, "lab-user")
-    assert sign_in(db_engine, LAB_ISSUER, "lab-user") == MFID
-
-
 @pytest.mark.parametrize("flag", [False, True])
 def test_new_orcid_user_unique_id_is_the_orcid(db_engine, monkeypatch, flag):
     monkeypatch.setenv("CRUCIBLE_AUTH_IDENTITY_LOOKUP", str(flag).lower())
@@ -125,14 +123,10 @@ def test_badly_shaped_subject_at_orcid_is_refused(db_engine, lookup_on):
     assert people(db_engine) == []
 
 
-def test_no_match_by_email_when_emails_equal(db_engine, lookup_on):
-    person(db_engine, MFID, email="ada@example.org")
-    assert refused(db_engine, LAB_ISSUER, "ada@example.org") == NOT_LINKED
-
-
-def test_no_match_by_username(db_engine, lookup_on):
-    person(db_engine, MFID, username="ada")
-    assert refused(db_engine, LAB_ISSUER, "ada") == NOT_LINKED
+@pytest.mark.parametrize("field,value", [("email", "ada@example.org"), ("username", "ada")])
+def test_no_match_by_an_equal_email_or_username(db_engine, lookup_on, field, value):
+    person(db_engine, MFID, **{field: value})
+    assert refused(db_engine, LAB_ISSUER, value) == NOT_LINKED
 
 
 def test_same_subject_at_another_issuer_stays_separate(db_engine, lookup_on):
@@ -224,11 +218,3 @@ def test_hub_refusal_keeps_the_event_and_issues_no_code(db_engine, hub_tables, l
         assert session.exec(select(LoginCode)).all() == []
         event = session.exec(select(AuthEvent)).one()
         assert (event.event, event.user_id, event.issuer) == ("provider_refused", None, LAB_ISSUER)
-
-
-def test_unlinked_orcid_at_the_hub_is_access_denied(db_engine, hub_tables, lookup_on):
-    person(db_engine, ORCID)
-    with pytest.raises(LoginRefused) as caught:
-        create_handoff_code(db_engine, transaction(), ORCID_PROVIDER, ORCID, None, None)
-    assert caught.value.error == "access_denied"
-

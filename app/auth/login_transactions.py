@@ -54,8 +54,7 @@ class LoginConfig:
         return next((client for client in self.clients if client.client_id == client_id), None)
 
     def provider_callback_uri(self, provider: OidcProvider) -> str:
-        path = "/auth/hub/callback" if provider.legacy_callback else f"/oauth/callback/{provider.key}"
-        return f"{self.public_api_url}{path}"
+        return f"{self.public_api_url}/oauth/callback/{provider.key}"
 
 
 def public_api_url() -> str:

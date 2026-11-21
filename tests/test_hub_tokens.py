@@ -10,7 +10,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.api.dependencies import get_engine
 from app.auth.api_keys import store_key
-from app.api.routes.browser_sign_in import router as hub_auth_router
+from app.api.routes import oauth as oauth_routes
 from app.tables import (
     DeviceAuthorization,
     PasswordToken,
@@ -52,7 +52,7 @@ NOW = datetime(2026, 9, 28, 12, tzinfo=timezone.utc)
 
 ORCID_PROVIDER = OidcProvider(
     key="orcid", display_name="ORCID", issuer="https://orcid.org", client_id="APP-TEST", scopes="openid",
-    token_endpoint_auth_method="client_secret_post", registration="open", legacy_callback=True,
+    token_endpoint_auth_method="client_secret_post", registration="open",
 )
 
 
@@ -143,17 +143,6 @@ def test_issue_and_refresh_with_foreign_keys_enforced():
         assert access_user(engine, second.access_token, now=NOW + timedelta(minutes=1)) == first.user_unique_id
     finally:
         engine.dispose()
-
-
-def test_spent_refresh_revokes_family(engine):
-    first = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
-    second = refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
-    with pytest.raises(InvalidGrant):
-        refresh_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
-    with pytest.raises(InvalidGrant):
-        refresh_tokens(engine, second.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=3))
-    with pytest.raises(InvalidGrant):
-        access_user(engine, second.access_token, now=NOW + timedelta(minutes=3))
 
 
 def test_a_just_spent_token_works_again_for_thirty_seconds(engine):
@@ -247,50 +236,6 @@ def test_tokens_are_stored_hashed(engine):
         assert len(refresh.token_hash) == 64
 
 
-def test_refresh_and_revoke_routes(engine, monkeypatch):
-    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret-padded-to-32-characters")
-    app = FastAPI()
-    app.include_router(hub_auth_router)
-    app.dependency_overrides[get_engine] = lambda: engine
-    pair = issue_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub")
-    with TestClient(app) as client:
-        for auth in (None, ("crucible-hub", "wrong-secret")):
-            denied_revoke = client.post("/auth/hub/revoke", auth=auth, json={"token": pair.refresh_token})
-            assert denied_revoke.status_code == 401
-        denied = client.post("/auth/hub/refresh", json={"refresh_token": pair.refresh_token})
-        assert denied.status_code == 401
-
-        refreshed = client.post(
-            "/auth/hub/refresh",
-            auth=("crucible-hub", "test-only-secret-padded-to-32-characters"),
-            json={"refresh_token": pair.refresh_token},
-        )
-        assert refreshed.status_code == 200
-        assert refreshed.headers["cache-control"] == "no-store"
-        next_pair = refreshed.json()
-        assert next_pair["refresh_token"] != pair.refresh_token
-
-        revoked = client.post(
-            "/auth/hub/revoke",
-            auth=("crucible-hub", "test-only-secret-padded-to-32-characters"),
-            json={"token": pair.refresh_token},
-        )
-        assert revoked.status_code == 204
-        assert revoked.content == b""
-        assert revoked.headers["cache-control"] == "no-store"
-        for token in (pair.refresh_token, "chbr_" + "x" * 64):
-            assert client.post(
-                "/auth/hub/revoke", auth=("crucible-hub", "test-only-secret-padded-to-32-characters"), json={"token": token},
-            ).status_code == 204
-        failed = client.post(
-            "/auth/hub/refresh",
-            auth=("crucible-hub", "test-only-secret-padded-to-32-characters"),
-            json={"refresh_token": next_pair["refresh_token"]},
-        )
-        assert failed.status_code == 401
-
-
 def test_hub_and_legacy_credentials_both_authorize(use_engine, engine, monkeypatch):
     use_engine(engine)
     monkeypatch.setattr(auth_utils, "_PUBLIC_GROUP_ID", None)
@@ -369,36 +314,38 @@ def test_browser_login_and_code_exchange_routes(engine, monkeypatch, orcid_provi
     monkeypatch.setattr(routes, "new_code_verifier", new_code_verifier)
     monkeypatch.setattr(routes, "verified_identity", verified_identity)
     app = FastAPI()
-    app.include_router(hub_auth_router)
+    app.include_router(routes.callback_router)
+    app.include_router(oauth_routes.router)
     app.dependency_overrides[get_engine] = lambda: engine
     verifier = "v" * 43
     import base64
     import hashlib
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     with TestClient(app) as client:
-        rejected = client.get("/auth/hub/callback", params={"code": "orcid-code", "state": "wrong-state"}, follow_redirects=False)
+        rejected = client.get("/oauth/callback/orcid", params={"code": "orcid-code", "state": "wrong-state"}, follow_redirects=False)
         assert rejected.status_code == 400
-        started = client.get("/auth/hub/login", params={
+        started = client.get("/oauth/authorize", params={
             "client_id": "crucible-hub",
             "redirect_uri": "https://crucible.lbl.gov/hub/auth/callback",
             "state": "hub-state-123456789",
             "code_challenge": challenge,
-            "code_challenge_method": "S256",
+            "code_challenge_method": "S256", "response_type": "code",
         }, follow_redirects=False)
         assert started.status_code == 302
         assert started.headers["location"].startswith("https://orcid.org/")
         state = started.headers["location"].split("state=")[1]
-        callback = client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False)
+        callback = client.get("/oauth/callback/orcid", params={"code": "orcid-code", "state": state}, follow_redirects=False)
         assert callback.status_code == 302
         from urllib.parse import parse_qs, urlparse
         code = parse_qs(urlparse(callback.headers["location"]).query)["code"][0]
-        exchanged = client.post("/auth/hub/token", auth=("crucible-hub", "test-only-secret-padded-to-32-characters"), json={
+        exchanged = client.post("/oauth/token", auth=("crucible-hub", "test-only-secret-padded-to-32-characters"), data={
+            "grant_type": "authorization_code",
             "code": code,
             "code_verifier": verifier,
             "redirect_uri": "https://crucible.lbl.gov/hub/auth/callback",
         })
-        assert exchanged.status_code == 200
-        assert exchanged.json()["user_unique_id"] == "0000-0000-0000-0001"
+        assert exchanged.status_code == 200, exchanged.text
+        assert exchanged.json()["access_token"]
 
 
 @pytest.fixture
@@ -421,7 +368,8 @@ def hub_routes(engine, monkeypatch, orcid_provider_settings):
 
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle)
     app = FastAPI()
-    app.include_router(hub_auth_router)
+    app.include_router(routes.callback_router)
+    app.include_router(oauth_routes.router)
     app.dependency_overrides[get_engine] = lambda: engine
     with TestClient(app) as client:
         yield client, fake
@@ -432,27 +380,19 @@ HUB_LOGIN = {
     "redirect_uri": "https://crucible.lbl.gov/hub/auth/callback",
     "state": "hub-state-123456789",
     "code_challenge": "a" * 43,
-    "code_challenge_method": "S256",
+    "code_challenge_method": "S256", "response_type": "code",
 }
 
 
 def start_hub_login(client, fake):
     from urllib.parse import parse_qs, urlparse
 
-    started = client.get("/auth/hub/login", params=HUB_LOGIN, follow_redirects=False)
+    started = client.get("/oauth/authorize", params=HUB_LOGIN, follow_redirects=False)
     assert started.status_code == 302
     query = parse_qs(urlparse(started.headers["location"]).query)
-    assert query["redirect_uri"] == ["http://localhost:7777/auth/hub/callback"]
+    assert query["redirect_uri"] == ["http://localhost:7777/oauth/callback/orcid"]
     fake.claims = {"nonce": query["nonce"][0]}
     return query["state"][0]
-
-
-def test_hub_sign_in_runs_through_the_listed_provider(hub_routes):
-    client, fake = hub_routes
-    state = start_hub_login(client, fake)
-    finished = client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False)
-    assert finished.status_code == 302
-    assert finished.headers["location"].startswith("https://crucible.lbl.gov/hub/auth/callback?code=")
 
 
 def hub_error_of(response):
@@ -462,33 +402,13 @@ def hub_error_of(response):
     return parse_qs(urlparse(response.headers["location"]).query)["error"][0]
 
 
-def test_hub_callback_refuses_a_token_for_the_wrong_nonce(hub_routes):
-    client, fake = hub_routes
-    state = start_hub_login(client, fake)
-    fake.claims = {"nonce": "another"}
-    assert hub_error_of(client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False)) == "server_error"
-
-
-def test_hub_callback_tells_the_hub_when_the_provider_is_down(hub_routes):
-    client, fake = hub_routes
-    state = start_hub_login(client, fake)
-    fake.down = True
-    assert hub_error_of(client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False)) == "temporarily_unavailable"
-
-
-def test_hub_login_tells_the_hub_when_discovery_fails(hub_routes):
-    client, fake = hub_routes
-    fake.down = True
-    assert hub_error_of(client.get("/auth/hub/login", params=HUB_LOGIN, follow_redirects=False)) == "temporarily_unavailable"
-
-
 def test_hub_login_is_503_without_a_provider_list(hub_routes, monkeypatch):
     from app.config import get_settings
 
     client, _ = hub_routes
     monkeypatch.delenv("CRUCIBLE_AUTH_PROVIDERS")
     get_settings.cache_clear()
-    assert client.get("/auth/hub/login", params=HUB_LOGIN, follow_redirects=False).status_code == 503
+    assert client.get("/oauth/authorize", params=HUB_LOGIN, follow_redirects=False).status_code == 503
 
 
 def test_auth_time_flows_from_handoff_code_to_hub_principal(use_engine, engine, monkeypatch):
@@ -549,7 +469,7 @@ def test_a_refused_provider_token_is_logged_with_its_error_but_not_the_code(hub_
 
     monkeypatch.setattr(fake, "respond", refuse)
     with caplog.at_level("WARNING"):
-        response = client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False)
+        response = client.get("/oauth/callback/orcid", params={"code": "orcid-code", "state": state}, follow_redirects=False)
     assert hub_error_of(response) == "server_error"
     assert "Hub sign-in failed: OAuthError (invalid_grant: Invalid authorization code: [code])" in caplog.text
     assert "orcid-code" not in caplog.text

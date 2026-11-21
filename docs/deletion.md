@@ -20,14 +20,14 @@ Deletion applies to datasets, samples, projects and instruments; any other resou
 
 | Action | Requirement |
 |---|---|
-| Request deletion of a dataset or sample | `contributor` on the record, or platform contributor or administrator |
-| Request deletion of a project or instrument | `admin` on the record (`Permission.DELETE`), or platform administrator |
-| Approve or reject a request | `admin` on the record (`Permission.DELETE`), or platform administrator |
-| Delete directly | `owner` on the record (`Permission.HARD_DELETE`), or platform administrator |
+| Request deletion of a dataset or sample | `contributor` on the record |
+| Request deletion of a project or instrument | `admin` on the record (`Permission.DELETE`) |
+| Approve or reject a request | `admin` on the record (`Permission.DELETE`) |
+| Delete directly | `owner` on the record (`Permission.HARD_DELETE`) |
 | Read `GET /deletion_audit` with `scope=all` | Platform administrator |
-| Read `GET /deletion_audit` with `scope=submitted` | Any human user, for their own requests |
+| Read `GET /deletion_audit` with `scope=submitted` | Any human user for their own requests |
 
-Resource administrators can approve requests but cannot delete directly. A record without an owner can be deleted directly only by a platform administrator. Service accounts without platform-administrator authority cannot review requests, and no service account can read the deletion audit. `scope` defaults to `all`.
+Resource administrators can approve requests but cannot delete directly. A record without an owner can be deleted directly only by a platform administrator. Service accounts without platform-administrator authority cannot review requests, and no service account can read the deletion audit.
 
 ## Deletion requests
 
@@ -41,9 +41,10 @@ Resource administrators can approve requests but cannot delete directly. A recor
 Requests for projects and instruments, and their review responses, carry a `preview` object (see [Direct deletion](#direct-deletion)).
 
 Approval deletes the record and writes the audit row in one transaction. For a project or instrument, the row is locked and the emptiness check repeated inside that transaction, so a dataset or sample assigned after the request still blocks approval with 409. Rejection is always allowed and returns the record to normal reads. Reviewing a rejected request, or approving an approved one, returns 409.
+
 ## Direct deletion
 
-`DELETE /resources/{mfid}` requires `force=true`; an approved request does not replace it. Datasets and samples are deleted immediately and the response is `{"detail": "Resource ... permanently deleted"}`.
+`DELETE /resources/{mfid}` requires `force=true`. Datasets and samples are deleted immediately and the response is `{"detail": "Resource ... permanently deleted"}`.
 
 Projects and instruments are previewed first. Without `confirm=true` the route returns a preview and deletes nothing; with `confirm=true` it locks the row, repeats the emptiness check and deletes. A project or instrument that is not empty returns 409 with the blocking counts, with or without `confirm`.
 
@@ -81,7 +82,7 @@ Owners of other records keep their own grants.
 
 ## Stored objects
 
-Deletion does not delete stored files on either storage backend: file objects remain in the bucket after their records are removed. A multipart upload completed after its dataset was deleted returns 409 `dataset_deleted`, and its assembled object is removed. The `python -m app.cli storage cleanup` command, run hourly when `STORAGE_CLEANUP_ENABLED=true`, removes only abandoned uploads and replaced file versions past their retention period.
+At the moment, deletion does not delete stored files: file objects remain in the bucket after their records are removed. A multipart upload completed after its dataset was deleted returns 409 `dataset_deleted`, and its assembled object is removed. The `python -m app.cli storage cleanup` command, run automatically when `STORAGE_CLEANUP_ENABLED=true`, removes only abandoned uploads and replaced file versions past their retention period.
 
 When `RECORD_BUCKET` is set, deleting a project or instrument schedules a best-effort final `record.json` write with operation `delete`, the counts and the removed grants.
 
@@ -89,4 +90,4 @@ When `RECORD_BUCKET` is set, deleting a project or instrument schedules a best-e
 
 Every deletion, on both paths, writes a `DeletionAuditLog` row with the resource type and name, requester, reviewer, times, and the project's `project_id` and `project_mfid` (for a project, the project itself; null for an instrument). Direct deletions record the caller as requester and reviewer with the reason `direct forced deletion`.
 
-After deletion the `project_id` or `instrument_id` slug can be reused; the audit row keeps the deleted slug. MFIDs are never reused.
+After deletion the `project_id` or `instrument_id` slug can be reused; the audit row keeps the deleted slug.

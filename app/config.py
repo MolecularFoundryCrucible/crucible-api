@@ -235,7 +235,7 @@ class OidcProvider(BaseModel):
     scopes: str
     token_endpoint_auth_method: Literal["client_secret_basic", "client_secret_post"]
     registration: Literal["closed", "approval", "open"]
-    legacy_callback: bool
+    legacy_callback: bool = Field(default=False, exclude=True)
 
     @field_validator("issuer")
     @classmethod
@@ -253,11 +253,12 @@ class OidcProvider(BaseModel):
             raise ValueError("must include openid")
         return value
 
-    @model_validator(mode="after")
-    def orcid_flags_fit_the_issuer(self) -> "OidcProvider":
-        if self.legacy_callback and not self.is_orcid:
-            raise ValueError("legacy_callback is allowed only for the ORCID provider")
-        return self
+    @field_validator("legacy_callback")
+    @classmethod
+    def legacy_callback_is_gone(cls, value: bool) -> bool:
+        if value:
+            raise ValueError("the /auth/hub/callback address was removed: register <API address>/oauth/callback/<key> with the provider, then remove legacy_callback")
+        return value
 
     @property
     def is_orcid(self) -> bool:
@@ -357,8 +358,6 @@ class AuthSettings(SettingsGroup):
             raise ValueError("lists the same key twice")
         if sum(provider.is_orcid for provider in value) > 1:
             raise ValueError("lists more than one ORCID provider")
-        if sum(provider.legacy_callback for provider in value) > 1:
-            raise ValueError("lists more than one provider with legacy_callback")
         return value
 
     @field_validator("previous_pepper_ids", mode="before")
@@ -397,10 +396,6 @@ class AuthSettings(SettingsGroup):
     @property
     def orcid_provider(self) -> OidcProvider | None:
         return next((provider for provider in self.providers if provider.is_orcid), None)
-
-    @property
-    def legacy_callback_provider(self) -> OidcProvider | None:
-        return next((provider for provider in self.providers if provider.legacy_callback), None)
 
     def provider(self, key: str) -> OidcProvider | None:
         return next((provider for provider in self.providers if provider.key == key), None)

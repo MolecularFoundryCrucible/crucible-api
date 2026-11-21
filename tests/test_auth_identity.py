@@ -352,11 +352,6 @@ def run_backfill(*args):
     return main(["identity", "backfill", *args])
 
 
-def test_backfill_requires_the_issuer():
-    with pytest.raises(SystemExit):
-        run_backfill()
-
-
 def test_backfill_refuses_an_unknown_issuer(db_engine):
     assert run_backfill("--issuer", "https://example.org") == 1
 

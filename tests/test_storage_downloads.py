@@ -11,7 +11,6 @@ from app.services.storage_downloads import (
     StorageObject,
     download_headers,
     resolve_storage_object,
-    retire_object,
 )
 import app.storage.gcs as google
 
@@ -184,41 +183,6 @@ def assert_bounded(call, **expected):
     retry = kwargs.pop("retry")
     assert kwargs == {**expected, "timeout": 30}
     assert retry._timeout == 30
-
-
-def test_retire_object_sets_custom_time_pinned_to_generation(store, keyed):
-    client = keyed
-    blob = client.bucket.return_value.blob.return_value
-    assert retire_object(store, f"bucket/{DS}/a.txt", "7", WHEN) is True
-    client.bucket.assert_called_once_with("bucket")
-    client.bucket.return_value.blob.assert_called_once_with(f"{DS}/a.txt")
-    assert blob.custom_time == WHEN
-    blob.patch.assert_called_once()
-    assert_bounded(blob.patch.call_args, if_generation_match=7)
-    blob.reload.assert_not_called()
-
-
-def test_retire_object_reads_the_generation_of_a_legacy_object(store, keyed):
-    blob = keyed.bucket.return_value.blob.return_value
-    blob.generation = 42
-    assert retire_object(store, f"bucket/{DS}/a.txt", None, WHEN) is True
-    blob.reload.assert_called_once()
-    assert_bounded(blob.reload.call_args)
-    blob.patch.assert_called_once()
-    assert_bounded(blob.patch.call_args, if_generation_match=42)
-
-
-def test_retire_object_missing_object_is_false(store, keyed):
-    blob = keyed.bucket.return_value.blob.return_value
-    blob.reload.side_effect = NotFound("gone")
-    assert retire_object(store, f"bucket/{DS}/a.txt", None, WHEN) is False
-    blob.patch.assert_not_called()
-
-
-def test_retire_object_skips_a_store_without_lifecycle_retirement():
-    store = MagicMock(retires_by_lifecycle=False)
-    assert retire_object(store, f"bucket/{DS}/a.txt", "7", WHEN) is False
-    store.retire.assert_not_called()
 
 
 def test_record_files_use_the_server_client(store, keyed):

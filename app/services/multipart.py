@@ -3,7 +3,6 @@ import json
 import logging
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from pathlib import PurePosixPath
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -17,7 +16,7 @@ from app.models.multipart import EMPTY_SHA256, MultipartStatus
 from app.storage import StorageFailure, UploadMissing
 from app.storage.crc32c import combine_parts
 from app.services.file_versions import keep_version
-from app.services.storage_downloads import multipart_prefix, owned_object
+from app.services.storage_downloads import multipart_prefix
 from app.utils.auth_utils import caller_row, is_caller, load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
 from app.utils.sql_utils import assert_not_pending_deletion, get_active_deletion_request, touch_resource_modification_time
@@ -381,7 +380,7 @@ def fail(engine, storage, upload, code):
     return state
 
 
-def complete(engine, storage, principal, dsid, body, retire=None):
+def complete(engine, storage, principal, dsid, body):
     with Session(engine) as session:
         upload = owned(session, dsid, body.upload_id, principal, lock=True)
         if upload.claimed_sha256 and upload.claimed_sha256 != body.sha256_hash:
@@ -446,9 +445,8 @@ def complete(engine, storage, principal, dsid, body, retire=None):
                 if code is None:
                     touch_resource_modification_time(session, dsid)
                     if file is not None:
-                        previous = (file.storage_path, file.storage_generation, file.filename, file.dataset_id)
-                        if not storage().retires_by_lifecycle:
-                            keep_version(session, file, dsid, now())
+                        previous = (file.storage_path, file.storage_generation)
+                        keep_version(session, file, dsid, now())
                         file.storage_path = f"{current.bucket}/{current.object_key}"
                         file.storage_generation = metadata.version
                         file.size = current.size
@@ -481,38 +479,8 @@ def complete(engine, storage, principal, dsid, body, retire=None):
     except StorageFailure:
         logger.warning("multipart_leftover_abort_deferred upload_id=%s", upload.upload_id)
     if previous is not None:
-        retire_previous(engine, retire, result, dsid, previous)
+        logger.info("file_replaced file=%s dataset=%s previous_path=%s previous_generation=%s", result.mfid, result.dataset_mfid, *previous)
     return result
-
-
-def retire_previous(engine, retire, result, dsid, previous):
-    path, generation, filename, dataset_id = previous
-    retired = False
-    try:
-        if path:
-            retired = retire_if_eligible(engine, retire, dsid, path, generation, filename, dataset_id)
-    except Exception:
-        logger.warning("file_retire_failed file=%s previous_path=%s", result.mfid, path, exc_info=True)
-    logger.info("file_replaced file=%s dataset=%s previous_path=%s previous_generation=%s retired=%s", result.mfid, result.dataset_mfid, path, generation, retired)
-
-
-def retire_if_eligible(engine, retire, dsid, path, generation, filename, dataset_id):
-    key = path.partition("/")[2]
-    if retire is None or not owned_object(path, generation, dsid):
-        return False
-    with Session(engine) as session:
-        if session.exec(select(AssociatedFile.id).where(AssociatedFile.storage_path == path)).first() is not None:
-            return False
-        if generation is None:
-            if key != f"{dsid}/{filename}":
-                return False
-            pathless = session.exec(select(AssociatedFile.filename).where(AssociatedFile.dataset_id == dataset_id, AssociatedFile.storage_path.is_(None))).all()
-            if any(key.endswith(PurePosixPath(name).name) for name in pathless):
-                return False
-            pending = session.exec(select(UploadSession.expires_at).where(UploadSession.protocol.is_(None), UploadSession.dataset_mfid == dsid, UploadSession.object_key == key)).all()
-            if any(utc(expires_at) >= now() for expires_at in pending):
-                return False
-    return retire(path, generation, now())
 
 
 def abort(engine, storage, principal, dsid, upload_id):

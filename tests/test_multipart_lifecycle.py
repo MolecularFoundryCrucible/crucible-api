@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 import app.api.routes.gcs_storage as gcs_storage
 import app.storage.gcs as google
 from app.api.routes import multipart as routes
-from app.tables import AccessGroup, AssociatedFile, Dataset, DeletionRequest, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
+from app.tables import AccessGroup, AssociatedFile, Dataset, DeletionRequest, FileVersion, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
 from app.models.datasets import file_etag
 from app.services import multipart as service
 from app.storage import ObjectInfo, Part, StorageFailure, UploadMissing
@@ -28,8 +28,6 @@ pytestmark = pytest.mark.usefixtures("hub_client_registered")
 
 
 class MemoryStorage:
-    retires_by_lifecycle = True
-
     def __init__(self, reports_crc32c=True):
         self.reports_crc32c = reports_crc32c
         self.reports_part_crc32c = not reports_crc32c
@@ -918,10 +916,11 @@ def test_replace_trusted_short_circuit_persists_the_backfilled_path(flow, monkey
 
 
 @pytest.fixture
-def retired(monkeypatch):
-    calls = []
-    monkeypatch.setattr(routes, "retire_object", lambda store, path, generation, retired_at: calls.append((path, generation)) or True)
-    return calls
+def kept(db_engine):
+    def read():
+        with Session(db_engine) as session:
+            return [(version.storage_path, version.storage_generation) for version in session.exec(select(FileVersion).order_by(FileVersion.id)).all()]
+    return read
 
 
 def replace(flow, file_id, headers=None):
@@ -932,7 +931,7 @@ def replace(flow, file_id, headers=None):
     return identifier, complete(flow, identifier)
 
 
-def test_replace_repoints_the_same_record_and_retires_the_old_object(flow, retired):
+def test_replace_repoints_the_same_record_and_keeps_the_old_object_as_a_version(flow, kept):
     client, engine, _ = flow
     file = published_file(flow)
     identifier, response = replace(flow, file["mfid"], headers={"If-Match": file["etag"]})
@@ -942,11 +941,11 @@ def test_replace_repoints_the_same_record_and_retires_the_old_object(flow, retir
     assert body["filename"] == "data.bin"
     assert body["storage_path"] == f"dedicated/ds/_files/{identifier}"
     assert body["etag"] != file["etag"]
-    assert retired == [(file["storage_path"], "7")]
+    assert kept() == [(file["storage_path"], "7")]
     assert len(files(engine)) == 1
 
 
-def test_replace_moves_a_legacy_file_into_the_multipart_layout(flow, retired):
+def test_replace_moves_a_legacy_file_into_the_multipart_layout(flow, kept):
     client, engine, _ = flow
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
@@ -962,25 +961,10 @@ def test_replace_moves_a_legacy_file_into_the_multipart_layout(flow, retired):
         assert record.storage_path == f"dedicated/ds/_files/{identifier}"
         assert record.storage_generation == "7"
         assert record.filename == "old.bin"
-    assert retired == [("dedicated/ds/old.bin", None)]
+    assert kept() == []
 
 
-def test_shared_previous_object_is_not_retired(flow, retired):
-    client, engine, _ = flow
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        first = AssociatedFile(dataset_id=dataset.id, filename="dup.bin", size=3, sha256_hash="d" * 64, storage_path="dedicated/ds/dup.bin")
-        twin = AssociatedFile(dataset_id=dataset.id, filename="dup.bin", size=3, sha256_hash="d" * 64, storage_path="dedicated/ds/dup.bin")
-        session.add_all([first, twin])
-        session.commit()
-        session.refresh(first)
-        mfid = first.mfid
-    _, response = replace(flow, mfid)
-    assert response.status_code == 200, response.text
-    assert retired == []
-
-
-def test_replace_of_pathless_legacy_file_backfills_and_skips_missing_object(flow, retired, monkeypatch):
+def test_replace_of_pathless_legacy_file_backfills_and_skips_missing_object(flow, kept, monkeypatch):
     client, engine, _ = flow
     import app.api.routes.gcs_storage as gcs_storage
     from fastapi import HTTPException
@@ -996,10 +980,10 @@ def test_replace_of_pathless_legacy_file_backfills_and_skips_missing_object(flow
         mfid = legacy.mfid
     _, response = replace(flow, mfid)
     assert response.status_code == 200, response.text
-    assert retired == []
+    assert kept() == []
 
 
-def test_file_changed_during_replace_fails_publication(flow, retired):
+def test_file_changed_during_replace_fails_publication(flow, kept):
     client, engine, storage = flow
     file = published_file(flow)
     response = replace_start(flow, file["mfid"])
@@ -1015,88 +999,20 @@ def test_file_changed_during_replace_fails_publication(flow, retired):
     assert result.json()["detail"] == "Upload could not be published: file_changed"
     assert row(engine, identifier).state == "failed"
     assert f"ds/_files/{identifier}" not in storage.objects
-    assert retired == []
+    assert kept() == []
 
 
-def test_aborted_replace_leaves_file_untouched(flow, retired):
+def test_aborted_replace_leaves_file_untouched(flow, kept):
     client, engine, _ = flow
     file = published_file(flow)
     identifier = replace_start(flow, file["mfid"]).json()["upload_id"]
     assert client.delete(BASE + f"/{identifier}").status_code == 204
     after = client.get(f"/files/{file['mfid']}").json()
     assert after["etag"] == file["etag"]
-    assert retired == []
+    assert kept() == []
 
 
-def test_retire_failure_does_not_fail_the_replace(flow, monkeypatch):
-    client, engine, _ = flow
-    def broken(store, path, generation, retired_at):
-        raise RuntimeError("storage down")
-    monkeypatch.setattr(routes, "retire_object", broken)
-    file = published_file(flow)
-    _, response = replace(flow, file["mfid"])
-    assert response.status_code == 200, response.text
-
-
-def test_retire_skips_buckets_outside_the_environment(flow, retired, monkeypatch):
-    client, engine, _ = flow
-    monkeypatch.setenv("STORAGE_READ_BUCKETS", "mf-storage-prod")
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        legacy = AssociatedFile(dataset_id=dataset.id, filename="old.bin", size=3, sha256_hash="c" * 64, storage_path="mf-storage-prod/ds/old.bin")
-        session.add(legacy)
-        session.commit()
-        session.refresh(legacy)
-        mfid = legacy.mfid
-    _, response = replace(flow, mfid)
-    assert response.status_code == 200, response.text
-    assert retired == []
-
-
-def test_retire_skips_an_invalid_storage_location(flow, retired):
-    client, engine, _ = flow
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        legacy = AssociatedFile(dataset_id=dataset.id, filename="old.bin", size=3, sha256_hash="c" * 64, storage_path="dedicated/other-ds/old.bin")
-        session.add(legacy)
-        session.commit()
-        session.refresh(legacy)
-        mfid = legacy.mfid
-    _, response = replace(flow, mfid)
-    assert response.status_code == 200, response.text
-    assert retired == []
-
-
-def test_legacy_retire_requires_exact_dataset_relative_key(flow, retired):
-    client, engine, _ = flow
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        legacy = AssociatedFile(dataset_id=dataset.id, filename="report.bin", size=3, sha256_hash="c" * 64, storage_path="dedicated/ds/raw/report.bin")
-        session.add(legacy)
-        session.commit()
-        session.refresh(legacy)
-        mfid = legacy.mfid
-    _, response = replace(flow, mfid)
-    assert response.status_code == 200, response.text
-    assert retired == []
-
-
-def test_legacy_retire_skips_when_a_pathless_sibling_shares_the_filename(flow, retired):
-    client, engine, _ = flow
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        legacy = AssociatedFile(dataset_id=dataset.id, filename="dup.bin", size=3, sha256_hash="c" * 64, storage_path="dedicated/ds/dup.bin")
-        sibling = AssociatedFile(dataset_id=dataset.id, filename="dup.bin", size=3, sha256_hash="d" * 64, storage_path=None)
-        session.add_all([legacy, sibling])
-        session.commit()
-        session.refresh(legacy)
-        mfid = legacy.mfid
-    _, response = replace(flow, mfid)
-    assert response.status_code == 200, response.text
-    assert retired == []
-
-
-def test_edit_revoked_during_replace_completion_fails_with_403(flow, retired):
+def test_edit_revoked_during_replace_completion_fails_with_403(flow, kept):
     client, engine, storage = flow
     file = published_file(flow)
     response = replace_start(flow, file["mfid"])
@@ -1112,10 +1028,10 @@ def test_edit_revoked_during_replace_completion_fails_with_403(flow, retired):
     assert result.json()["detail"] == "Upload could not be published: permission_revoked"
     assert row(engine, identifier).state == "failed"
     assert f"ds/_files/{identifier}" not in storage.objects
-    assert retired == []
+    assert kept() == []
 
 
-def test_storage_backend_changed_during_replace_fails_publication(flow, retired):
+def test_storage_backend_changed_during_replace_fails_publication(flow, kept):
     client, engine, storage = flow
     file = published_file(flow)
     response = replace_start(flow, file["mfid"])
@@ -1132,10 +1048,10 @@ def test_storage_backend_changed_during_replace_fails_publication(flow, retired)
     assert result.json()["detail"] == "Upload could not be published: file_changed"
     assert row(engine, identifier).state == "failed"
     assert f"ds/_files/{identifier}" not in storage.objects
-    assert retired == []
+    assert kept() == []
 
 
-def test_repeated_replace_completion_retires_once(flow, retired):
+def test_repeated_replace_completion_keeps_one_version(flow, kept):
     client, engine, _ = flow
     file = published_file(flow)
     identifier, first = replace(flow, file["mfid"])
@@ -1143,7 +1059,7 @@ def test_repeated_replace_completion_retires_once(flow, retired):
     second = complete(flow, identifier)
     assert second.status_code == 200, second.text
     assert second.json()["mfid"] == first.json()["mfid"]
-    assert len(retired) == 1
+    assert len(kept()) == 1
 
 
 def pathless_file(engine, filename="legacy.bin"):
@@ -1202,7 +1118,7 @@ def test_identical_content_does_not_short_circuit_when_bytes_are_missing(flow, m
     assert row(engine, response.json()["upload_id"]).replace_file_mfid == mfid
 
 
-def test_replace_without_previous_path_is_logged(flow, retired, monkeypatch, caplog):
+def test_replace_without_previous_path_is_logged(flow, kept, monkeypatch, caplog):
     client, engine, _ = flow
     from fastapi import HTTPException
     def missing(dsid, filename):
@@ -1212,49 +1128,7 @@ def test_replace_without_previous_path_is_logged(flow, retired, monkeypatch, cap
     with caplog.at_level("INFO", logger="app.services.multipart"):
         _, response = replace(flow, mfid)
     assert response.status_code == 200, response.text
-    assert f"file_replaced file={mfid} dataset=ds previous_path=None previous_generation=None retired=False" in caplog.messages
-
-
-def legacy_file(engine, filename, siblings=()):
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        legacy = AssociatedFile(dataset_id=dataset.id, filename=filename, size=3, sha256_hash="c" * 64, storage_path=f"dedicated/ds/{filename}")
-        session.add(legacy)
-        session.add_all([AssociatedFile(dataset_id=dataset.id, filename=name, size=3, sha256_hash="d" * 64, storage_path=None) for name in siblings])
-        session.commit()
-        session.refresh(legacy)
-        return legacy.mfid
-
-
-@pytest.mark.parametrize("sibling", ["sub/dup.bin", "up.bin"])
-def test_legacy_retire_skips_when_a_pathless_sibling_could_backfill_to_the_key(flow, retired, sibling):
-    client, engine, _ = flow
-    mfid = legacy_file(engine, "dup.bin", siblings=[sibling])
-    _, response = replace(flow, mfid)
-    assert response.status_code == 200, response.text
-    assert retired == []
-
-
-@pytest.mark.parametrize("expires_in", [timedelta(hours=1), None])
-def test_pending_legacy_upload_blocks_retirement(flow, retired, expires_in):
-    client, engine, _ = flow
-    mfid = legacy_file(engine, "old.bin")
-    with Session(engine) as session:
-        session.add(UploadSession(dataset_mfid="ds", object_key="ds/old.bin", associated_file_name="old.bin", owner_user_id="owner", expires_at=service.now() + (expires_in or -timedelta(hours=1)), size=3))
-        session.commit()
-    _, response = replace(flow, mfid)
-    assert response.status_code == 200, response.text
-    assert retired == ([] if expires_in else [("dedicated/ds/old.bin", None)])
-
-
-def test_retirement_errors_never_fail_a_committed_replace(flow, retired, monkeypatch):
-    file = published_file(flow)
-    def broken():
-        raise RuntimeError("config unavailable")
-    monkeypatch.setattr(service, "owned_object", broken)
-    _, response = replace(flow, file["mfid"])
-    assert response.status_code == 200, response.text
-    assert retired == []
+    assert f"file_replaced file={mfid} dataset=ds previous_path=None previous_generation=None" in caplog.messages
 
 
 def test_replace_routes_document_their_error_responses():

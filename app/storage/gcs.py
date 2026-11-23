@@ -9,7 +9,6 @@ from google.auth.credentials import Scoped, Signing
 from google.auth.transport.requests import AuthorizedSession, Request
 from google.cloud import storage
 from google.api_core.exceptions import NotFound
-from google.cloud.storage.retry import DEFAULT_RETRY
 
 from app.config import get_settings, optional_env
 from app.services.storage_downloads import download_headers
@@ -63,8 +62,6 @@ def signing(credentials):
 
 class GoogleStore:
     """Google Cloud Storage as the server's identity (server_credentials) for every operation."""
-
-    retires_by_lifecycle = True
 
     def __init__(self, config):
         self.config = config
@@ -206,18 +203,6 @@ class GoogleStore:
         if content_type:
             overrides["response_type"] = content_type
         return blob.generate_signed_url(version="v4", expiration=expires_in, method="GET", generation=generation, **overrides, **signing(server_credentials()))
-
-    def retire(self, bucket, key, version, retired_at):
-        blob = server_client().bucket(bucket).blob(key)
-        if version is None:
-            try:
-                blob.reload(timeout=30, retry=DEFAULT_RETRY.with_timeout(30))
-            except NotFound:
-                return False
-            version = blob.generation
-        blob.custom_time = retired_at
-        blob.patch(if_generation_match=int(version), timeout=30, retry=DEFAULT_RETRY.with_timeout(30))
-        return True
 
     def put_bytes(self, bucket, key, data, content_type):
         try:

@@ -14,12 +14,6 @@ import tests.test_multipart_lifecycle as lifecycle
 flow = lifecycle.flow
 
 
-@pytest.fixture
-def s3(flow):
-    flow[2].retires_by_lifecycle = False
-    return flow
-
-
 def versions(engine):
     with Session(engine) as session:
         return session.exec(select(FileVersion).order_by(FileVersion.id)).all()
@@ -37,9 +31,9 @@ def replaced(flow):
     return file, response.json()
 
 
-def test_a_replace_on_s3_keeps_the_previous_content_as_a_version(s3):
-    _, engine, _ = s3
-    file, current = replaced(s3)
+def test_a_replace_keeps_the_previous_content_as_a_version(flow):
+    _, engine, _ = flow
+    file, current = replaced(flow)
     [version] = versions(engine)
     assert (version.file_mfid, version.dataset_mfid, version.storage_path, version.storage_generation) == (file["mfid"], "ds", file["storage_path"], "7")
     assert (version.size, version.sha256_hash, version.storage_crc32c, version.reason) == (len(DATA), SHA, CRC, "replaced")
@@ -48,23 +42,18 @@ def test_a_replace_on_s3_keeps_the_previous_content_as_a_version(s3):
     assert current["storage_path"] != file["storage_path"]
 
 
-def test_the_grace_period_comes_from_the_setting(s3, monkeypatch):
+def test_the_grace_period_comes_from_the_setting(flow, monkeypatch):
     monkeypatch.setenv("FILE_VERSION_RETENTION_DAYS", "3")
     from app.config import get_settings
     get_settings.cache_clear()
-    replaced(s3)
-    [version] = versions(s3[1])
+    replaced(flow)
+    [version] = versions(flow[1])
     assert version.delete_after - version.created_at == timedelta(days=3)
 
 
-def test_a_replace_on_google_keeps_no_version(flow):
-    replaced(flow)
-    assert versions(flow[1]) == []
-
-
-def test_cleanup_deletes_a_version_only_after_its_grace_period(s3):
-    _, engine, storage = s3
-    file, _ = replaced(s3)
+def test_cleanup_deletes_a_version_only_after_its_grace_period(flow):
+    _, engine, storage = flow
+    file, _ = replaced(flow)
     key = file["storage_path"].partition("/")[2]
     early = run_cleanup(engine, storage, service.now() + timedelta(days=13))
     assert (early.deleted_versions, storage.deleted) == (0, [])
@@ -75,9 +64,9 @@ def test_cleanup_deletes_a_version_only_after_its_grace_period(s3):
     assert run_cleanup(engine, storage, service.now() + timedelta(days=16)).deleted_versions == 0
 
 
-def test_cleanup_keeps_a_version_another_file_still_uses(s3):
-    _, engine, storage = s3
-    file, _ = replaced(s3)
+def test_cleanup_keeps_a_version_another_file_still_uses(flow):
+    _, engine, storage = flow
+    file, _ = replaced(flow)
     with Session(engine) as session:
         dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
         session.add(AssociatedFile(dataset_id=dataset_id, filename="copy.bin", storage_path=file["storage_path"], size=1, sha256_hash="b" * 64))
@@ -87,20 +76,20 @@ def test_cleanup_keeps_a_version_another_file_still_uses(s3):
     assert versions(engine)[0].deleted_at is None
 
 
-def test_a_dry_run_changes_nothing(s3):
-    _, engine, storage = s3
-    replaced(s3)
+def test_a_dry_run_changes_nothing(flow):
+    _, engine, storage = flow
+    replaced(flow)
     report = run_cleanup(engine, storage, service.now() + timedelta(days=15), dry_run=True)
     assert report.deleted_versions == 1
     assert storage.deleted == []
     assert versions(engine)[0].deleted_at is None
 
 
-def test_a_storage_failure_is_counted_and_the_other_versions_still_go(s3, monkeypatch):
-    client, engine, storage = s3
-    first, _ = replaced(s3)
-    second = published_file(s3, "other.bin")
-    _, response = replace(s3, second["mfid"])
+def test_a_storage_failure_is_counted_and_the_other_versions_still_go(flow, monkeypatch):
+    client, engine, storage = flow
+    first, _ = replaced(flow)
+    second = published_file(flow, "other.bin")
+    _, response = replace(flow, second["mfid"])
     assert response.status_code == 200, response.text
     real_delete = storage.delete
     failing = first["storage_path"].partition("/")[2]
@@ -117,11 +106,11 @@ def test_a_storage_failure_is_counted_and_the_other_versions_still_go(s3, monkey
     assert (failed.attempts, failed.failure_code, failed.deleted_at) == (1, "provider_unavailable", None)
 
 
-def test_cleanup_aborts_an_expired_upload_once_and_leaves_live_ones(s3):
-    _, engine, storage = s3
-    stale = start(s3, "stale.bin")
-    put(s3, stale)
-    live = start(s3, "live.bin")
+def test_cleanup_aborts_an_expired_upload_once_and_leaves_live_ones(flow):
+    _, engine, storage = flow
+    stale = start(flow, "stale.bin")
+    put(flow, stale)
+    live = start(flow, "live.bin")
     change(engine, stale, expires_at=service.now() - timedelta(hours=2))
     report = run_cleanup(engine, storage, service.now())
     assert report.aborted_uploads == 1
@@ -130,9 +119,9 @@ def test_cleanup_aborts_an_expired_upload_once_and_leaves_live_ones(s3):
     assert run_cleanup(engine, storage, service.now()).aborted_uploads == 0
 
 
-def test_restore_brings_back_the_previous_content_and_can_be_undone(s3):
-    _, engine, storage = s3
-    file, current = replaced(s3)
+def test_restore_brings_back_the_previous_content_and_can_be_undone(flow):
+    _, engine, storage = flow
+    file, current = replaced(flow)
     restored = restore_latest(engine, storage, file["mfid"], service.now())
     after = stored_file(engine, file["mfid"])
     assert (after.storage_path, after.storage_generation, after.size, after.sha256_hash) == (file["storage_path"], "7", len(DATA), SHA)
@@ -146,18 +135,18 @@ def test_restore_brings_back_the_previous_content_and_can_be_undone(s3):
 
 
 @pytest.mark.parametrize("situation, code", [("never_replaced", "no_kept_version"), ("object_gone", "version_missing_in_storage"), ("replace_running", "replace_in_progress"), ("unknown_file", "file_not_found")])
-def test_restore_refuses_when_it_cannot_be_done(s3, situation, code):
-    _, engine, storage = s3
+def test_restore_refuses_when_it_cannot_be_done(flow, situation, code):
+    _, engine, storage = flow
     if situation == "never_replaced":
-        mfid = published_file(s3)["mfid"]
+        mfid = published_file(flow)["mfid"]
     elif situation == "object_gone":
-        file, _ = replaced(s3)
+        file, _ = replaced(flow)
         mfid = file["mfid"]
         storage.objects.pop(file["storage_path"].partition("/")[2])
     elif situation == "replace_running":
-        file, _ = replaced(s3)
+        file, _ = replaced(flow)
         mfid = file["mfid"]
-        assert replace_start(s3, mfid).status_code == 200
+        assert replace_start(flow, mfid).status_code == 200
     else:
         mfid = "no-such-file"
     with pytest.raises(RestoreRefused) as refused:
@@ -165,8 +154,8 @@ def test_restore_refuses_when_it_cannot_be_done(s3, situation, code):
     assert refused.value.code == code
 
 
-def test_only_one_waiting_version_per_stored_object(s3):
-    _, engine, _ = s3
+def test_only_one_waiting_version_per_stored_object(flow):
+    _, engine, _ = flow
     with Session(engine) as session:
         for _ in range(2):
             session.add(FileVersion(file_mfid="f", dataset_mfid="ds", storage_path="dedicated/ds/_files/x", size=1, sha256_hash="a" * 64, reason="replaced", created_at=service.now(), delete_after=service.now()))
@@ -174,9 +163,9 @@ def test_only_one_waiting_version_per_stored_object(s3):
             session.commit()
 
 
-def test_upload_sessions_are_untouched_by_version_cleanup(s3):
-    _, engine, storage = s3
-    replaced(s3)
+def test_upload_sessions_are_untouched_by_version_cleanup(flow):
+    _, engine, storage = flow
+    replaced(flow)
     with Session(engine) as session:
         before = len(session.exec(select(UploadSession)).all())
     run_cleanup(engine, storage, service.now() + timedelta(days=15))
@@ -200,9 +189,9 @@ def due_version(engine, storage, path, used_by=None):
     return version.id
 
 
-def test_a_dry_run_writes_nothing_for_a_version_outside_the_own_buckets(s3):
-    _, engine, storage = s3
-    published_file(s3)
+def test_a_dry_run_writes_nothing_for_a_version_outside_the_own_buckets(flow):
+    _, engine, storage = flow
+    published_file(flow)
     with Session(engine) as session:
         session.add(FileVersion(file_mfid="f", dataset_mfid="ds", storage_path="elsewhere/ds/_files/x", storage_generation="7", size=1, sha256_hash="a" * 64,
                                 reason="replaced", created_at=service.now(), delete_after=service.now() - timedelta(days=1)))
@@ -214,9 +203,9 @@ def test_a_dry_run_writes_nothing_for_a_version_outside_the_own_buckets(s3):
     assert versions(engine)[0].failure_code == "not_owned"
 
 
-def test_versions_still_in_use_never_hold_back_a_deletable_one(s3):
-    _, engine, storage = s3
-    published_file(s3)
+def test_versions_still_in_use_never_hold_back_a_deletable_one(flow):
+    _, engine, storage = flow
+    published_file(flow)
     for n in range(3):
         due_version(engine, storage, f"dedicated/ds/_files/used{n}", used_by=f"copy{n}.bin")
     free = due_version(engine, storage, "dedicated/ds/_files/free")
@@ -225,9 +214,9 @@ def test_versions_still_in_use_never_hold_back_a_deletable_one(s3):
     assert [version.id for version in versions(engine) if version.deleted_at is not None] == [free]
 
 
-def test_one_failing_upload_does_not_block_the_others(s3, monkeypatch):
-    _, engine, storage = s3
-    first, second = start(s3, "first.bin"), start(s3, "second.bin")
+def test_one_failing_upload_does_not_block_the_others(flow, monkeypatch):
+    _, engine, storage = flow
+    first, second = start(flow, "first.bin"), start(flow, "second.bin")
     for identifier in (first, second):
         change(engine, identifier, expires_at=service.now() - timedelta(hours=2))
     failing = row(engine, first).object_key
@@ -244,9 +233,9 @@ def test_one_failing_upload_does_not_block_the_others(s3, monkeypatch):
     assert row(engine, second).cleaned_at is not None and row(engine, first).cleaned_at is None
 
 
-def test_an_upload_finishing_its_completion_is_left_alone_just_after_expiry(s3):
-    _, engine, storage = s3
-    finishing = start(s3, "finishing.bin")
+def test_an_upload_finishing_its_completion_is_left_alone_just_after_expiry(flow):
+    _, engine, storage = flow
+    finishing = start(flow, "finishing.bin")
     change(engine, finishing, state="finalizing", expires_at=service.now() - timedelta(minutes=10))
     assert run_cleanup(engine, storage, service.now()).aborted_uploads == 0
     assert row(engine, finishing).state == "finalizing"
@@ -255,32 +244,32 @@ def test_an_upload_finishing_its_completion_is_left_alone_just_after_expiry(s3):
     assert row(engine, finishing).state == "expired"
 
 
-def test_a_second_file_sharing_the_object_gets_its_full_grace_period(s3):
-    _, engine, _ = s3
-    file = published_file(s3)
+def test_a_second_file_sharing_the_object_gets_its_full_grace_period(flow):
+    _, engine, _ = flow
+    file = published_file(flow)
     with Session(engine) as session:
         dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
         twin = AssociatedFile(dataset_id=dataset_id, filename="twin.bin", storage_path=file["storage_path"], storage_generation="7", size=len(DATA), sha256_hash=SHA)
         session.add(twin)
         session.commit()
         twin_mfid = twin.mfid
-    _, response = replace(s3, file["mfid"])
+    _, response = replace(flow, file["mfid"])
     assert response.status_code == 200, response.text
     with Session(engine) as session:
         version = session.exec(select(FileVersion)).one()
         version.delete_after = service.now() - timedelta(hours=1)
         session.add(version)
         session.commit()
-    _, response = replace(s3, twin_mfid)
+    _, response = replace(flow, twin_mfid)
     assert response.status_code == 200, response.text
     [version] = versions(engine)
     assert service.utc(version.delete_after) > service.now() + timedelta(days=13)
 
 
 @pytest.mark.parametrize("situation, code", [("past_grace", "version_expired"), ("other_size", "version_size_mismatch")])
-def test_restore_refuses_an_expired_or_changed_version(s3, situation, code):
-    _, engine, storage = s3
-    file, _ = replaced(s3)
+def test_restore_refuses_an_expired_or_changed_version(flow, situation, code):
+    _, engine, storage = flow
+    file, _ = replaced(flow)
     if situation == "past_grace":
         with Session(engine) as session:
             version = session.exec(select(FileVersion)).one()

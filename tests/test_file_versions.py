@@ -3,11 +3,12 @@ from datetime import timedelta
 import pytest
 from sqlmodel import Session, select
 
-from app.tables import AssociatedFile, FileVersion, UploadSession
+from app.tables import AssociatedFile, FileVersion, IngestionRequest, UploadSession
 from app.services import multipart as service
 from app.services.file_versions import RestoreRefused, restore_latest
 from app.services.storage_cleanup import run_cleanup
 from app.storage import StorageFailure
+from app.utils.deletion_utils import hard_delete_resource
 from tests.test_multipart_lifecycle import CRC, DATA, SHA, change, files, published_file, put, replace, replace_start, row, start
 import tests.test_multipart_lifecycle as lifecycle
 
@@ -305,3 +306,99 @@ def test_cleanup_command_runs_only_when_enabled_or_dry(monkeypatch, capsys, enab
 def lifecycle_report():
     from app.services.storage_cleanup import CleanupReport
     return CleanupReport()
+
+
+def ingestion_request(engine, file_mfid, **values):
+    with Session(engine) as session:
+        request = IngestionRequest(dataset_mfid="ds", file_mfid=file_mfid, file_to_upload="dedicated/ds/x", ingestion_class="Reader", status="completed", time_created="2026-11-01T00:00:00Z", **values)
+        session.add(request)
+        session.commit()
+        session.refresh(request)
+        return request.model_dump()
+
+
+def deleted(flow, filename="data.bin"):
+    file = published_file(flow, filename)
+    response = flow[0].delete(f"/files/{file['mfid']}")
+    assert response.status_code == 200, response.text
+    return file
+
+
+def test_deleting_a_file_puts_its_content_in_the_trash(flow):
+    _, engine, storage = flow
+    file = deleted(flow)
+    [version] = versions(engine)
+    assert (version.reason, version.filename, version.file_mfid, version.dataset_mfid) == ("deleted", "data.bin", file["mfid"], "ds")
+    assert (version.storage_path, version.storage_generation, version.size, version.sha256_hash) == (file["storage_path"], "7", len(DATA), SHA)
+    assert version.delete_after - version.created_at == timedelta(days=14)
+    assert file["storage_path"].partition("/")[2] in storage.objects
+
+
+def test_deleting_a_file_keeps_its_ingestion_requests_in_the_version(flow):
+    client, engine, _ = flow
+    file = published_file(flow)
+    request = ingestion_request(engine, file["mfid"], time_completed="2026-11-02T00:00:00Z", ingestion_githash="abc")
+    assert client.delete(f"/files/{file['mfid']}").status_code == 200
+    with Session(engine) as session:
+        assert session.exec(select(IngestionRequest)).all() == []
+    assert versions(engine)[0].ingestion_requests == [request]
+
+
+def test_cleanup_removes_trashed_content_after_the_grace_period(flow):
+    _, engine, storage = flow
+    file = deleted(flow)
+    key = file["storage_path"].partition("/")[2]
+    assert run_cleanup(engine, storage, service.now() + timedelta(days=13)).deleted_versions == 0
+    assert storage.deleted == []
+    assert run_cleanup(engine, storage, service.now() + timedelta(days=15)).deleted_versions == 1
+    assert storage.deleted == [(key, "7")]
+
+
+def test_deleting_a_file_during_its_replace_is_refused(flow):
+    client, engine, _ = flow
+    file = published_file(flow)
+    upload_id = replace_start(flow, file["mfid"]).json()["upload_id"]
+    response = client.delete(f"/files/{file['mfid']}")
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "replace_in_progress"
+    assert response.json()["detail"]["upload_id"] == upload_id
+    assert stored_file(engine, file["mfid"]).storage_path == file["storage_path"]
+    assert versions(engine) == []
+
+
+def test_hard_deleting_a_dataset_trashes_every_file(flow):
+    _, engine, _ = flow
+    first = published_file(flow, "a.bin")
+    second = published_file(flow, "b.bin")
+    request = ingestion_request(engine, first["mfid"])
+    with Session(engine) as session:
+        hard_delete_resource("ds", session)
+        session.commit()
+    trashed = {version.file_mfid: version for version in versions(engine)}
+    assert {mfid: (version.reason, version.filename) for mfid, version in trashed.items()} == {first["mfid"]: ("deleted", "a.bin"), second["mfid"]: ("deleted", "b.bin")}
+    assert trashed[first["mfid"]].ingestion_requests == [request]
+
+
+def test_trashed_content_another_record_uses_is_kept(flow):
+    _, engine, storage = flow
+    file = published_file(flow)
+    with Session(engine) as session:
+        dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
+        session.add(AssociatedFile(dataset_id=dataset_id, filename="copy.bin", storage_path=file["storage_path"], size=1, sha256_hash="b" * 64))
+        session.commit()
+    assert flow[0].delete(f"/files/{file['mfid']}").status_code == 200
+    report = run_cleanup(engine, storage, service.now() + timedelta(days=15))
+    assert (report.deleted_versions, report.kept_in_use, storage.deleted) == (0, 1, [])
+
+
+def test_deleting_a_legacy_file_without_generation_trashes_nothing(flow):
+    client, engine, storage = flow
+    file = published_file(flow)
+    with Session(engine) as session:
+        record = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file["mfid"])).one()
+        record.storage_generation = None
+        session.add(record)
+        session.commit()
+    assert client.delete(f"/files/{file['mfid']}").status_code == 200
+    assert versions(engine) == []
+    assert run_cleanup(engine, storage, service.now() + timedelta(days=15)).deleted_versions == 0

@@ -4,7 +4,7 @@ from datetime import timedelta, timezone
 from sqlmodel import Session, select
 
 from app.config import get_settings
-from app.tables import AssociatedFile, Dataset, FileVersion, UploadSession
+from app.tables import AssociatedFile, Dataset, FileVersion, IngestionRequest, UploadSession
 from app.services.storage_downloads import owned_object
 from app.utils.sql_utils import get_active_deletion_request, touch_resource_modification_time
 
@@ -27,20 +27,34 @@ def keep_version(session: Session, file: AssociatedFile, dataset_mfid: str, when
     """Record the file's current content as a version, in the caller's transaction, before the file is
     repointed. Only objects the API owns and has a version for are kept: anything else (another
     environment's bucket, a legacy object without a generation) is never deleted by the cleanup."""
+    return _keep(session, file, dataset_mfid, when, "replaced")
+
+
+def trash_file(session: Session, file: AssociatedFile, dataset_mfid: str, when) -> FileVersion | None:
+    """Record the content of a file about to be deleted, with its filename and ingestion requests so a
+    restore can bring it back, in the caller's transaction, under the same rules as keep_version."""
+    return _keep(session, file, dataset_mfid, when, "deleted")
+
+
+def _keep(session, file, dataset_mfid, when, reason):
     if not file.storage_path or file.storage_generation is None or not owned_object(file.storage_path, file.storage_generation, dataset_mfid):
         return None
     deadline = when + timedelta(days=get_settings().storage.file_version_retention_days)
     existing = session.exec(select(FileVersion).where(FileVersion.storage_path == file.storage_path, *waiting())).first()
     if existing is not None:
-        # Another file shared this object and was replaced earlier: this replace gets its full grace period too.
+        # Another file shared this object and was kept earlier: this one gets its full grace period too.
         existing.delete_after = max(utc(existing.delete_after), deadline)
         session.add(existing)
         return existing
     version = FileVersion(
         file_mfid=file.mfid, dataset_mfid=dataset_mfid, storage_path=file.storage_path, storage_generation=file.storage_generation,
-        size=file.size, sha256_hash=file.sha256_hash, storage_crc32c=file.storage_crc32c, reason="replaced",
+        size=file.size, sha256_hash=file.sha256_hash, storage_crc32c=file.storage_crc32c, reason=reason,
         created_at=when, delete_after=deadline,
     )
+    if reason == "deleted":
+        version.filename = file.filename
+        requests = session.exec(select(IngestionRequest).where(IngestionRequest.file_mfid == file.mfid).order_by(IngestionRequest.id)).all()
+        version.ingestion_requests = [request.model_dump() for request in requests]
     session.add(version)
     return version
 

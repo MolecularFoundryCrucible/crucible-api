@@ -14,6 +14,7 @@ from app.tables import (
     AssociatedFile,
     Dataset,
     IngestionRequest,
+    UploadSession,
 )
 from app.config import get_secret, get_settings, require_feature
 from app.general_utils import get_utc_isoformat
@@ -26,6 +27,8 @@ from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import DownloadLinkRead, MessageResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
+from app.services.file_versions import trash_file
+from app.services.multipart import live, now
 from app.services.storage_downloads import StorageLocationError, resolve_storage_object
 
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
@@ -162,14 +165,20 @@ def update_file(
         return AssociatedFileRead.model_validate(af, update={"dataset_mfid": ds.unique_id})
 
 
-@router.delete("/files/{file_id}", response_model=MessageResponse)
+@router.delete("/files/{file_id}", response_model=MessageResponse, responses={409: {"description": "The dataset is pending deletion (`pending_deletion`), or a replacement of the file is in progress (`replace_in_progress`, with its `upload_id`)"}})
 def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
-    '''Deletes a file and its ingestion requests. Requires admin on the parent dataset.'''
+    '''Deletes a file and its ingestion requests. Requires admin on the parent dataset. Stored content
+    is kept for FILE_VERSION_RETENTION_DAYS, during which the file can be restored with its ingestion
+    requests (`POST /datasets/{dataset_mfid}/deleted_files/{file_mfid}/restore`).'''
 
     with Session(get_engine()) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
         require_permission(session, auth_res, ds.unique_id, Permission.DELETE)
         assert_not_pending_deletion(session, ds.unique_id)
+        replacing = session.exec(select(UploadSession.upload_id).where(UploadSession.replace_file_mfid == af.mfid, *live())).first()
+        if replacing is not None:
+            raise HTTPException(status_code=409, detail={"code": "replace_in_progress", "upload_id": replacing, "message": "A replacement of this file is in progress; abort it first"})
+        trash_file(session, af, ds.unique_id, now())
 
         for ir in session.exec(
             select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)

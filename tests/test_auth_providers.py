@@ -344,6 +344,14 @@ def test_discovery_endpoints_must_be_https(field, address):
         providers._check_discovery(metadata, issuer)
 
 
+@pytest.mark.anyio
+async def test_an_unusable_discovery_document_is_logged_with_its_reason(remote, caplog):
+    remote["login.example.org"].metadata["token_endpoint"] = "http://login.example.org/realms/lab/token"
+    with caplog.at_level("WARNING", logger="app.auth.providers"), pytest.raises(providers.ProviderUnavailable):
+        await providers.authorization_url(provider("lab"), CALLBACK, "s", "n")
+    assert "provider lab discovery unusable: discovery token_endpoint is not an https address" in caplog.messages
+
+
 def test_a_loopback_issuer_may_use_http_loopback_endpoints():
     issuer = "http://localhost:5556/dex"
     metadata = {"issuer": issuer, "authorization_endpoint": f"{issuer}/auth", "token_endpoint": "http://127.0.0.1:5556/dex/token", "jwks_uri": f"{issuer}/keys", "userinfo_endpoint": f"{issuer}/userinfo"}

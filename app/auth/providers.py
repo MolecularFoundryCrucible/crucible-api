@@ -1,3 +1,4 @@
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,7 @@ ID_TOKEN_LEEWAY = 30
 DISCOVERY_REFRESH_SECONDS = 12 * 60 * 60
 DISCOVERY_RETRY_SECONDS = 30
 _MAX_CLIENTS = 64
+logger = logging.getLogger(__name__)
 _REQUIRED_DISCOVERY_FIELDS = ("authorization_endpoint", "token_endpoint", "jwks_uri")
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 _UNSAFE_ALGORITHMS = ("none", "HS")
@@ -116,6 +118,7 @@ async def _with_discovery(name: str, client: StarletteOAuth2App, issuer: str) ->
     except (ProviderUnavailable, httpx.HTTPError, ValueError) as error:
         _clients.pop(name, None)
         _recent_failures[name] = True
+        logger.warning("provider %s discovery unusable: %s", name, error or type(error).__name__)
         raise ProviderUnavailable(type(error).__name__) from None
     return client
 

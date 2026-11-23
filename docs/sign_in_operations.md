@@ -41,7 +41,8 @@ An older list may still carry `"legacy_callback": false`, which is accepted and 
 - The provider's secret is `OIDC_{KEY}_CLIENT_SECRET`, for example `OIDC_ORCID_CLIENT_SECRET`.
 - Register `<API>/oauth/callback/{key}` with the provider as the redirect URI.
 - A provider with issuer `https://orcid.org` or `https://sandbox.orcid.org` is the ORCID provider; at most one may be listed.
-- An unreachable provider is skipped and retried after 30 seconds; the other providers remain available.
+- An unreachable provider is skipped and retried after 30 seconds; the other providers remain available. The server log says why (`provider <key> discovery unusable: ...`).
+- The endpoints in the provider's discovery document must be `https` (`http` only on loopback for a loopback issuer). A provider behind a TLS-terminating proxy that advertises `http://` endpoints, such as Keycloak without its proxy settings, is refused until it is configured to advertise its public `https` address.
 - When a provider's issuer changes: list the new issuer, restart, then run `python -m app.cli auth rewrite-issuer --from OLD --to NEW --commit`.
 
 ## The client list

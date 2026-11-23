@@ -34,7 +34,7 @@ USER 10001:10001
 # node that has taken 25 of the default 30 seconds; the timeout does not limit request length here.
 # Worker heartbeats go to /dev/shm, a memory filesystem, as gunicorn advises for containers.
 CMD exec gunicorn app.api.main:app \
-  --worker-class uvicorn.workers.UvicornWorker \
+  --worker-class uvicorn_worker.UvicornWorker \
   --workers "${WEB_CONCURRENCY:-4}" \
   --timeout 60 \
   --worker-tmp-dir /dev/shm \

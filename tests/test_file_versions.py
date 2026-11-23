@@ -3,13 +3,13 @@ from datetime import timedelta
 import pytest
 from sqlmodel import Session, select
 
-from app.tables import AssociatedFile, FileVersion, IngestionRequest, UploadSession
+from app.tables import AssociatedFile, Dataset, DeletionRequest, FileVersion, IngestionRequest, UploadSession
 from app.services import multipart as service
-from app.services.file_versions import RestoreRefused, restore_latest
+from app.services.file_versions import RestoreRefused, purge_deleted, restore_deleted, restore_latest
 from app.services.storage_cleanup import run_cleanup
 from app.storage import StorageFailure
 from app.utils.deletion_utils import hard_delete_resource
-from tests.test_multipart_lifecycle import CRC, DATA, SHA, change, files, published_file, put, replace, replace_start, row, start
+from tests.test_multipart_lifecycle import BASE, CRC, DATA, SHA, change, files, published_file, put, replace, replace_start, row, start
 import tests.test_multipart_lifecycle as lifecycle
 
 flow = lifecycle.flow
@@ -402,3 +402,99 @@ def test_deleting_a_legacy_file_without_generation_trashes_nothing(flow):
     assert client.delete(f"/files/{file['mfid']}").status_code == 200
     assert versions(engine) == []
     assert run_cleanup(engine, storage, service.now() + timedelta(days=15)).deleted_versions == 0
+
+
+def snapshot(engine):
+    return sorted((file.mfid, file.filename, file.storage_path) for file in files(engine)), [(version.id, version.restored_at, version.delete_after) for version in versions(engine)]
+
+
+def test_restoring_a_deleted_file_brings_it_back_with_the_same_mfid(flow):
+    _, engine, storage = flow
+    file = deleted(flow)
+    restored = restore_deleted(engine, storage, "ds", file["mfid"], service.now())
+    assert restored.mfid == file["mfid"]
+    after = stored_file(engine, file["mfid"])
+    assert (after.filename, after.storage_path, after.storage_generation, after.size, after.sha256_hash, after.storage_crc32c, after.sha256_verified_at) == ("data.bin", file["storage_path"], "7", len(DATA), SHA, CRC, None)
+    assert versions(engine)[0].restored_at is not None
+    assert run_cleanup(engine, storage, service.now() + timedelta(days=15)).deleted_versions == 0
+
+
+def ingestion_requests(engine):
+    with Session(engine) as session:
+        return [row.model_dump() for row in session.exec(select(IngestionRequest).order_by(IngestionRequest.id)).all()]
+
+
+def test_restoring_a_deleted_file_brings_back_its_ingestion_requests(flow):
+    client, engine, storage = flow
+    other = published_file(flow, "other.bin")
+    unrelated = ingestion_request(engine, other["mfid"])
+    file = published_file(flow)
+    request = ingestion_request(engine, file["mfid"], ingestion_githash="abc")
+    assert client.delete(f"/files/{file['mfid']}").status_code == 200
+    restore_deleted(engine, storage, "ds", file["mfid"], service.now())
+    assert ingestion_requests(engine) == [unrelated, request]
+
+
+def test_a_restored_ingestion_request_whose_id_was_reused_gets_a_new_one(flow):
+    client, engine, storage = flow
+    file = published_file(flow)
+    request = ingestion_request(engine, file["mfid"], ingestion_githash="abc")
+    other = published_file(flow, "other.bin")
+    assert client.delete(f"/files/{file['mfid']}").status_code == 200
+    with Session(engine) as session:
+        session.add(IngestionRequest(id=request["id"], dataset_mfid="ds", file_mfid=other["mfid"], status="requested"))
+        session.commit()
+    restore_deleted(engine, storage, "ds", file["mfid"], service.now())
+    [kept, restored] = ingestion_requests(engine)
+    assert (kept["id"], kept["file_mfid"]) == (request["id"], other["mfid"])
+    assert restored["id"] != request["id"]
+    assert {**restored, "id": request["id"]} == request
+
+
+@pytest.mark.parametrize("situation, code", [
+    ("name_taken", "filename_exists"), ("name_reserved", "filename_reserved"), ("expired", "version_expired"), ("purged", "version_expired"),
+    ("object_gone", "version_missing_in_storage"), ("pending_deletion", "dataset_pending_deletion"), ("never_deleted", "not_in_trash"),
+])
+def test_restore_of_a_deleted_file_refuses(flow, situation, code):
+    _, engine, storage = flow
+    when = service.now()
+    if situation == "never_deleted":
+        mfid = published_file(flow)["mfid"]
+    else:
+        file = deleted(flow)
+        mfid = file["mfid"]
+    if situation == "name_taken":
+        with Session(engine) as session:
+            dataset_id = session.exec(select(Dataset.id)).one()
+            session.add(AssociatedFile(dataset_id=dataset_id, filename="data.bin", storage_path="dedicated/ds/other", size=1, sha256_hash="b" * 64))
+            session.commit()
+    elif situation == "name_reserved":
+        response = flow[0].post(BASE + "/initiate", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA}, headers={"Idempotency-Key": "again"})
+        assert response.status_code == 200, response.text
+    elif situation == "expired":
+        when = when + timedelta(days=15)
+    elif situation == "purged":
+        with Session(engine) as session:
+            purge_deleted(session, "ds", mfid, when)
+            session.commit()
+    elif situation == "object_gone":
+        storage.objects.pop(file["storage_path"].partition("/")[2])
+    elif situation == "pending_deletion":
+        with Session(engine) as session:
+            session.add(DeletionRequest(resource_id="ds", resource_type="dataset", requester_id="owner", status="pending"))
+            session.commit()
+    before = snapshot(engine)
+    with pytest.raises(RestoreRefused) as refused:
+        restore_deleted(engine, storage, "ds", mfid, when)
+    assert refused.value.code == code
+    assert snapshot(engine) == before
+
+
+def test_purging_a_deleted_file_lets_cleanup_remove_it_now(flow):
+    _, engine, storage = flow
+    file = deleted(flow)
+    with Session(engine) as session:
+        purge_deleted(session, "ds", file["mfid"], service.now())
+        session.commit()
+    assert run_cleanup(engine, storage, service.now() + timedelta(seconds=1)).deleted_versions == 1
+    assert storage.deleted == [(file["storage_path"].partition("/")[2], "7")]

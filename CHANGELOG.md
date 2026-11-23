@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Breaking changes
 
+- Needs migration `10316c999378`, which adds `filename` and `ingestion_requests` to `file_versions`.
+- On Google Cloud Storage, replaced content is kept in `file_versions` and removed by `storage cleanup`, as on S3, instead of being marked with `customTime` for a bucket lifecycle rule; `files restore` now works there. Schedule `python -m app.cli storage cleanup` with `STORAGE_CLEANUP_ENABLED=true`, or replaced and deleted content is kept indefinitely. The bucket's `daysSinceCustomTime` rule can be dropped once objects marked before the upgrade are gone.
 - Needs migration `b0e044b67c87`: API keys still held only in plain text are copied into the hashed key table, and the plain-text `apitoken` table is dropped; a rollback to 3.3.1 then has no API keys.
 - API key items no longer have `older_routes`.
 - The routes deprecated in 4.0.0 are removed, except `POST /users/resolve`: `GET /account/join_requests`, `POST /access_groups/{group_name}/join`, `GET /users/{user_ref}/apikey/verify`, the four postprocessing aliases, `GET` and `POST /resources/{mfid}/access_groups`, and `POST` and `DELETE /users/{user_ref}/access_groups/{group_name}`.
@@ -24,9 +26,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 
 - Release images are published to `ghcr.io/molecularfoundrycrucible/crucible-api` for amd64 and arm64.
+- Deleting a file or hard-deleting a dataset keeps the stored content, with the file's ingestion requests, for `FILE_VERSION_RETENTION_DAYS` before `storage cleanup` removes it. Dataset admins list, restore and purge deleted files with `GET /datasets/{dataset_mfid}/deleted_files`, `POST /datasets/{dataset_mfid}/deleted_files/{file_mfid}/restore` and `DELETE /datasets/{dataset_mfid}/deleted_files/{file_mfid}`.
 
 ### Changed
 
+- `DELETE /files/{file_id}` returns 409 `replace_in_progress` with the `upload_id` while a replacement of the file is in progress.
 - New MFIDs follow the final UUIDv7 standard (mfid 2.0), so they sort before MFIDs created earlier; MFIDs are tie-breakers only, never a creation order.
 - The sign-in code page names the program the code is for and has a Copy button.
 - The Compose bundle serves the API at `/api/v4`, and everything under `/api/v3` answers 308 to it; an existing installation registers the new ORCID callback and points the Hub at `/api/v4` (`compose/docs/operations.md` in crucible-selfhost).

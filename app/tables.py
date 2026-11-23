@@ -768,12 +768,12 @@ class PostprocessingRun(SQLModel, table=True):
     request_fingerprint: Optional[str] = Field(default=None, max_length=64)
 
 
-FILE_VERSION_REASONS = ("replaced",)
+FILE_VERSION_REASONS = ("replaced", "deleted")
 FILE_VERSION_WAITING = "deleted_at IS NULL AND restored_at IS NULL"
 
 
 class FileVersion(SQLModel, table=True):
-    """Content a file had before it was replaced: kept for FILE_VERSION_RETENTION_DAYS so it can be
+    """Content a file had before it was replaced or deleted: kept for FILE_VERSION_RETENTION_DAYS so it can be
     restored, then deleted from storage by `python -m app.cli storage cleanup`. Written in the same
     transaction that repoints the file, so no replaced object is forgotten. No foreign key to the
     file: a version outlives its file."""
@@ -798,6 +798,8 @@ class FileVersion(SQLModel, table=True):
     restored_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     attempts: int = Field(default=0, sa_column=Column(Integer(), nullable=False, server_default="0"))
     failure_code: Optional[str] = None
+    filename: Optional[str] = None
+    ingestion_requests: Optional[list[dict[str, Any]]] = Field(default=None, sa_column=Column(JSON().with_variant(JSONB(), "postgresql")))
 
 
 class UploadSession(SQLModel, table=True):

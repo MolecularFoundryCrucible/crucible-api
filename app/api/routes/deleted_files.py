@@ -12,7 +12,7 @@ from app.models.response_schemas import MessageResponse
 from app.services.file_versions import RestoreRefused, deleted_versions, purge_deleted, restore_deleted
 from app.services.multipart import now
 from app.storage import get_store
-from app.tables import Dataset
+from app.tables import Dataset, FileVersion
 from app.utils.auth_utils import authorize_user, require_permission
 from app.utils.permissions import Permission, Principal
 from app.utils.sql_utils import assert_not_pending_deletion
@@ -49,10 +49,10 @@ def list_deleted_files(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    '''Deleted files of the dataset whose content is still kept, newest first. Requires admin on the dataset.'''
+    '''Deleted files of the dataset that can still be restored, newest first. Requires admin on the dataset.'''
     with Session(get_engine()) as session:
         _require_dataset_admin(session, auth_res, dsid)
-        query = deleted_versions(dsid)
+        query = deleted_versions(dsid).where(FileVersion.delete_after > now())
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         items = [
             DeletedFileRead(file_mfid=version.file_mfid, dataset_mfid=version.dataset_mfid, filename=version.filename, size=version.size, sha256_hash=version.sha256_hash, deleted_at=version.created_at, restorable_until=version.delete_after)

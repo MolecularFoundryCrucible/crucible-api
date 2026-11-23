@@ -175,6 +175,10 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
         require_permission(session, auth_res, ds.unique_id, Permission.DELETE)
         assert_not_pending_deletion(session, ds.unique_id)
+        # Locked and read again: a replace completing meanwhile repoints the file, and its new object must be trashed.
+        af = session.exec(select(AssociatedFile).where(AssociatedFile.id == af.id).with_for_update().execution_options(populate_existing=True)).one_or_none()
+        if af is None:
+            raise HTTPException(status_code=404, detail="File not found")
         replacing = session.exec(select(UploadSession.upload_id).where(UploadSession.replace_file_mfid == af.mfid, *live())).first()
         if replacing is not None:
             raise HTTPException(status_code=409, detail={"code": "replace_in_progress", "upload_id": replacing, "message": "A replacement of this file is in progress; abort it first"})

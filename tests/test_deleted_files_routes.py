@@ -65,3 +65,9 @@ def test_restore_errors_carry_a_code(trash):
     unknown = client.post(f"{TRASH}/no-such-file/restore")
     assert (unknown.status_code, unknown.json()["detail"]["code"]) == (404, "not_in_trash")
     assert client.get("/datasets/no-such-dataset/deleted_files").status_code == 404
+
+
+def test_a_purged_file_is_no_longer_listed(trash):
+    (client, _, _), file = trash
+    assert client.delete(f"{TRASH}/{file['mfid']}").status_code == 200
+    assert client.get(TRASH).json() == {"total": 0, "limit": 100, "offset": 0, "items": [], "next_cursor": None}

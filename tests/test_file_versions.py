@@ -498,3 +498,19 @@ def test_purging_a_deleted_file_lets_cleanup_remove_it_now(flow):
         session.commit()
     assert run_cleanup(engine, storage, service.now() + timedelta(seconds=1)).deleted_versions == 1
     assert storage.deleted == [(file["storage_path"].partition("/")[2], "7")]
+
+
+def test_a_replace_completed_while_the_file_is_being_deleted_is_trashed_too(flow, monkeypatch):
+    import app.api.routes.files as file_routes
+    client, engine, _ = flow
+    file = published_file(flow)
+    identifier = replace_start(flow, file["mfid"]).json()["upload_id"]
+    put(flow, identifier)
+    checked = file_routes.require_permission
+    def completes_the_replace_first(*args, **kwargs):
+        monkeypatch.setattr(file_routes, "require_permission", checked)
+        assert lifecycle.complete(flow, identifier).status_code == 200
+        return checked(*args, **kwargs)
+    monkeypatch.setattr(file_routes, "require_permission", completes_the_replace_first)
+    assert client.delete(f"/files/{file['mfid']}").status_code == 200
+    assert sorted((version.reason, version.storage_path) for version in versions(engine)) == [("deleted", f"dedicated/ds/_files/{identifier}"), ("replaced", file["storage_path"])]

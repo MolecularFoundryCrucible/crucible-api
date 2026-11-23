@@ -1,7 +1,6 @@
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -10,7 +9,7 @@ from app.models.ingestion import IngestionRequestRead, IngestionRequestUpdate
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
-from app.utils.sql_utils import deletion_filter_for, only_update, select_active, select_readable, select_readable_file
+from app.utils.sql_utils import deletion_filter_for, offset_page, only_update, select_active, select_readable, select_readable_file
 
 router = APIRouter(tags=["ingestion_requests"])
 
@@ -69,10 +68,7 @@ def list_ingestion_requests(
                 raise HTTPException(status_code=404, detail="Dataset not found")
             query = query.where(IngestionRequest.dataset_mfid == dataset_mfid)
 
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        items = session.exec(
-            query.order_by(IngestionRequest.id.desc()).offset(offset).limit(limit)
-        ).all()
+        total, items = offset_page(session, query.order_by(IngestionRequest.id.desc()), limit, offset)
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 

@@ -8,7 +8,7 @@ from app.tables import AccessGroup, AssociatedFile, Dataset, DatasetKeywordLink,
 
 logger = logging.getLogger(__name__)
 from fastapi import HTTPException
-from sqlalchemy import join
+from sqlalchemy import func, join
 from sqlmodel import create_engine, select
 # Need a .env file with the following variables
 #DB_PASSWORD
@@ -94,6 +94,25 @@ def assert_mfid_available(session, mfid: str, resource_type: str) -> None:
     raise HTTPException(status_code=409,
                         detail=f"'{mfid}' is already in use by a {existing.resource_type}.")
 
+
+
+def dataset_or_404(session, mfid: str) -> Dataset:
+    """The dataset with this MFID, or 404 "Dataset not found"."""
+    dataset = session.exec(select(Dataset).where(Dataset.unique_id == mfid)).one_or_none()
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return dataset
+
+
+def file_named(session, dataset_id: int, filename: str) -> AssociatedFile | None:
+    """The dataset's file with this filename, if any."""
+    return session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == dataset_id, AssociatedFile.filename == filename)).first()
+
+
+def offset_page(session, query, limit: int, offset: int) -> tuple[int, list]:
+    """The total number of rows the query matches, and the rows of one offset page."""
+    total = session.exec(select(func.count()).select_from(query.subquery())).one()
+    return total, session.exec(query.offset(offset).limit(limit)).all()
 
 
 def touch_resource_modification_time(session, mfid):

@@ -4,9 +4,9 @@ from datetime import timedelta, timezone
 from sqlmodel import Session, select
 
 from app.config import get_settings
-from app.tables import AssociatedFile, Dataset, FileVersion, IngestionRequest, UploadSession
+from app.tables import AssociatedFile, Dataset, FileVersion, IngestionRequest
 from app.services.storage_downloads import owned_object
-from app.utils.sql_utils import get_active_deletion_request, touch_resource_modification_time
+from app.utils.sql_utils import file_named, get_active_deletion_request, touch_resource_modification_time
 
 
 class RestoreRefused(Exception):
@@ -70,7 +70,7 @@ class Restored:
 def restore_latest(engine, store, file_mfid: str, when) -> Restored:
     """Make the file's newest kept version current again; the content it replaces becomes a version
     in turn, so a restore can itself be undone."""
-    from app.services.multipart import live
+    from app.services.multipart import replace_in_progress
 
     with Session(engine) as session:
         file = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file_mfid).with_for_update()).one_or_none()
@@ -79,22 +79,14 @@ def restore_latest(engine, store, file_mfid: str, when) -> Restored:
         dataset_mfid = session.exec(select(Dataset.unique_id).where(Dataset.id == file.dataset_id)).one()
         if get_active_deletion_request(session, dataset_mfid) is not None:
             raise RestoreRefused("dataset_pending_deletion")
-        if session.exec(select(UploadSession.id).where(UploadSession.replace_file_mfid == file_mfid, *live())).first() is not None:
+        if replace_in_progress(session, file_mfid) is not None:
             raise RestoreRefused("replace_in_progress")
         version = session.exec(
             select(FileVersion).where(FileVersion.file_mfid == file_mfid, *waiting()).order_by(FileVersion.created_at.desc(), FileVersion.id.desc()).with_for_update()
         ).first()
         if version is None:
             raise RestoreRefused("no_kept_version")
-        # A version past its grace period may be deleted at any moment; never fall back to an older one.
-        if utc(version.delete_after) <= when:
-            raise RestoreRefused("version_expired")
-        bucket, _, key = version.storage_path.partition("/")
-        stored = store.head(bucket, key)
-        if stored is None:
-            raise RestoreRefused("version_missing_in_storage")
-        if stored.size != version.size:
-            raise RestoreRefused("version_size_mismatch")
+        _check_restorable(store, version, when)
         replaced = keep_version(session, file, dataset_mfid, when)
         file.storage_path = version.storage_path
         file.storage_generation = version.storage_generation
@@ -109,6 +101,19 @@ def restore_latest(engine, store, file_mfid: str, when) -> Restored:
         result = Restored(file_mfid=file.mfid, storage_path=file.storage_path, version_id=version.id, replaced_version_id=replaced.id if replaced else None)
         session.commit()
         return result
+
+
+def _check_restorable(store, version, when) -> None:
+    """Refuse a version past its grace period, which cleanup may delete at any moment (an older one is
+    never used instead), or one whose stored object is gone or changed."""
+    if utc(version.delete_after) <= when:
+        raise RestoreRefused("version_expired")
+    bucket, _, key = version.storage_path.partition("/")
+    stored = store.head(bucket, key)
+    if stored is None:
+        raise RestoreRefused("version_missing_in_storage")
+    if stored.size != version.size:
+        raise RestoreRefused("version_size_mismatch")
 
 
 def deleted_versions(dataset_mfid: str):
@@ -129,23 +134,16 @@ def restore_deleted(engine, store, dataset_mfid: str, file_mfid: str, when) -> A
 
     with Session(engine) as session:
         version = _deleted_version(session, dataset_mfid, file_mfid)
-        if utc(version.delete_after) <= when:
-            raise RestoreRefused("version_expired")
+        _check_restorable(store, version, when)
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == dataset_mfid).with_for_update()).one_or_none()
         if dataset is None:
             raise RestoreRefused("not_in_trash")
         if get_active_deletion_request(session, dataset_mfid) is not None:
             raise RestoreRefused("dataset_pending_deletion")
-        if session.exec(select(AssociatedFile.id).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == version.filename)).first() is not None:
+        if file_named(session, dataset.id, version.filename) is not None:
             raise RestoreRefused("filename_exists")
         if filename_reserved(session, dataset_mfid, version.filename):
             raise RestoreRefused("filename_reserved")
-        bucket, _, key = version.storage_path.partition("/")
-        stored = store.head(bucket, key)
-        if stored is None:
-            raise RestoreRefused("version_missing_in_storage")
-        if stored.size != version.size:
-            raise RestoreRefused("version_size_mismatch")
         file = AssociatedFile(
             mfid=version.file_mfid, dataset_id=dataset.id, filename=version.filename, storage_path=version.storage_path,
             storage_generation=version.storage_generation, size=version.size, sha256_hash=version.sha256_hash, storage_crc32c=version.storage_crc32c,

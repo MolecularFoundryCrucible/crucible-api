@@ -19,7 +19,7 @@ from app.services.file_versions import keep_version
 from app.services.storage_downloads import multipart_prefix
 from app.utils.auth_utils import caller_row, is_caller, load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
-from app.utils.sql_utils import assert_not_pending_deletion, get_active_deletion_request, touch_resource_modification_time
+from app.utils.sql_utils import assert_not_pending_deletion, file_named, get_active_deletion_request, touch_resource_modification_time
 
 PROTOCOL = "gcs_xml_v1"
 MIB = 1024 ** 2
@@ -63,6 +63,11 @@ def authorize(session, principal, dsid):
 
 def live():
     return UploadSession.protocol == PROTOCOL, UploadSession.state.notin_(TERMINAL), UploadSession.expires_at > now()
+
+
+def replace_in_progress(session, file_mfid):
+    """The live upload session replacing this file, if any."""
+    return session.exec(select(UploadSession).where(UploadSession.replace_file_mfid == file_mfid, *live())).first()
 
 
 def owned(session, dsid, upload_id, principal, *, lock=False, check_access=True):
@@ -179,7 +184,7 @@ def reserve(engine, principal, dsid, body, key, config):
             previous = idempotent(session, principal, dsid, key, fingerprint)
             if previous is not None:
                 return previous
-        existing_name = session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == body.filename)).first()
+        existing_name = file_named(session, dataset.id, body.filename)
         if existing_name is not None and body.sha256_hash and existing_name.sha256_hash == body.sha256_hash and existing_name.size == body.size and existing_name.sha256_verified_at is not None:
             require_permission(session, demoted(session, principal), dsid, Permission.READ)
             return MultipartStatus(state="completed", existing_file=AssociatedFileRead.model_validate(existing_name, update={"dataset_mfid": dsid}))
@@ -262,7 +267,7 @@ def reserve_replace(engine, principal, file_mfid, body, key, if_match, config, b
             except HTTPException:
                 pass
         base_etag = file_etag(file.storage_path, file.storage_generation, file.sha256_hash, file.size)
-        running = session.exec(select(UploadSession).where(UploadSession.replace_file_mfid == file_mfid, *live())).first()
+        running = replace_in_progress(session, file_mfid)
         if running is not None:
             if backfilled:
                 session.commit()
@@ -440,7 +445,7 @@ def complete(engine, storage, principal, dsid, body):
                         code = None if file is not None and file.storage_backend == "gcs" and file_etag(file.storage_path, file.storage_generation, file.sha256_hash, file.size) == current.replace_base_etag else "file_changed"
                 else:
                     authorize(session, principal, dsid)
-                    conflict = session.exec(select(AssociatedFile.id).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == current.associated_file_name)).first()
+                    conflict = file_named(session, dataset.id, current.associated_file_name)
                     code = "filename_conflict" if conflict is not None else None
                 if code is None:
                     touch_resource_modification_time(session, dsid)

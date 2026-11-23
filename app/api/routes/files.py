@@ -5,7 +5,6 @@ from typing import Annotated, Literal, Optional
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
@@ -14,12 +13,11 @@ from app.tables import (
     AssociatedFile,
     Dataset,
     IngestionRequest,
-    UploadSession,
 )
 from app.config import get_secret, get_settings, require_feature
 from app.general_utils import get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
-from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_readable_file, touch_resource_modification_time
+from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, file_named, offset_page, select_readable_file, touch_resource_modification_time
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.multipart import checked_filename
 from app.models.ingestion import INGESTION_CLASS_PATTERN, IngestionRequestRead
@@ -28,7 +26,7 @@ from app.models.response_schemas import DownloadLinkRead, MessageResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
 from app.services.file_versions import trash_file
-from app.services.multipart import live, now
+from app.services.multipart import now, replace_in_progress
 from app.services.storage_downloads import StorageLocationError, resolve_storage_object
 
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
@@ -65,10 +63,7 @@ def list_files(
         )
         if sha256_hash is not None:
             base_query = base_query.where(AssociatedFile.sha256_hash == sha256_hash)
-        total = session.exec(
-            select(func.count()).select_from(base_query.subquery())
-        ).one()
-        results = session.exec(base_query.offset(offset).limit(limit)).all()
+        total, results = offset_page(session, base_query, limit, offset)
         items = [AssociatedFileRead.model_validate(af, update={"dataset_mfid": af.dataset.unique_id}) for af in results]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
@@ -136,9 +131,9 @@ def update_file(
                 checked_filename(changed["filename"])
             except ValueError as error:
                 raise HTTPException(status_code=422, detail=str(error)) from None
-            taken = session.exec(select(AssociatedFile.mfid).where(AssociatedFile.dataset_id == af.dataset_id, AssociatedFile.filename == changed["filename"])).first()
+            taken = file_named(session, af.dataset_id, changed["filename"])
             if taken is not None:
-                raise HTTPException(status_code=409, detail={"code": "filename_exists", "file_mfid": taken, "message": "Filename already exists"})
+                raise HTTPException(status_code=409, detail={"code": "filename_exists", "file_mfid": taken.mfid, "message": "Filename already exists"})
         if af.storage_generation is not None:
             target_backend = changed.get("storage_backend", af.storage_backend)
             target_path = changed.get("storage_path", af.storage_path)
@@ -179,9 +174,9 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
         af = session.exec(select(AssociatedFile).where(AssociatedFile.id == af.id).with_for_update().execution_options(populate_existing=True)).one_or_none()
         if af is None:
             raise HTTPException(status_code=404, detail="File not found")
-        replacing = session.exec(select(UploadSession.upload_id).where(UploadSession.replace_file_mfid == af.mfid, *live())).first()
+        replacing = replace_in_progress(session, af.mfid)
         if replacing is not None:
-            raise HTTPException(status_code=409, detail={"code": "replace_in_progress", "upload_id": replacing, "message": "A replacement of this file is in progress; abort it first"})
+            raise HTTPException(status_code=409, detail={"code": "replace_in_progress", "upload_id": replacing.upload_id, "message": "A replacement of this file is in progress; abort it first"})
         trash_file(session, af, ds.unique_id, now())
 
         for ir in session.exec(

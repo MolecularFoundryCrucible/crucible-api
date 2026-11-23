@@ -1,8 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.api.dependencies import get_engine
 from app.api.path_params import DatasetMfid
@@ -12,10 +11,10 @@ from app.models.response_schemas import MessageResponse
 from app.services.file_versions import RestoreRefused, deleted_versions, purge_deleted, restore_deleted
 from app.services.multipart import now
 from app.storage import get_store
-from app.tables import Dataset, FileVersion
+from app.tables import FileVersion
 from app.utils.auth_utils import authorize_user, require_permission
 from app.utils.permissions import Permission, Principal
-from app.utils.sql_utils import assert_not_pending_deletion
+from app.utils.sql_utils import assert_not_pending_deletion, dataset_or_404, offset_page
 
 router = APIRouter(tags=["files"])
 
@@ -37,8 +36,7 @@ def _refused(error: RestoreRefused) -> HTTPException:
 
 
 def _require_dataset_admin(session, principal, dsid):
-    if session.exec(select(Dataset.id).where(Dataset.unique_id == dsid)).first() is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset_or_404(session, dsid)
     require_permission(session, principal, dsid, Permission.DELETE)
 
 
@@ -52,11 +50,10 @@ def list_deleted_files(
     '''Deleted files of the dataset that can still be restored, newest first. Requires admin on the dataset.'''
     with Session(get_engine()) as session:
         _require_dataset_admin(session, auth_res, dsid)
-        query = deleted_versions(dsid).where(FileVersion.delete_after > now())
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
+        total, rows = offset_page(session, deleted_versions(dsid).where(FileVersion.delete_after > now()), limit, offset)
         items = [
             DeletedFileRead(file_mfid=version.file_mfid, dataset_mfid=version.dataset_mfid, filename=version.filename, size=version.size, sha256_hash=version.sha256_hash, deleted_at=version.created_at, restorable_until=version.delete_after)
-            for version in session.exec(query.offset(offset).limit(limit)).all()
+            for version in rows
         ]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 

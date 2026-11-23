@@ -42,7 +42,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import is_public, public_grant_exists, record_resource, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
+from app.utils.sql_utils import is_public, public_grant_exists, record_resource, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public, offset_page
 
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.models.query_params import requested_owners
@@ -675,8 +675,7 @@ def list_parent_samples(child_sample_id: ChildSampleMfid, auth_res: Annotated[Pr
         )
         if relationship_type is not None:
             query = query.where(SampleLink.relationship_type == relationship_type)
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        rows = session.exec(query.offset(offset).limit(limit)).all()
+        total, rows = offset_page(session, query, limit, offset)
         items = sample_responses(session, auth_res, rows, include_owner)
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
@@ -708,8 +707,7 @@ def list_child_samples(parent_sample_id: ParentSampleMfid, auth_res: Annotated[P
         )
         if relationship_type is not None:
             query = query.where(SampleLink.relationship_type == relationship_type)
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        rows = session.exec(query.offset(offset).limit(limit)).all()
+        total, rows = offset_page(session, query, limit, offset)
         items = sample_responses(session, auth_res, rows, include_owner)
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 

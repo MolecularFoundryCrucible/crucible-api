@@ -45,8 +45,6 @@ class S3Store:
     S3_PUBLIC_URL, the address clients reach the store on. Keys are never overwritten, so versions
     are informational: the VersionId when the bucket keeps versions, else the ETag."""
 
-    retires_by_lifecycle = False
-
     def __init__(self, settings):
         if not settings.s3_endpoint_url:
             raise StorageFailure("storage_not_configured")
@@ -135,9 +133,6 @@ class S3Store:
             params["ResponseContentType"] = content_type
         with failures("signing_failed"):
             return self.presigner.generate_presigned_url("get_object", Params=params, ExpiresIn=int(expires_in.total_seconds()))
-
-    def retire(self, bucket, key, version, retired_at):
-        return False
 
     def put_bytes(self, bucket, key, data, content_type):
         with failures():

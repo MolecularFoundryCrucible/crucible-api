@@ -116,7 +116,7 @@ The credential is read from `CRUCIBLE_API_TOKEN` (`--token-env` names another va
 | `MULTIPART_DATASET_BYTES` | 4 TiB reserved per dataset |
 | `MULTIPART_SIGNING_INTERVAL_SECONDS` | 5 seconds per session |
 | `STORAGE_CLEANUP_ENABLED` | `false`; enables `storage cleanup` (below) |
-| `FILE_VERSION_RETENTION_DAYS` | 14; on `s3`, how long replaced content is kept (see [File replacement](file_replacement.md)) |
+| `FILE_VERSION_RETENTION_DAYS` | 14; how long replaced and deleted content is kept before `storage cleanup` removes it (see [File replacement](file_replacement.md)) |
 
 ## Google Cloud Storage
 
@@ -124,7 +124,6 @@ The server's identity is Application Default Credentials: an attached service ac
 
 The upload bucket needs:
 
-- A lifecycle rule `{"action": {"type": "Delete"}, "condition": {"daysSinceCustomTime": N}}`, where N is the grace period for replaced content ([File replacement](file_replacement.md)). The Molecular Foundry uses 7 days; the Docker Compose bundle documents 14.
 - A lifecycle rule that aborts incomplete multipart uploads, with an age beyond the seven-day session lifetime. Where `storage cleanup` is not enabled, it is the only cleanup for sessions abandoned without an abort request.
 - A CORS rule for browser clients: their origins, `PUT`, the returned request headers (`content-type`, `x-goog-hash`), and `ETag` exposed.
 
@@ -144,6 +143,6 @@ Signed URLs embed `S3_PUBLIC_URL`: a client that reaches the store by another ad
 
 `python -m app.cli storage check` uploads a two-part file under `_crucible-check/` with the configured store, checks that the store refuses a part whose bytes do not match the signed checksum, completes the upload, downloads it through a signed URL, and deletes it. `--public` signs for `S3_PUBLIC_URL`, `--keep` leaves the test file, and `--size-mib` sets the first part's size. CI runs it against SeaweedFS and Versity S3 Gateway.
 
-`python -m app.cli storage cleanup` aborts sessions that expired or whose cleanup failed, and on `s3` deletes replaced content past its retention period. Run it hourly; it does nothing unless `STORAGE_CLEANUP_ENABLED=true` (the bundle sets it), except with `--dry-run`. `--batch` caps the sessions and versions handled per run (default 500).
+`python -m app.cli storage cleanup` aborts sessions that expired or whose cleanup failed, and deletes replaced and deleted content past its retention period. Run it hourly; it does nothing unless `STORAGE_CLEANUP_ENABLED=true` (the bundle sets it), except with `--dry-run`. `--batch` caps the sessions and versions handled per run (default 500).
 
 Failed verification and abort requests clean up immediately; when storage is unavailable during that cleanup, `storage cleanup` or the bucket's lifecycle rule removes the remains. Session records are retained: inspect `state`, `failure_code` and `cleaned_at`. On Google Cloud Storage, object holds and retention policies can prevent deletion and require operator intervention.

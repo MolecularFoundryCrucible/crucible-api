@@ -89,7 +89,7 @@ from app.utils.search_utils import (
 )
 from app.models.query_params import requested_owners
 from app.utils.user_utils import owned_by_any, owner_fields, owner_unique_id, owners_of, resolve_create_owner
-from app.utils.sql_utils import record_resource, is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
+from app.utils.sql_utils import record_resource, is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for, dataset_or_404, file_named, offset_page
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 
@@ -254,9 +254,7 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
     user_unique_id = auth_res.user_id
 
     with Session(get_engine()) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
+        ds = dataset_or_404(session, dsid)
 
         require_permission(session, auth_res, dsid, Permission.EDIT)
 
@@ -340,9 +338,7 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
     user_unique_id = auth_res.user_id
 
     with Session(get_engine()) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
+        ds = dataset_or_404(session, dsid)
 
         require_permission(session, auth_res, dsid, Permission.MANAGE_ACL)
 
@@ -911,8 +907,7 @@ def list_parent_datasets(child_dataset_id: ChildDatasetMfid, auth_res: Annotated
         )
         if relationship_type is not None:
             query = query.where(DatasetLink.relationship_type == relationship_type)
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        parents = session.exec(query.offset(offset).limit(limit)).all()
+        total, parents = offset_page(session, query, limit, offset)
         items = dataset_responses(session, auth_res, parents, include_owner)
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
@@ -947,8 +942,7 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
         )
         if relationship_type is not None:
             query = query.where(DatasetLink.relationship_type == relationship_type)
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        children = session.exec(query.offset(offset).limit(limit)).all()
+        total, children = offset_page(session, query, limit, offset)
         items = dataset_responses(session, auth_res, children, include_owner)
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
@@ -957,9 +951,7 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
 def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, sample_id: SampleMfid):
 
     with Session(get_engine()) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
+        ds = dataset_or_404(session, dsid)
         samp = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
         if samp is None:
             raise HTTPException(status_code=404, detail="Sample not found")
@@ -1236,9 +1228,7 @@ def generate_dataset_download_links(
     '''
 
     with Session(get_engine()) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
+        ds = dataset_or_404(session, dsid)
         require_permission(session, auth_res, dsid, Permission.READ)
 
         af_records = session.exec(
@@ -1279,9 +1269,7 @@ def read_associated_files(auth_res: Annotated[Principal, Depends(authorize_user)
     '''
 
     with Session(get_engine()) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
+        ds = dataset_or_404(session, dsid)
         require_permission(session, auth_res, dsid, Permission.READ)
 
         files = session.exec(
@@ -1307,21 +1295,14 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
     '''
 
     with Session(get_engine()) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
+        ds = dataset_or_404(session, dsid)
         require_permission(session, auth_res, dsid, Permission.CREATE)
         assert_not_pending_deletion(session, dsid)
 
         dataset_pk = ds.id
 
         def same_name():
-            return session.exec(
-                select(AssociatedFile).where(
-                    AssociatedFile.dataset_id == dataset_pk,
-                    AssociatedFile.filename == associated_file.filename,
-                )
-            ).first()
+            return file_named(session, dataset_pk, associated_file.filename)
 
         def retry_or_conflict(existing):
             if all(getattr(existing, field) == getattr(associated_file, field) for field in ("sha256_hash", "size", "storage_backend")):
@@ -1431,9 +1412,7 @@ def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)],
     '''
 
     with Session(get_engine()) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
+        ds = dataset_or_404(session, dsid)
         samp = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
         if samp is None:
             raise HTTPException(status_code=404, detail="Sample not found")

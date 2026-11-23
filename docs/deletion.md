@@ -82,7 +82,19 @@ Owners of other records keep their own grants.
 
 ## Stored objects
 
-At the moment, deletion does not delete stored files: file objects remain in the bucket after their records are removed. A multipart upload completed after its dataset was deleted returns 409 `dataset_deleted`, and its assembled object is removed. The `python -m app.cli storage cleanup` command, run automatically when `STORAGE_CLEANUP_ENABLED=true`, removes only abandoned uploads and replaced file versions past their retention period.
+Deleting a file (`DELETE /files/{file_id}`) or hard-deleting a dataset keeps each stored object in `file_versions` for `FILE_VERSION_RETENTION_DAYS` (default 14), with the file's filename and ingestion requests. `python -m app.cli storage cleanup`, which runs only with `STORAGE_CLEANUP_ENABLED=true`, deletes the object after that; without it scheduled, deleted content is kept indefinitely. Objects follow the same rules as [replaced content](file_replacement.md#previous-content): an object without a recorded generation, outside the deployment's own bucket, or still used by another record is never deleted. Deleting a file while a replacement of it is in progress returns 409 `replace_in_progress` with its `upload_id`.
+
+While the content is kept, a dataset admin can manage the dataset's deleted files:
+
+| Route | Effect |
+|---|---|
+| `GET /datasets/{dataset_mfid}/deleted_files` | Lists those that can still be restored, newest first, with `file_mfid`, `filename`, `size`, `sha256_hash`, `deleted_at` and `restorable_until` |
+| `POST /datasets/{dataset_mfid}/deleted_files/{file_mfid}/restore` | Recreates the file with its MFID, filename and content, and its ingestion requests with their IDs (a new ID only where the old one is taken) |
+| `DELETE /datasets/{dataset_mfid}/deleted_files/{file_mfid}` | Ends the grace period now: the file can no longer be restored and the next cleanup deletes its content |
+
+Errors carry `{"detail": {"code": ..., "message": ...}}`: 404 `not_in_trash`, and 409 `version_expired` (the grace period has ended, also after a purge), `filename_exists`, `filename_reserved` (an upload in progress uses the name), `version_missing_in_storage`, `version_size_mismatch` or `pending_deletion`. Files of a hard-deleted dataset cannot be restored through the API; during the grace period an operator can still find the objects in `file_versions`.
+
+A multipart upload completed after its dataset was deleted returns 409 `dataset_deleted`, and its assembled object is removed.
 
 When `RECORD_BUCKET` is set, deleting a project or instrument schedules a best-effort final `record.json` write with operation `delete`, the counts and the removed grants.
 

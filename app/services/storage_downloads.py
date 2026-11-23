@@ -71,7 +71,7 @@ def resolve_storage_object(storage_path, generation, dataset_mfid):
 
 
 def owned_object(storage_path, generation, dataset_mfid):
-    """Whether the API may delete or retire this object: it is in one of this environment's own
+    """Whether the API may delete this object: it is in one of this environment's own
     upload buckets and inside its dataset, by the same rule downloads follow."""
     bucket = (storage_path or "").partition("/")[0]
     try:
@@ -98,9 +98,3 @@ def download_headers(filename, stored_type, disposition="attachment"):
     mode = "attachment" if effective in SCRIPT_CAPABLE_TYPES or effective.endswith("+xml") else "inline"
     return f"{mode}; filename=\"{fallback}\"; filename*=UTF-8''{encoded}", guessed
 
-
-def retire_object(store, storage_path, version, retired_at):
-    if not store.retires_by_lifecycle:
-        return False
-    bucket, _, key = storage_path.partition("/")
-    return store.retire(bucket, key, version, retired_at)

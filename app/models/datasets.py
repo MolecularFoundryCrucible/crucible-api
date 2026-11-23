@@ -318,6 +318,17 @@ class AssociatedFileRead(SQLModel):
         return file_etag(self.storage_path, self.storage_generation, self.sha256_hash, self.size)
 
 
+class DeletedFileRead(SQLModel):
+    '''A deleted file whose content is still kept and can be restored until restorable_until.'''
+    file_mfid: str
+    dataset_mfid: str
+    filename: str
+    size: int
+    sha256_hash: str
+    deleted_at: UtcDatetime
+    restorable_until: UtcDatetime
+
+
 class AssociatedFileUpdate(SQLModel):
     '''Partial update schema for AssociatedFile. Only provided fields are modified.'''
     filename: NonEmptyStr | MISSING = MISSING

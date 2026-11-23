@@ -66,7 +66,7 @@ A download button omits the parameter (the browser saves the file under the reco
 
 For every record, a change to `size`, `sha256_hash`, `storage_path` or `storage_backend` clears `sha256_verified_at` and `storage_crc32c`, and a change to `storage_path` or `storage_backend` clears `storage_generation`. Filename and backend changes are covered in [Remote file records](remote_file_records.md#identity-and-filenames).
 
-`DELETE /files/{file_id}` and dataset hard deletion remove database records only; the stored objects remain.
+`DELETE /files/{file_id}` and dataset hard deletion keep the stored objects for a grace period, then `storage cleanup` deletes them ([Deletion](deletion.md#stored-objects)).
 
 ## Ingestion
 

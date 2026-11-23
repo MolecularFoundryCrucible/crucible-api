@@ -1,6 +1,9 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import delete, exists, func, or_
 from sqlmodel import Session, select
 
+from app.services.file_versions import trash_file
 from app.services.instrument_members import members_group as instrument_members_group
 from app.tables import (
     AccessGroup, AccessGroupJoinRequest, AssociatedFile, Dataset,
@@ -166,6 +169,9 @@ def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Res
     if dataset is None:
         raise RuntimeError(f"Dataset row missing for resource {dataset_unique_id}")
 
+    when = datetime.now(timezone.utc)
+    for file in session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id)).all():
+        trash_file(session, file, dataset_unique_id, when)
     session.execute(delete(IngestionRequest).where(
         or_(
             IngestionRequest.dataset_mfid == dataset_unique_id,

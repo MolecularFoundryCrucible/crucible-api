@@ -20,6 +20,7 @@ from app.auth.api_keys import DEFAULT_KEY_NAME, create_key, key_status, newest_k
 from app.auth.events import AuthEventType, record_event
 from app.utils.auth_utils import authorize_user, caller_row, forget_cached_keys, require_platform_admin, require_recent_authentication, require_recent_session
 from app.utils.permissions import AccessGroupType, PlatformRole, Principal, Role
+from app.utils.sql_utils import offset_page
 from app.utils.user_utils import assert_username_available, resolve_service_account_reference, sql_add_user_to_access_group
 
 router = APIRouter(tags=["service_accounts"])
@@ -68,12 +69,7 @@ def list_service_accounts(
             ))
 
     with Session(get_engine()) as session:
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        users = session.exec(
-            query.order_by(func.lower(User.username), User.unique_id)
-            .offset(offset)
-            .limit(limit)
-        ).all()
+        total, users = offset_page(session, query.order_by(func.lower(User.username), User.unique_id), limit, offset)
     return PaginatedResponse(
         total=total,
         limit=limit,

@@ -131,11 +131,9 @@ def test_record_files_round_trip(store):
     assert store.get_text("records", "ds1/record.json") is None
 
 
-def test_delete_ignores_the_version_and_retire_is_never_done(store):
+def test_delete_ignores_the_version(store):
     store.stub.add_response("delete_object", {}, {"Bucket": BUCKET, "Key": KEY})
     store.delete(BUCKET, KEY, "abc")
-    assert store.retires_by_lifecycle is False
-    assert store.retire(BUCKET, KEY, "abc", datetime.now(timezone.utc)) is False
 
 
 def test_store_without_an_endpoint_is_not_configured():

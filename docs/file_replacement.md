@@ -48,31 +48,13 @@ A file in the older layout (`{dataset_mfid}/{filename}`, no generation) moves to
 
 ## Previous content
 
-Replaced content is never overwritten. It is retained for a grace period and then deleted, by a mechanism that depends on the backend:
+Replaced content is never overwritten. On every backend, the previous object is recorded as a row in `file_versions`, in the transaction that repoints the record, and kept for `FILE_VERSION_RETENTION_DAYS` (default 14). `python -m app.cli storage cleanup` then deletes it ([Uploads](uploads.md#operations)); without that command scheduled, replaced content is kept indefinitely.
 
-| | `STORAGE_BACKEND=gcs` | `STORAGE_BACKEND=s3` |
-|---|---|---|
-| Retention | The object's `customTime` is set to the completion time, after the commit | A row in `file_versions`, written in the transaction that repoints the record |
-| Grace period | The bucket's `daysSinceCustomTime` lifecycle rule ([Uploads](uploads.md#google-cloud-storage)) | `FILE_VERSION_RETENTION_DAYS` (default 14) |
-| Deletion | The lifecycle rule | `python -m app.cli storage cleanup` |
-| Restore | Not provided by the API | `python -m app.cli files restore FILE_MFID` |
+A version is recorded when the previous object satisfies the [location rule](storage_downloads.md#location-rule) in `UPLOAD_BUCKET` or `MULTIPART_UPLOAD_BUCKET` and has a `storage_generation`. Objects from before multipart uploads have no recorded generation and are left in place. When another file that shared the object was replaced earlier, the existing version's deadline is extended instead. `storage cleanup` deletes versions past their deadline that no record references; a version still referenced is kept, and one outside the deployment's bucket is marked `not_owned` and never deleted.
 
-Every replacement logs `file_replaced` with the file and dataset MFIDs, `previous_path`, `previous_generation` and `retired`. During the grace period no record points at the previous object and the API does not serve it, but download links issued earlier keep working until they expire.
+Every replacement logs `file_replaced` with the file and dataset MFIDs, `previous_path` and `previous_generation`. During the grace period no record points at the previous object and the API does not serve it, but download links issued earlier keep working until they expire.
 
-### Google Cloud Storage
-
-The previous object is retired only when all of the following hold; otherwise it is left in place and logged with `retired=False`:
-
-- It is in `UPLOAD_BUCKET` or `MULTIPART_UPLOAD_BUCKET`, never in one of `STORAGE_READ_BUCKETS`.
-- It satisfies the [location rule](storage_downloads.md#location-rule).
-- No other record has the same `storage_path`.
-- For an object without a recorded generation: its key is exactly `{dataset_mfid}/{filename}`, and no record of the dataset without a `storage_path` has a filename whose basename is a suffix of the key, since such a record could later be located at that key.
-
-The update is pinned to the object's generation: the recorded one, or for an object without one, the generation read immediately before. Both calls time out after 30 seconds. Nothing else in the API sets `customTime`, so the lifecycle rule affects only replaced objects. A retirement that fails is logged and leaves the object in place; the replacement itself has already been committed. On this backend no version is recorded, so `files restore` does not apply; during the grace period the previous object remains in the bucket under the logged path and generation.
-
-### S3-compatible stores
-
-A version is recorded for the previous object when it satisfies the location rule in the deployment's own bucket and has a `storage_generation`. When another file that shared the object was replaced earlier, the existing version's deadline is extended instead. `storage cleanup` deletes versions past their deadline that no record references; a version still referenced is kept, and one outside the deployment's bucket is marked `not_owned` and never deleted.
+Earlier releases instead marked replaced objects on Google Cloud Storage with `customTime` for a bucket lifecycle rule (`daysSinceCustomTime`) to delete. Objects marked then are still removed by that rule while the bucket keeps it; it can be dropped once they are gone.
 
 `python -m app.cli files restore FILE_MFID` makes the file's newest kept version current again and records the content it replaces as a version, so running it again undoes the restore. It prints the file MFID, the restored path, the restored version and the newly kept version as JSON. It refuses with `Not restored: <code>`:
 

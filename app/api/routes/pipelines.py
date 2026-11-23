@@ -5,7 +5,6 @@ from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import ValidationError
-from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -20,7 +19,7 @@ from app.services.pipelines import PIPELINES
 from app.utils.auth_utils import authorize_user, is_caller, permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
 from app.utils.rmq_utils import send_pika_message
-from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_active, select_readable
+from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, offset_page, select_active, select_readable
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["postprocessing"])
@@ -163,8 +162,7 @@ def list_postprocessing_runs(
             query = query.where(PostprocessingRun.pipeline == pipeline)
         if status is not None:
             query = query.where(PostprocessingRun.status == status)
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        items = session.exec(query.order_by(PostprocessingRun.id.desc()).offset(offset).limit(limit)).all()
+        total, items = offset_page(session, query.order_by(PostprocessingRun.id.desc()), limit, offset)
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=[PostprocessingRunRead.model_validate(item) for item in items])
 
 

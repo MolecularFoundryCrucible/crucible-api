@@ -42,11 +42,7 @@ def check_part_listing(parts: list[Part], next_marker: int | None, marker: int, 
 
 class ObjectStore(Protocol):
     """The object store behind uploads and downloads. Keys are object names inside a bucket; every
-    method raises StorageFailure (or UploadMissing for a multipart upload that no longer exists).
-    `retires_by_lifecycle` says whether the store can mark a replaced object for its own lifecycle
-    rule to delete; `retire` is only called when it can."""
-
-    retires_by_lifecycle: bool
+    method raises StorageFailure (or UploadMissing for a multipart upload that no longer exists)."""
 
     def start_upload(self, bucket: str, key: str) -> str: ...
 
@@ -65,8 +61,6 @@ class ObjectStore(Protocol):
     def delete(self, bucket: str, key: str, version: str | None) -> None: ...
 
     def signed_download(self, bucket: str, key: str, version: str | None, filename: str, disposition: str, expires_in: timedelta) -> str: ...
-
-    def retire(self, bucket: str, key: str, version: str | None, retired_at: datetime) -> bool: ...
 
     def put_bytes(self, bucket: str, key: str, data: bytes, content_type: str) -> None: ...
 

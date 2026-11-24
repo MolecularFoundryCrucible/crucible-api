@@ -98,11 +98,13 @@ The credential is read from `CRUCIBLE_API_TOKEN` (`--token-env` names another va
 
 | Variable | Default and purpose |
 | --- | --- |
-| `STORAGE_BACKEND` | `gcs` (Google Cloud Storage); `s3` for an S3-compatible store |
-| `UPLOAD_BUCKET` | Required when files are stored: the deployment's single upload bucket |
-| `STORAGE_READ_BUCKETS` | Optional comma-separated list of other buckets that existing records may point at, served read-only |
+| `STORAGE_STORES` | Optional: several stores as a JSON list ([Several stores](#several-stores)); replaces `STORAGE_BACKEND`, `UPLOAD_BUCKET` and `S3_ENDPOINT_URL` |
+| `STORAGE_DEFAULT_STORE` | With `STORAGE_STORES`: the store uploads use when nothing chooses another; required when it lists more than one |
+| `STORAGE_BACKEND` | Without `STORAGE_STORES`: `gcs` (Google Cloud Storage); `s3` for an S3-compatible store |
+| `UPLOAD_BUCKET` | Without `STORAGE_STORES`: required when files are stored; the bucket of the single store `default` |
+| `STORAGE_READ_BUCKETS` | Optional comma-separated list of other buckets that existing records of the default store may point at, served read-only |
 | `MULTIPART_UPLOAD_ENABLED` | `false`; controls initiation only |
-| `MULTIPART_UPLOAD_BUCKET` | Required when uploads are enabled; must equal `UPLOAD_BUCKET` |
+| `MULTIPART_UPLOAD_BUCKET` | Optional; when set, must equal the default store's bucket |
 | `MULTIPART_UPLOAD_SIGNER` | Optional on `gcs`: a service account the server impersonates for every storage operation; required when the server's identity cannot sign URLs (GKE Workload Identity, Workload Identity Federation) |
 | `GCS_PROJECT`, `MULTIPART_UPLOAD_PROJECT` | Optional on `gcs`: project of the storage client; `MULTIPART_UPLOAD_PROJECT` applies only when `GCS_PROJECT` is unset |
 | `S3_ENDPOINT_URL` | Required on `s3`: the address the API reaches the store on |
@@ -117,6 +119,25 @@ The credential is read from `CRUCIBLE_API_TOKEN` (`--token-env` names another va
 | `MULTIPART_SIGNING_INTERVAL_SECONDS` | 5 seconds per session |
 | `STORAGE_CLEANUP_ENABLED` | `false`; enables `storage cleanup` (below) |
 | `FILE_VERSION_RETENTION_DAYS` | 14; how long replaced and deleted content is kept before `storage cleanup` removes it (see [File replacement](file_replacement.md)) |
+
+## Several stores
+
+Without `STORAGE_STORES`, the settings above describe one store with the id `default`, and every file is in it. `STORAGE_STORES` lists several stores instead, each an object with:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Lowercase letters and digits, starting with a letter, at most 32. Stored on every file; never change it once files use it. Files from before stores were recorded are in the store `default`, so keep a store with that id while such files exist |
+| `display_name`, `description` | Shown to clients by `GET /storage/stores` |
+| `type` | `gcs` or `s3` |
+| `bucket` | The store's bucket |
+| `endpoint_url`, `public_url`, `region` | For `s3`, as `S3_ENDPOINT_URL`, `S3_PUBLIC_URL` and `S3_REGION` |
+| `project`, `service_account` | For `gcs`: the storage client's project, and a service account the server acts as for this store (preferred over key files; the server's identity needs Service Account Token Creator on it) |
+
+Credentials are per store, read like other secrets: `STORAGE_{ID}_ACCESS_KEY_ID` and `STORAGE_{ID}_SECRET_ACCESS_KEY` for an `s3` store, and optionally `STORAGE_{ID}_CREDENTIALS`, a service account key file, for a `gcs` store on a server outside Google Cloud ({ID} in capitals).
+
+An upload goes to the store it names (`store` in the initiation request), else the default of the dataset's project, else that of its instrument, else `STORAGE_DEFAULT_STORE`. Project and instrument admins set those defaults with `PATCH /projects/{project_ref}/settings` and `PATCH /instruments/{instrument_ref}/settings` (`{"default_store": "<id>"}`, a JSON Merge Patch with `ETag` and `If-Match`; members read them with `GET`). A replacement goes to the file's store unless it names another. A request naming a store that is not configured answers 422 `unknown_store`; a project or instrument default naming one is skipped.
+
+When a store is removed from `STORAGE_STORES`, its files keep their store id: their metadata stays readable, their download links and replacements answer 503 `store_unavailable`, the dataset's download links map them to `null`, and `storage cleanup` leaves their content. Configuring the store again restores them. `python -m app.cli storage stores` lists the stores with their file counts and exits 1 when files are in a store that is not configured.
 
 ## Google Cloud Storage
 
@@ -141,7 +162,7 @@ Signed URLs embed `S3_PUBLIC_URL`: a client that reaches the store by another ad
 2. Create the upload bucket with the access, lifecycle and CORS rules above.
 3. Run `python -m app.cli storage check`, then set `MULTIPART_UPLOAD_ENABLED=true`.
 
-`python -m app.cli storage check` uploads a two-part file under `_crucible-check/` with the configured store, checks that the store refuses a part whose bytes do not match the signed checksum, completes the upload, downloads it through a signed URL, and deletes it. `--public` signs for `S3_PUBLIC_URL`, `--keep` leaves the test file, and `--size-mib` sets the first part's size. CI runs it against SeaweedFS and Versity S3 Gateway.
+`python -m app.cli storage check` uploads a two-part file under `_crucible-check/` in each store (`--store` names one), checks that the store refuses a part whose bytes do not match the signed checksum, completes the upload, downloads it through a signed URL, and deletes it. `--public` signs for `S3_PUBLIC_URL`, `--keep` leaves the test file, and `--size-mib` sets the first part's size. CI runs it against SeaweedFS and Versity S3 Gateway.
 
 `python -m app.cli storage cleanup` aborts sessions that expired or whose cleanup failed, and deletes replaced and deleted content past its retention period. Run it hourly; it does nothing unless `STORAGE_CLEANUP_ENABLED=true` (the bundle sets it), except with `--dry-run`. `--batch` caps the sessions and versions handled per run (default 500).
 

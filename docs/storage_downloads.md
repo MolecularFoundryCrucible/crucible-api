@@ -17,7 +17,7 @@ A stored record's `storage_path` is `{bucket}/{key}`. Existing records have one 
 
 An object is served, and an ingestion request created for it, only when its `storage_path` satisfies all of the following:
 
-1. The bucket is `UPLOAD_BUCKET`, `MULTIPART_UPLOAD_BUCKET`, or one of `STORAGE_READ_BUCKETS`.
+1. The bucket is the file's store's bucket, or for the default store one of `STORAGE_READ_BUCKETS`.
 2. The key starts with `{dataset_mfid}/`, where `dataset_mfid` is the dataset that owns the record, and continues after it.
 3. The key has no `.` or `..` segment and no leading `/`. Empty segments are allowed, because Google Cloud Storage treats them literally and keys of the older layout contain them.
 4. A key under `{dataset_mfid}/_files/` has a recorded `storage_generation`; without one the object is not a published upload.
@@ -26,7 +26,7 @@ A failure returns 409 `{"detail": {"code": "storage_location_invalid", "reason":
 
 ## Missing storage paths
 
-A stored record without `storage_path`, such as one registered through `POST /datasets/{dataset_mfid}/files` (which refuses a client `storage_path` for stored records), is located on its first download, ingestion request or replacement. The API lists `{dataset_mfid}/` in `UPLOAD_BUCKET`, skipping `{dataset_mfid}/_files/`, and takes `{dataset_mfid}/{filename}` when it exists, otherwise the single key that ends in `/` followed by the filename's basename. The path found is saved on the record before the URL is signed; the location rule then applies. No match returns 404, several matches return 409. Records are located this way only with `STORAGE_BACKEND=gcs`; on `s3` a record without `storage_path` returns 404.
+A stored record without `storage_path`, such as one registered through `POST /datasets/{dataset_mfid}/files` (which refuses a client `storage_path` for stored records), is located on its first download, ingestion request or replacement. The API lists `{dataset_mfid}/` in the bucket of the store `default`, skipping `{dataset_mfid}/_files/`, and takes `{dataset_mfid}/{filename}` when it exists, otherwise the single key that ends in `/` followed by the filename's basename. The path found is saved on the record before the URL is signed; the location rule then applies. No match returns 404, several matches return 409. Records are located this way only when the store `default` is on Google Cloud Storage; otherwise a record without `storage_path` returns 404. `python -m app.cli files backfill-locations` records these locations ahead of time: it reports by default, writes with `--commit`, and lists the files where several objects or none match.
 
 ## Download links
 

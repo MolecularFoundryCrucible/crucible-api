@@ -255,3 +255,46 @@ def test_the_request_fingerprint_without_store_is_unchanged():
     assert service.request_fingerprint(body) == hashlib.sha256(before.encode()).hexdigest()
     assert service.request_fingerprint(MultipartInitiate(filename="a", size=1, store="vm")) != service.request_fingerprint(body)
     assert COMPATIBILITY_STORE_ID == "default"
+
+
+def test_storage_check_runs_against_each_store(stores, monkeypatch, capsys):
+    from app.cli import storage as storage_cli
+    from app.cli.__main__ import main
+    checked = []
+
+    class Recording:
+        def __init__(self, store, bucket, record_bucket, part_bytes, keep, out=print):
+            checked.append((store.name if hasattr(store, "name") else type(store).__name__, bucket, record_bucket))
+
+        def run(self):
+            return True
+
+    monkeypatch.setattr(storage_cli, "StorageCheck", Recording)
+    monkeypatch.setattr(storage_cli, "check_store", lambda store, public: stores[2][store.id])
+    monkeypatch.setenv("RECORD_BUCKET", "records")
+    get_settings.cache_clear()
+    assert main(["storage", "check"]) == 0
+    assert checked == [("storage.example", "dedicated", "records"), ("vm.test", "dedicated", None)]
+    checked.clear()
+    assert main(["storage", "check", "--store", "vm"]) == 0
+    assert checked == [("vm.test", "dedicated", None)]
+    assert main(["storage", "check", "--store", "gone"]) == 1
+
+
+def test_the_store_listing_reports_files_in_unconfigured_stores(stores, capsys):
+    from app.cli.__main__ import main
+    client, engine, known, _ = stores
+    kept = complete((client, engine, known["default"]), publish((client, engine, known["default"]), "a.bin")).json()
+    lost = complete((client, engine, known["default"]), publish((client, engine, known["default"]), "b.bin")).json()
+    move_to(engine, lost["mfid"], "gone", None, None)
+    with Session(engine) as session:
+        record = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == kept["mfid"])).one()
+        record.store_id = None
+        session.add(record)
+        session.commit()
+    capsys.readouterr()
+    assert main(["storage", "stores"]) == 1
+    output = capsys.readouterr().out
+    assert "default  configured, default  1 files" in output
+    assert "vm  configured  0 files" in output
+    assert "gone  NOT CONFIGURED  1 files" in output

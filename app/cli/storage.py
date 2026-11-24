@@ -180,29 +180,34 @@ class StorageCheck:
             self.out(f"warning: could not remove {self.bucket}/{self.key}: {error or type(error).__name__}")
 
 
-def check_store(public: bool):
-    from app.config import get_settings
+def check_store(store, public: bool):
     from app.storage import get_store
 
-    store = get_settings().storage.store(None)
-    if store is not None and store.type == "s3" and not public:
+    if store.type == "s3" and not public:
         from app.storage.s3 import S3Store
 
         return S3Store(store.model_copy(update={"public_url": None}))
-    return get_store()
+    return get_store(store.id)
 
 
 def register(groups: argparse._SubParsersAction) -> None:
     commands = groups.add_parser("storage", help="Check file storage").add_subparsers(dest="command", required=True)
     check = commands.add_parser(
         "check",
-        help="Upload, download, and delete a test file with the configured storage",
-        description="Runs a two-part signed upload into UPLOAD_BUCKET under _crucible-check/, re-uploads a part, checks that the store refuses a part whose bytes do not match the signed checksum (sent with the signed checksum, with the checksum header changed to match the bytes, and without it), finishes the upload, downloads the file through a signed URL, writes and reads _crucible-check/record.json in RECORD_BUCKET when it is set (left there and overwritten by the next run), and deletes the test file, also when a step fails. Signed URLs use S3_ENDPOINT_URL unless --public is given. Exits 1 when a step fails.",
+        help="Upload, download, and delete a test file in each store",
+        description="For each store (or the one named by --store), runs a two-part signed upload into its bucket under _crucible-check/, re-uploads a part, checks that the store refuses a part whose bytes do not match the signed checksum (sent with the signed checksum, with the checksum header changed to match the bytes, and without it), finishes the upload, downloads the file through a signed URL, writes and reads _crucible-check/record.json in RECORD_BUCKET when it is set (left there and overwritten by the next run), and deletes the test file, also when a step fails. RECORD_BUCKET is checked with the default store. Signed URLs for an s3 store use its endpoint_url unless --public is given. Exits 1 when a step fails in any store.",
     )
+    check.add_argument("--store", metavar="ID", help="Check only this store")
     check.add_argument("--size-mib", type=int, default=5, help="Size of the first part in MiB (S3 requires at least 5; default 5)")
     check.add_argument("--keep", action="store_true", help="Leave the test file in the bucket")
-    check.add_argument("--public", action="store_true", help="Sign URLs for S3_PUBLIC_URL, as clients receive them (run from where clients run)")
+    check.add_argument("--public", action="store_true", help="Sign URLs for an s3 store's public_url, as clients receive them (run from where clients run)")
     check.set_defaults(handler=_run_check)
+    listing = commands.add_parser(
+        "stores",
+        help="List the configured stores and the files in each",
+        description="Lists every store, configured or named by files, with its file count. Files written before stores were recorded count in the store default. Exits 1 when files are in a store this server does not configure; those files answer 503 store_unavailable until it is configured again.",
+    )
+    listing.set_defaults(handler=_run_stores)
     cleanup = commands.add_parser(
         "cleanup",
         help="Abort expired uploads and delete file versions past their grace period",
@@ -219,23 +224,50 @@ def _run_check(args: argparse.Namespace) -> int:
     try:
         check_settings()
         settings = get_settings().storage
-        if not settings.upload_bucket:
-            raise ConfigurationError("UPLOAD_BUCKET is not set")
-        if settings.backend == "gcs":
-            from app.utils.multipart_config import MultipartStorageConfig
-
-            config = MultipartStorageConfig.from_env()
-            if not config.bucket:
-                raise ConfigurationError("checking Google Cloud Storage needs MULTIPART_UPLOAD_BUCKET")
-        store = check_store(args.public)
+        if args.store:
+            store = settings.store(args.store)
+            if store is None:
+                raise ConfigurationError(f"{args.store} is not a configured store")
+            stores = [store]
+        else:
+            stores = settings.stores
+        if not stores:
+            raise ConfigurationError("no store is configured (set UPLOAD_BUCKET or STORAGE_STORES)")
+        adapters = [(store, check_store(store, args.public)) for store in stores]
     except Exception as error:
         print(f"Storage is not usable: {error}", file=sys.stderr)
         return 1
-    where = f" at {settings.s3_public_url if args.public and settings.s3_public_url else settings.s3_endpoint_url}" if settings.backend == "s3" else ""
-    print(f"Checking {settings.backend} storage{where}, bucket {settings.upload_bucket}")
-    passed = StorageCheck(store, settings.upload_bucket, settings.record_bucket, args.size_mib * 1024 * 1024, args.keep).run()
-    print("Storage check passed" if passed else "Storage check failed")
-    return 0 if passed else 1
+    failed = []
+    for store, adapter in adapters:
+        address = (store.public_url if args.public and store.public_url else store.endpoint_url) if store.type == "s3" else None
+        print(f"Checking store {store.id} ({store.type}{f' at {address}' if address else ''}), bucket {store.bucket}")
+        records = settings.record_bucket if store.id == settings.default_store_id else None
+        if not StorageCheck(adapter, store.bucket, records, args.size_mib * 1024 * 1024, args.keep).run():
+            failed.append(store.id)
+    print(f"Storage check failed for {', '.join(failed)}" if failed else "Storage check passed")
+    return 1 if failed else 0
+
+
+def _run_stores(args: argparse.Namespace) -> int:
+    from sqlalchemy import func
+    from sqlmodel import Session, select
+
+    from app.api.dependencies import get_engine
+    from app.config import get_settings
+    from app.storage.registry import COMPATIBILITY_STORE_ID
+    from app.tables import AssociatedFile
+
+    settings = get_settings().storage
+    with Session(get_engine()) as session:
+        named = func.coalesce(AssociatedFile.store_id, COMPATIBILITY_STORE_ID)
+        counts = dict(session.exec(select(named, func.count()).where(AssociatedFile.storage_backend == "gcs").group_by(named)).all())
+    configured = [store.id for store in settings.stores]
+    for store_id in configured + sorted(set(counts) - set(configured)):
+        state = "configured" if store_id in configured else "NOT CONFIGURED"
+        if store_id == settings.default_store_id and store_id in configured:
+            state += ", default"
+        print(f"{store_id}  {state}  {counts.get(store_id, 0)} files")
+    return 1 if set(counts) - set(configured) else 0
 
 
 def _run_cleanup(args: argparse.Namespace) -> int:

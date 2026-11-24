@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Breaking changes
 
+- Needs migration `afcc2eef5a87`, which adds `store_id` to files, file versions and upload sessions, and the `resource_settings` table.
 - Needs migration `10316c999378`, which adds `filename` and `ingestion_requests` to `file_versions`.
 - On Google Cloud Storage, replaced content is kept in `file_versions` and removed by `storage cleanup`, as on S3, instead of being marked with `customTime` for a bucket lifecycle rule; `files restore` now works there. Schedule `python -m app.cli storage cleanup` with `STORAGE_CLEANUP_ENABLED=true`, or replaced and deleted content is kept indefinitely. The bucket's `daysSinceCustomTime` rule can be dropped once objects marked before the upgrade are gone.
 - Needs migration `b0e044b67c87`: API keys still held only in plain text are copied into the hashed key table, and the plain-text `apitoken` table is dropped; a rollback to 3.3.1 then has no API keys.
@@ -25,11 +26,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Several stores in one deployment: `STORAGE_STORES` and `STORAGE_DEFAULT_STORE`, per-store credentials, `GET /storage/stores`, a `store` field on file responses and upload requests, project and instrument settings (`GET` and `PATCH /projects/{project_ref}/settings` and `/instruments/{instrument_ref}/settings`) with a `default_store`, and `python -m app.cli storage stores`. Without `STORAGE_STORES` nothing changes: today's settings describe the store `default`.
+- `python -m app.cli files backfill-locations` records the store, path and generation of files stored before stores were recorded.
 - Release images are published to `ghcr.io/molecularfoundrycrucible/crucible-api` for amd64 and arm64.
 - Deleting a file or hard-deleting a dataset keeps the stored content, with the file's ingestion requests, for `FILE_VERSION_RETENTION_DAYS` before `storage cleanup` removes it. Dataset admins list, restore and purge deleted files with `GET /datasets/{dataset_mfid}/deleted_files`, `POST /datasets/{dataset_mfid}/deleted_files/{file_mfid}/restore` and `DELETE /datasets/{dataset_mfid}/deleted_files/{file_mfid}`.
 
 ### Changed
 
+- `storage check` checks every store, or the one named by `--store`.
+- A file whose store is not configured answers 503 `store_unavailable` for download links, replacement and restore.
 - `DELETE /files/{file_id}` returns 409 `replace_in_progress` with the `upload_id` while a replacement of the file is in progress.
 - New MFIDs follow the final UUIDv7 standard (mfid 2.0), so they sort before MFIDs created earlier; MFIDs are tie-breakers only, never a creation order.
 - The sign-in code page names the program the code is for and has a Copy button.

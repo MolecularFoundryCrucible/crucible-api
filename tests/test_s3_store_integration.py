@@ -117,3 +117,51 @@ def test_an_empty_file_uploads_and_downloads(api):
     link = api.get(f"/files/{finished.json()['mfid']}/download_link")
     status, body, _ = send("GET", link.json()["url"])
     assert (status, body) == (200, b"")
+
+
+@pytest.mark.skipif(len(ENDPOINTS) < 2, reason="needs two S3 servers in S3_TEST_ENDPOINTS")
+def test_two_s3_servers_as_two_stores(db_engine, client, auth_as, monkeypatch):
+    import json
+
+    from app.config import get_settings
+    stores = [{"id": f"s{index}", "display_name": f"Server {index}", "type": "s3", "bucket": BUCKETS[0], "endpoint_url": url} for index, url in enumerate(ENDPOINTS[:2])]
+    for name in ("UPLOAD_BUCKET", "STORAGE_BACKEND", "S3_ENDPOINT_URL", "MULTIPART_UPLOAD_BUCKET"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("STORAGE_STORES", json.dumps(stores))
+    monkeypatch.setenv("STORAGE_DEFAULT_STORE", "s0")
+    monkeypatch.setenv("MULTIPART_UPLOAD_ENABLED", "true")
+    for store in stores:
+        monkeypatch.setenv(f"STORAGE_{store['id'].upper()}_ACCESS_KEY_ID", os.environ["S3_TEST_ACCESS_KEY"])
+        monkeypatch.setenv(f"STORAGE_{store['id'].upper()}_SECRET_ACCESS_KEY", os.environ["S3_TEST_SECRET_KEY"])
+    get_settings.cache_clear()
+    storage.get_store.cache_clear()
+    for store in stores:
+        adapter = storage.get_store(store["id"])
+        if BUCKETS[0] not in {bucket["Name"] for bucket in adapter.client.list_buckets()["Buckets"]}:
+            adapter.client.create_bucket(Bucket=BUCKETS[0])
+    with Session(db_engine) as session:
+        user = User(unique_id="owner", first_name="A", last_name="B", email="a@example.test")
+        group = AccessGroup(group_name="owner-group")
+        session.add_all([user, group, Resource(mfid="ds", resource_type="dataset"), Dataset(unique_id="ds", dataset_name="data")])
+        session.commit()
+        session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=group.id, role="owner"))
+        session.add(ResourceACL(mfid="ds", accessgroup_id=group.id, read=True, write=True, permission="owner"))
+        session.commit()
+        group_id = group.id
+    auth_as("owner", groups=[("owner-group", group_id, Role.OWNER)])
+    data = os.urandom(10)
+    keys = {}
+    for store in stores:
+        started = client.post(BASE + "/initiate", json={"filename": f"{store['id']}.bin", "size": len(data), "store": store["id"]}, headers={"Idempotency-Key": store["id"]})
+        assert started.status_code == 200, started.text
+        upload = started.json()
+        part = client.post(BASE + f"/{upload['upload_id']}/parts", json={"parts": [{"part_number": 1, "crc32c": crc32c(data)}]}).json()["parts"][0]
+        assert send("PUT", part["url"], data, part["headers"])[0] == 200
+        finished = client.post(BASE + "/complete", json={"upload_id": upload["upload_id"], "sha256_hash": hashlib.sha256(data).hexdigest(), "crc32c": crc32c(data)})
+        assert finished.status_code == 200, finished.text
+        assert finished.json()["store"] == store["id"]
+        keys[store["id"]] = finished.json()["storage_path"].partition("/")[2]
+    first, second = (storage.get_store(store["id"]) for store in stores)
+    assert first.head(BUCKETS[0], keys["s0"]) is not None and first.head(BUCKETS[0], keys["s1"]) is None
+    assert second.head(BUCKETS[0], keys["s1"]) is not None and second.head(BUCKETS[0], keys["s0"]) is None
+    storage.get_store.cache_clear()

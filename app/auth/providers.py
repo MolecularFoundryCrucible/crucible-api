@@ -1,6 +1,8 @@
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import httpx
 from authlib.integrations.base_client.errors import OAuthError
@@ -17,7 +19,9 @@ ID_TOKEN_LEEWAY = 30
 DISCOVERY_REFRESH_SECONDS = 12 * 60 * 60
 DISCOVERY_RETRY_SECONDS = 30
 _MAX_CLIENTS = 64
+logger = logging.getLogger(__name__)
 _REQUIRED_DISCOVERY_FIELDS = ("authorization_endpoint", "token_endpoint", "jwks_uri")
+_LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 _UNSAFE_ALGORITHMS = ("none", "HS")
 
 _clients: TTLCache = TTLCache(maxsize=_MAX_CLIENTS, ttl=DISCOVERY_REFRESH_SECONDS)
@@ -63,6 +67,9 @@ def _check_discovery(metadata: dict, issuer: str) -> None:
         value = metadata.get(field)
         if not value or not isinstance(value, str):
             raise ProviderUnavailable(f"discovery has no usable {field}")
+    for field in (*_REQUIRED_DISCOVERY_FIELDS, "userinfo_endpoint"):
+        if field in metadata and not _secure_endpoint(metadata[field], issuer):
+            raise ProviderUnavailable(f"discovery {field} is not an https address")
     advertised = metadata.get("id_token_signing_alg_values_supported")
     if advertised is not None:
         if not isinstance(advertised, list) or not all(isinstance(alg, str) for alg in advertised):
@@ -71,6 +78,16 @@ def _check_discovery(metadata: dict, issuer: str) -> None:
         if not safe:
             raise ProviderUnavailable("provider advertises no asymmetric signing algorithm")
         metadata["id_token_signing_alg_values_supported"] = safe
+
+
+def _secure_endpoint(address: object, issuer: str) -> bool:
+    """https, as OpenID Connect Discovery requires; http only on loopback for a loopback issuer, as a local test provider uses."""
+    if not isinstance(address, str):
+        return False
+    parsed = urlparse(address)
+    if parsed.scheme == "https" and parsed.hostname:
+        return True
+    return parsed.scheme == "http" and parsed.hostname in _LOOPBACK and urlparse(issuer).hostname in _LOOPBACK
 
 
 def _registered(name: str, issuer: str, client_id: str, client_secret: str, scope: str, auth_method: str) -> StarletteOAuth2App:
@@ -101,6 +118,7 @@ async def _with_discovery(name: str, client: StarletteOAuth2App, issuer: str) ->
     except (ProviderUnavailable, httpx.HTTPError, ValueError) as error:
         _clients.pop(name, None)
         _recent_failures[name] = True
+        logger.warning("provider %s discovery unusable: %s", name, error or type(error).__name__)
         raise ProviderUnavailable(type(error).__name__) from None
     return client
 

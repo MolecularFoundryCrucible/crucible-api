@@ -96,3 +96,15 @@ def test_ordinary_role_changes_still_work(client, db_engine, auth_as):
 
     resp = client.patch("/projects/proj_x/users/0000-0002-2222-2222", params={"role": Role.EDITOR.db_value})
     assert resp.status_code == 200, resp.text
+
+
+def test_demoting_or_removing_a_member_drops_their_cached_keys(client, db_engine, auth_as, monkeypatch):
+    forgotten = []
+    monkeypatch.setattr("app.api.routes.projects.forget_cached_keys", lambda session, user_id: forgotten.append(user_id))
+    ag_id, mfid = _setup(db_engine)
+    auth_as("0000-0001-1111-1111", groups=[(mfid, ag_id, Role.OWNER)])
+    assert client.patch("/projects/proj_x/users/0000-0002-2222-2222", params={"role": Role.VIEWER.db_value}).status_code == 200
+    assert client.delete("/projects/proj_x/users/0000-0002-2222-2222").status_code == 200
+    with Session(db_engine) as session:
+        member = session.exec(select(User.id).where(User.unique_id == "0000-0002-2222-2222")).one()
+    assert forgotten == [member, member]

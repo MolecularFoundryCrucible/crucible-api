@@ -84,7 +84,7 @@ def delete_versions(engine, stores, now, dry_run, batch, report):
             if version is None:
                 return
             last = version.id
-            if session.exec(select(AssociatedFile.id).where(AssociatedFile.storage_path == version.storage_path)).first() is not None:
+            if session.exec(select(AssociatedFile.id).where(AssociatedFile.storage_path == version.storage_path, AssociatedFile.store_id.is_not_distinct_from(version.store_id))).first() is not None:
                 report.kept_in_use += 1
                 continue
             try:

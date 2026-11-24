@@ -12,10 +12,8 @@ def feature_disabled_response(feature: str) -> dict:
     return {NOT_AVAILABLE_HERE: {"description": f"{feature.replace('_', ' ').capitalize()} is not enabled on this server: `{{\"detail\": {{\"code\": \"feature_disabled\", \"feature\": \"{feature}\", \"message\": ...}}}}`"}}
 
 
-STORAGE_NOT_CONFIGURED_RESPONSE = {
-    NOT_AVAILABLE_HERE: {"description": "File storage is not configured on this server: `{\"detail\": {\"code\": \"storage_not_configured\", \"message\": ...}}`"},
-    503: {"description": "The file's store is not available on this server: `{\"detail\": {\"code\": \"store_unavailable\", \"store_id\": ..., \"message\": ...}}`"},
-}
+STORAGE_NOT_CONFIGURED_RESPONSE = {NOT_AVAILABLE_HERE: {"description": "File storage is not configured on this server: `{\"detail\": {\"code\": \"storage_not_configured\", \"message\": ...}}`"}}
+STORE_UNAVAILABLE_RESPONSE = {503: {"description": "The file's store is not configured on this server, or the file has no store recorded yet: `{\"detail\": {\"code\": \"store_unavailable\", \"store_id\": ..., \"message\": ...}}`"}}
 
 
 def register_error_handlers(app: FastAPI) -> None:

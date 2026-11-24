@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -353,6 +354,7 @@ def test_ingest_publishes_with_configured_routing(client, db_engine, admin, monk
     assert response.status_code == 200, response.text
     assert send.call_args.kwargs["routing_key"] == "ingestion-lab-small"
     assert "user" not in send.call_args.kwargs
+    assert json.loads(send.call_args.kwargs["message"])["store_id"] == "mf-storage-prod"
 
 
 def test_download_without_storage_is_not_configured(client, db_engine, signer, admin, monkeypatch):

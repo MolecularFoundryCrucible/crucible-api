@@ -55,12 +55,15 @@ def _run_restore(args: argparse.Namespace) -> int:
 
 def _run_backfill(args: argparse.Namespace) -> int:
     from app.api.dependencies import get_engine
-    from app.config import check_settings
+    from app.config import check_settings, get_settings
     from app.services.location_backfill import backfill_locations
     from app.storage import get_store
 
     try:
         check_settings()
+        if get_settings().storage.store(args.store) is None:
+            print(f"Not done: {args.store} is not a store in STORAGE_STORES", file=sys.stderr)
+            return 1
         report = backfill_locations(get_engine(), get_store, args.store, commit=args.commit, generations=args.generations, batch=args.batch, workers=args.workers)
     except Exception as error:
         print(f"Not done: {error}", file=sys.stderr)
@@ -80,10 +83,14 @@ def _run_assign(args: argparse.Namespace) -> int:
     from app.api.dependencies import get_engine
     from app.config import check_settings
     from app.services.store_assignment import assign_store
+    from app.storage import StoreUnavailable
 
     try:
         check_settings()
         counts = assign_store(get_engine(), args.store, commit=args.commit)
+    except StoreUnavailable:
+        print(f"Not done: {args.store} is not a store in STORAGE_STORES", file=sys.stderr)
+        return 1
     except Exception as error:
         print(f"Not done: {error}", file=sys.stderr)
         return 1

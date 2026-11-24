@@ -205,7 +205,7 @@ def register(groups: argparse._SubParsersAction) -> None:
     listing = commands.add_parser(
         "stores",
         help="List the configured stores and the files in each",
-        description="Lists every store, configured or named by files, with its file count. Files written before stores were recorded count in the store default. Exits 1 when files are in a store this server does not configure; those files answer 503 store_unavailable until it is configured again.",
+        description="Lists every store, configured or named by files, with its file count, and the stored files with no store recorded yet. Exits 1 when files are in a store this server does not configure or have no store; those files answer 503 store_unavailable until the store is configured again or files assign-store records one.",
     )
     listing.set_defaults(handler=_run_stores)
     cleanup = commands.add_parser(

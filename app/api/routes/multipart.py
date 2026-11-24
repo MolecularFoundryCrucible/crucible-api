@@ -7,7 +7,7 @@ from sqlmodel import Session
 
 import app.api.routes.gcs_storage as gcs_storage
 from app.api.dependencies import get_engine
-from app.api.errors import feature_disabled_response
+from app.api.errors import STORE_UNAVAILABLE_RESPONSE, feature_disabled_response
 from app.api.path_params import DatasetMfid
 from app.config import FeatureDisabled
 from app.models.datasets import AssociatedFileRead
@@ -30,7 +30,7 @@ def initiate(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Data
     return service.initiate(get_engine(), get_store, auth_res, dsid, body, idempotency_key, config)
 
 
-@router.post("/files/{file_mfid}/upload/multipart/initiate", response_model=MultipartStatus, responses={**feature_disabled_response("uploads"), 400: {"description": "The file is a catalog-only (non-GCS) record; edit it with `PATCH /files/{file_id}`"}, 409: {"description": "Another replace of this file is in progress: `{\"detail\": {\"code\": \"replace_in_progress\", \"upload_id\": ..., \"message\": ...}}`. A reused Idempotency-Key with a different request returns a plain string detail"}, 412: {"description": "If-Match does not match the file's current ETag: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}})
+@router.post("/files/{file_mfid}/upload/multipart/initiate", response_model=MultipartStatus, responses={**feature_disabled_response("uploads"), **STORE_UNAVAILABLE_RESPONSE, 400: {"description": "The file is a catalog-only (non-GCS) record; edit it with `PATCH /files/{file_id}`"}, 409: {"description": "Another replace of this file is in progress: `{\"detail\": {\"code\": \"replace_in_progress\", \"upload_id\": ..., \"message\": ...}}`. A reused Idempotency-Key with a different request returns a plain string detail"}, 412: {"description": "If-Match does not match the file's current ETag: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}})
 def initiate_replace(auth_res: Annotated[Principal, Depends(authorize_user)], file_mfid: str, body: MultipartReplace, idempotency_key: Annotated[str | None, Header(min_length=1, max_length=128)] = None, if_match: Annotated[str | None, Header()] = None):
     """Start replacing an existing GCS file's content. Requires EDIT on its dataset. Upload parts and complete through the dataset's multipart routes; completion keeps the file MFID and filename. Send If-Match with the file's ETag to refuse the replace when the file has changed; `If-Match: *` matches any ETag."""
     config = MultipartStorageConfig.from_env()

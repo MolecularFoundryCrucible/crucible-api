@@ -722,8 +722,18 @@ def _warn_about_plain_http(settings) -> None:
         logger.warning("The public address %s is plain HTTP: API keys and sessions cross the network unencrypted. Use it on this machine only, or set up HTTPS.", address)
 
 
+def _retired_settings_given() -> list[str]:
+    load_env_file()
+    secrets_dir = _secrets_dir()
+    given = []
+    for name, replacement in RETIRED_STORAGE_SETTINGS.items():
+        if any(optional_env(f"{name}{suffix}") is not None for suffix in ("", "_FILE", "_VERSION")) or (secrets_dir and (Path(secrets_dir) / name).is_file()):
+            given.append(f"{name} (use {replacement})")
+    return given
+
+
 def check_settings() -> None:
-    retired = [f"{name} (use {replacement})" for name, replacement in RETIRED_STORAGE_SETTINGS.items() if optional_env(name) is not None or optional_env(f"{name}_FILE") is not None]
+    retired = _retired_settings_given()
     if retired:
         raise ConfigurationError(f"Storage is configured with STORAGE_STORES now; remove {', '.join(retired)}")
     found = missing_required_settings()

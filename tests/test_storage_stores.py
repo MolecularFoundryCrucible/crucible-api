@@ -328,3 +328,16 @@ def test_a_file_without_a_store_does_not_break_the_dataset_links(stores, monkeyp
     assert links.json()[legacy_mfid] is None and links.json()[current_mfid].startswith("https://vm.test/")
     single = client.get(f"/files/{legacy_mfid}/download_link")
     assert (single.status_code, single.json()["detail"]["store_id"]) == (503, None)
+
+
+def test_a_file_in_another_store_with_the_same_path_does_not_keep_a_version(stores):
+    client, engine, known, lookup = stores
+    file = complete((client, engine, known["default"]), publish((client, engine, known["default"]))).json()
+    key = move_to(engine, file["mfid"], "vm", known["vm"], known["default"])
+    known["default"].objects[key] = dict(known["vm"].objects[key])
+    with Session(engine) as session:
+        session.add(FileVersion(file_mfid="old", dataset_mfid="ds", storage_path=file["storage_path"], storage_generation="7", size=1, sha256_hash=SHA, reason="deleted", store_id="default", created_at=service.now(), delete_after=service.now()))
+        session.commit()
+    report = run_cleanup(engine, lookup, service.now() + timedelta(seconds=1))
+    assert (report.deleted_versions, report.kept_in_use) == (1, 0)
+    assert known["default"].deleted == [(key, "7")] and key in known["vm"].objects

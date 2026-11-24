@@ -48,7 +48,7 @@ def _keep(session, file, dataset_mfid, when, reason):
         # Kept so it can be restored or cleaned once the store is configured again; cleanup checks ownership then.
         store_id = file.store_id
     deadline = when + timedelta(days=get_settings().storage.file_version_retention_days)
-    existing = session.exec(select(FileVersion).where(FileVersion.storage_path == file.storage_path, *waiting())).first()
+    existing = session.exec(select(FileVersion).where(FileVersion.storage_path == file.storage_path, FileVersion.store_id.is_not_distinct_from(store_id), *waiting())).first()
     if existing is not None:
         # Another file shared this object and was kept earlier: this one gets its full grace period too.
         existing.delete_after = max(utc(existing.delete_after), deadline)

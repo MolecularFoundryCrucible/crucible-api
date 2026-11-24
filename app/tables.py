@@ -78,7 +78,7 @@ class AssociatedFile(SQLModel, table=True):
     storage_generation: Optional[str] = None
     storage_crc32c: Optional[str] = None
     sha256_verified_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-    store_id: Optional[str] = None  # the store holding a stored file; null means the store with id "default"
+    store_id: Optional[str] = None  # the store holding a stored file (STORAGE_STORES id); null until files assign-store records it
     dataset_id: int = Field(foreign_key="dataset.id")
     dataset: "Dataset" = Relationship(back_populates='associated_files')
     ingestion_requests: List["IngestionRequest"] = Relationship(back_populates="associated_file")
@@ -793,7 +793,7 @@ class FileVersion(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint(f"reason IN ({', '.join(repr(reason) for reason in FILE_VERSION_REASONS)})", name="ck_file_versions_reason"),
         Index("ix_file_versions_due", "delete_after", postgresql_where=text(FILE_VERSION_WAITING), sqlite_where=text(FILE_VERSION_WAITING)),
-        Index("uq_file_versions_waiting_path", "storage_path", unique=True, postgresql_where=text(FILE_VERSION_WAITING), sqlite_where=text(FILE_VERSION_WAITING)),
+        Index("uq_file_versions_waiting_path", "storage_path", "store_id", unique=True, postgresql_where=text(FILE_VERSION_WAITING), sqlite_where=text(FILE_VERSION_WAITING)),
     )
     id: Optional[int] = Field(default=None, primary_key=True)
     file_mfid: str = Field(index=True)

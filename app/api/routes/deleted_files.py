@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
 from app.api.dependencies import get_engine
+from app.api.errors import STORE_UNAVAILABLE_RESPONSE
 from app.api.path_params import DatasetMfid
 from app.models.datasets import AssociatedFileRead, DeletedFileRead
 from app.models.pagination import PaginatedResponse
@@ -58,7 +59,7 @@ def list_deleted_files(
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.post("/datasets/{dataset_mfid}/deleted_files/{file_mfid}/restore", response_model=AssociatedFileRead, responses={404: {"description": "Dataset not found, or no deleted file with this MFID is kept (`not_in_trash`)"}, 409: {"description": f"`{{\"detail\": {{\"code\": ..., \"message\": ...}}}}` with one of {CODES}, or `pending_deletion`"}})
+@router.post("/datasets/{dataset_mfid}/deleted_files/{file_mfid}/restore", response_model=AssociatedFileRead, responses={**STORE_UNAVAILABLE_RESPONSE, 404: {"description": "Dataset not found, or no deleted file with this MFID is kept (`not_in_trash`)"}, 409: {"description": f"`{{\"detail\": {{\"code\": ..., \"message\": ...}}}}` with one of {CODES}, or `pending_deletion`"}})
 def restore_deleted_file(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, file_mfid: str):
     '''Restores a deleted file with its MFID, filename, content and ingestion requests, while its content is kept. Requires admin on the dataset.'''
     with Session(get_engine()) as session:

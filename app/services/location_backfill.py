@@ -98,5 +98,5 @@ def backfill_locations(engine, stores, store_id: str, commit: bool, generations:
 
     run((AssociatedFile.storage_path.is_(None),), lambda: setattr(report, "paths", report.paths + 1), parallel=False)
     if generations:
-        run((AssociatedFile.storage_path.like(f"{store.bucket}/%"), AssociatedFile.storage_generation.is_(None)), lambda: setattr(report, "generations", report.generations + 1), parallel=True)
+        run((AssociatedFile.storage_path.startswith(f"{store.bucket}/", autoescape=True), AssociatedFile.storage_generation.is_(None)), lambda: setattr(report, "generations", report.generations + 1), parallel=True)
     return report

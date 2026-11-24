@@ -70,7 +70,7 @@ def test_cleanup_keeps_a_version_another_file_still_uses(flow):
     file, _ = replaced(flow)
     with Session(engine) as session:
         dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
-        session.add(AssociatedFile(dataset_id=dataset_id, filename="copy.bin", storage_path=file["storage_path"], size=1, sha256_hash="b" * 64))
+        session.add(AssociatedFile(dataset_id=dataset_id, filename="copy.bin", storage_path=file["storage_path"], size=1, sha256_hash="b" * 64, store_id="dedicated"))
         session.commit()
     report = run_cleanup(engine, storage, service.now() + timedelta(days=15))
     assert (report.deleted_versions, report.kept_in_use, storage.deleted) == (0, 1, [])
@@ -159,7 +159,7 @@ def test_only_one_waiting_version_per_stored_object(flow):
     _, engine, _ = flow
     with Session(engine) as session:
         for _ in range(2):
-            session.add(FileVersion(file_mfid="f", dataset_mfid="ds", storage_path="dedicated/ds/_files/x", size=1, sha256_hash="a" * 64, reason="replaced", created_at=service.now(), delete_after=service.now()))
+            session.add(FileVersion(file_mfid="f", dataset_mfid="ds", storage_path="dedicated/ds/_files/x", size=1, sha256_hash="a" * 64, reason="replaced", store_id="dedicated", created_at=service.now(), delete_after=service.now()))
         with pytest.raises(Exception):
             session.commit()
 
@@ -384,7 +384,7 @@ def test_trashed_content_another_record_uses_is_kept(flow):
     file = published_file(flow)
     with Session(engine) as session:
         dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
-        session.add(AssociatedFile(dataset_id=dataset_id, filename="copy.bin", storage_path=file["storage_path"], size=1, sha256_hash="b" * 64))
+        session.add(AssociatedFile(dataset_id=dataset_id, filename="copy.bin", storage_path=file["storage_path"], size=1, sha256_hash="b" * 64, store_id="dedicated"))
         session.commit()
     assert flow[0].delete(f"/files/{file['mfid']}").status_code == 200
     report = run_cleanup(engine, storage, service.now() + timedelta(days=15))

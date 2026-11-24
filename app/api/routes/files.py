@@ -24,7 +24,7 @@ from app.models.ingestion import INGESTION_CLASS_PATTERN, IngestionRequestRead
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import DownloadLinkRead, MessageResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
-from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
+from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, STORE_UNAVAILABLE_RESPONSE
 from app.services.file_versions import trash_file
 from app.services.multipart import now, replace_in_progress
 from app.services.storage_downloads import StorageLocationError, resolve_storage_object
@@ -80,7 +80,7 @@ def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: s
         return read
 
 
-@router.get("/files/{file_id}/download_link", response_model=DownloadLinkRead, responses={**STORAGE_NOT_CONFIGURED_RESPONSE, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.get("/files/{file_id}/download_link", response_model=DownloadLinkRead, responses={**STORAGE_NOT_CONFIGURED_RESPONSE, **STORE_UNAVAILABLE_RESPONSE, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def get_file_download_link(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
@@ -193,7 +193,7 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
 
 
 # ingestion
-@router.post("/files/{file_id}/ingest", response_model=IngestionRequestRead, responses={501: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`) or file storage is not configured (`storage_not_configured`)"}, 503: {"description": "The request could not be queued (`ingestion_unavailable`); it is recorded as failed"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.post("/files/{file_id}/ingest", response_model=IngestionRequestRead, responses={501: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`) or file storage is not configured (`storage_not_configured`)"}, 503: {"description": "The request could not be queued (`ingestion_unavailable`, recorded as failed), or the file's store is not available (`store_unavailable`, with `store_id`)"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def create_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
@@ -246,6 +246,7 @@ def create_file_ingestion_request(
         af_size = af.size
         af_storage_path = af.storage_path
         af_generation = af.storage_generation
+        af_store_id = af.store_id
         af_filename = af.filename
         ds_unique_id = ds.unique_id
 
@@ -256,6 +257,7 @@ def create_file_ingestion_request(
             send_pika_message(
                 message=json.dumps({
                     "filename": af_storage_path,
+                    "store_id": af_store_id,
                     **({"storage_generation": af_generation} if af_generation else {}),
                     "file_name": af_filename,
                     "reqid": ir_id,

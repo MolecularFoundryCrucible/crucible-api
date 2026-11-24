@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Removed
 
+- `cloudbuild.yaml` and `cloudbuild.release.yaml`: the Foundry deploys the GHCR images that `release-image.yml` publishes.
 - `scripts/cleanup_hub_auth.py` and the image's `/root/.venv` and `/root/scripts` links: run `/app/.venv/bin/python -m app.cli auth cleanup`.
 - The Docker Compose bundle and its guide moved to [crucible-selfhost](https://github.com/MolecularFoundryCrucible/crucible-selfhost), which runs the published image.
 - `python -m app.cli api-keys import`: the migration copies the keys.

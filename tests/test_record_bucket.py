@@ -13,7 +13,7 @@ def storage(monkeypatch):
     client.bucket.return_value.blob.return_value.exists.return_value = False
     monkeypatch.setattr(google, "server_client", lambda: client)
     store = google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None))
-    monkeypatch.setattr(gcs_record_utils, "get_store", lambda: store)
+    monkeypatch.setattr(gcs_record_utils, "get_default_store", lambda: store)
     return client
 
 

@@ -1,5 +1,4 @@
 import mimetypes
-import os
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import PurePosixPath
@@ -35,26 +34,15 @@ class StorageNotConfigured(Exception):
 
 
 
-def upload_bucket():
-    from app.config import get_settings
-
-    bucket = get_settings().storage.upload_bucket
-    if not bucket:
-        raise StorageNotConfigured("File storage is not configured on this server (UPLOAD_BUCKET is not set)")
-    return bucket
+def store_buckets(store):
+    """The buckets a store's files may be in: its own bucket and its read_buckets."""
+    return ({store.bucket} | set(store.read_buckets)) - {"", None}
 
 
-def allowed_buckets():
-    from app.config import get_settings
-
-    storage = get_settings().storage
-    return ({storage.upload_bucket or "", os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} | storage.read_bucket_names) - {""}
-
-
-def resolve_storage_object(storage_path, generation, dataset_mfid):
-    allowed = allowed_buckets()
+def resolve_storage_object(store, storage_path, generation, dataset_mfid):
+    allowed = store_buckets(store)
     if not allowed:
-        raise StorageNotConfigured("File storage is not configured on this server (UPLOAD_BUCKET is not set)")
+        raise StorageNotConfigured("File storage is not configured on this server (STORAGE_STORES is not set)")
     bucket, separator, key = (storage_path or "").partition("/")
     if not separator or not bucket or not key:
         raise StorageLocationError("unparseable")
@@ -70,18 +58,14 @@ def resolve_storage_object(storage_path, generation, dataset_mfid):
     return StorageObject(bucket, key, str(generation) if generation is not None else None)
 
 
-def owned_object(storage_path, generation, dataset_mfid):
-    """Whether the API may delete this object: it is in one of this environment's own
-    upload buckets and inside its dataset, by the same rule downloads follow."""
+def owned_object(store, storage_path, generation, dataset_mfid):
+    """Whether the API may delete this object: it is in its store's own bucket and inside its
+    dataset, by the same rule downloads follow."""
     bucket = (storage_path or "").partition("/")[0]
-    try:
-        current = upload_bucket()
-    except StorageNotConfigured:
-        current = ""
-    if bucket not in {current, os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} - {""}:
+    if not store.bucket or bucket != store.bucket:
         return False
     try:
-        resolve_storage_object(storage_path, generation, dataset_mfid)
+        resolve_storage_object(store, storage_path, generation, dataset_mfid)
     except (StorageLocationError, StorageNotConfigured):
         return False
     return True

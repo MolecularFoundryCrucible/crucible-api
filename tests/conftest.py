@@ -34,8 +34,7 @@ for _name, _value in {
     "RABBITMQ_DEFAULT_PW": "test-only",
     "API_PUBLIC_URL": "https://127.0.0.1:7777",
     "API_PATH": "testapi",
-    "UPLOAD_BUCKET": "mf-storage-prod",
-    "GCS_PROJECT": "crucible-prod",
+    "STORAGE_STORES": '[{"id": "mf-storage-prod", "display_name": "Test storage", "type": "gcs", "bucket": "mf-storage-prod", "project": "crucible-prod"}]',
     "INGESTION_ENABLED": "true",
     "RMQ_HOST": "localhost",
     "RMQ_USER": "test",
@@ -61,7 +60,7 @@ from app.tables import (
     AssociatedFile, IngestionRequest, Project, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
     DatasetLink, UploadSession, DeletionAuditLog, DatasetKeywordLink, Thumbnail,
-    ResourceEmbedding, UserPreferences, UserRecentResource, PostprocessingRun, FileVersion, UserIdentity, AuthEvent, ApiKey, PasswordToken, LocalCredential, LoginCode, DeviceAuthorization,
+    ResourceEmbedding, UserPreferences, UserRecentResource, PostprocessingRun, FileVersion, UserIdentity, AuthEvent, ApiKey, PasswordToken, LocalCredential, LoginCode, DeviceAuthorization, ResourceSettings,
 )
 from app.utils.auth_utils import authenticate_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
@@ -85,7 +84,7 @@ TEST_TABLES = [
     DeletionAuditLog.__table__, DatasetKeywordLink.__table__, Thumbnail.__table__,
     ResourceEmbedding.__table__, UserPreferences.__table__, UserRecentResource.__table__, UserIdentity.__table__, AuthEvent.__table__, ApiKey.__table__,
     PostprocessingRun.__table__, FileVersion.__table__, PasswordToken.__table__, LocalCredential.__table__,
-    LoginCode.__table__, DeviceAuthorization.__table__,
+    LoginCode.__table__, DeviceAuthorization.__table__, ResourceSettings.__table__,
 ]
 
 
@@ -159,7 +158,7 @@ def fresh_settings(monkeypatch):
     from app.auth import providers
     from app.storage import gcs
 
-    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.server_credentials, gcs.server_client)
+    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.server_credentials, gcs.server_client, gcs.store_credentials, gcs.store_client)
     monkeypatch.setattr(config, "_fetched_secrets", {})
     monkeypatch.setattr(config, "_loaded_env_files", set())
     for cached in caches:
@@ -175,7 +174,7 @@ def fresh_settings(monkeypatch):
 def block_record_bucket(monkeypatch):
     def _refuse():
         raise RuntimeError("tests must not write to the record bucket")
-    monkeypatch.setattr(gcs_record_utils, "get_store", _refuse)
+    monkeypatch.setattr(gcs_record_utils, "get_default_store", _refuse)
 
 
 @pytest.fixture

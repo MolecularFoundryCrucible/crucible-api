@@ -1,75 +1,68 @@
-from pathlib import Path
+import json
 
 import pytest
 
-from app.services.storage_downloads import StorageLocationError, StorageNotConfigured, allowed_buckets, resolve_storage_object, upload_bucket
-from app.utils.multipart_config import MultipartStorageConfig
+from app.config import ConfigurationError, check_settings, get_settings
+from app.services.storage_downloads import StorageLocationError, resolve_storage_object, store_buckets
+from tests.stores import gcs, use_stores
 
-ROOT = Path(__file__).resolve().parents[1]
 DS = "0t3qajrnzhtn7000x6s0x427hg"
-MULTIPART = dict(MULTIPART_UPLOAD_ENABLED="true", MULTIPART_UPLOAD_SIGNER="signer@example.iam.gserviceaccount.com", MULTIPART_UPLOAD_PROJECT="project")
 
 
-@pytest.fixture(autouse=True)
-def clean_env(monkeypatch):
-    for name in ("UPLOAD_BUCKET", "STORAGE_READ_BUCKETS", "MULTIPART_UPLOAD_BUCKET"):
-        monkeypatch.delenv(name, raising=False)
-
-
-def test_upload_bucket_has_no_default(monkeypatch):
-    with pytest.raises(StorageNotConfigured):
-        upload_bucket()
-    with pytest.raises(StorageNotConfigured):
-        resolve_storage_object(f"mf-storage-prod/{DS}/a.txt", None, DS)
-    assert allowed_buckets() == set()
-
-
-def test_upload_bucket_is_trimmed(monkeypatch):
-    monkeypatch.setenv("UPLOAD_BUCKET", " mf-storage-staging ")
-    assert upload_bucket() == "mf-storage-staging"
-
-
-def test_allowed_buckets_combine_upload_multipart_and_extra_read_buckets(monkeypatch):
-    monkeypatch.setenv("UPLOAD_BUCKET", "mf-storage-staging")
-    monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", "mf-storage-staging")
-    monkeypatch.setenv("STORAGE_READ_BUCKETS", " mf-storage-prod , ,old-bucket")
-    assert allowed_buckets() == {"mf-storage-staging", "mf-storage-prod", "old-bucket"}
-
-
-def test_staging_reads_old_production_records_and_new_staging_objects(monkeypatch):
-    monkeypatch.setenv("UPLOAD_BUCKET", "mf-storage-staging")
-    monkeypatch.setenv("STORAGE_READ_BUCKETS", "mf-storage-prod")
-    assert resolve_storage_object(f"mf-storage-prod/{DS}/a.txt", None, DS).bucket == "mf-storage-prod"
-    assert resolve_storage_object(f"mf-storage-staging/{DS}/_files/abc", "3", DS).bucket == "mf-storage-staging"
+def test_a_store_reads_its_bucket_and_its_read_buckets(monkeypatch):
+    use_stores(monkeypatch, gcs("staging", bucket="mf-storage-staging", read_buckets=["mf-storage-prod", "old-bucket"]))
+    store = get_settings().storage.store("staging")
+    assert store_buckets(store) == {"mf-storage-staging", "mf-storage-prod", "old-bucket"}
+    assert resolve_storage_object(store, f"mf-storage-prod/{DS}/a.txt", None, DS).bucket == "mf-storage-prod"
+    assert resolve_storage_object(store, f"mf-storage-staging/{DS}/_files/abc", "3", DS).bucket == "mf-storage-staging"
     with pytest.raises(StorageLocationError):
-        resolve_storage_object(f"mf-crucible-multipart-staging/{DS}/_files/abc", "3", DS)
+        resolve_storage_object(store, f"mf-crucible-multipart-staging/{DS}/_files/abc", "3", DS)
 
 
-def test_multipart_bucket_must_be_the_upload_bucket():
-    with pytest.raises(ValueError, match="UPLOAD_BUCKET"):
-        MultipartStorageConfig.from_env(MULTIPART | {"MULTIPART_UPLOAD_BUCKET": "mf-storage-prod"})
-    assert MultipartStorageConfig.from_env(MULTIPART | {"MULTIPART_UPLOAD_BUCKET": "mf-storage-prod", "UPLOAD_BUCKET": "mf-storage-prod"}).bucket == "mf-storage-prod"
-    assert MultipartStorageConfig.from_env(MULTIPART | {"MULTIPART_UPLOAD_BUCKET": "mf-storage-staging", "UPLOAD_BUCKET": "mf-storage-staging"}).enabled
-    with pytest.raises(ValueError, match="UPLOAD_BUCKET"):
-        MultipartStorageConfig.from_env(MULTIPART | {"MULTIPART_UPLOAD_BUCKET": "mf-crucible-multipart-staging", "UPLOAD_BUCKET": "mf-storage-staging"})
+@pytest.mark.parametrize("name", ["UPLOAD_BUCKET", "STORAGE_BACKEND", "S3_ENDPOINT_URL", "MULTIPART_UPLOAD_SIGNER", "STORAGE_READ_BUCKETS", "S3_SECRET_ACCESS_KEY_VERSION"])
+def test_a_retired_single_store_setting_stops_the_server(monkeypatch, name):
+    monkeypatch.setenv(name, "x")
+    get_settings.cache_clear()
+    with pytest.raises(ConfigurationError, match=f"{name.removesuffix('_VERSION')} \\(use"):
+        check_settings()
 
 
-def test_multipart_needs_no_signer():
-    plain = {"MULTIPART_UPLOAD_ENABLED": "true", "MULTIPART_UPLOAD_BUCKET": "crucible-files", "UPLOAD_BUCKET": "crucible-files"}
-    assert MultipartStorageConfig.from_env(plain).signer_service_account is None
-    assert MultipartStorageConfig.from_env(plain | {"STORAGE_BACKEND": "s3"}).enabled
-    with pytest.raises(ValueError, match="explicit bucket"):
-        MultipartStorageConfig.from_env({"MULTIPART_UPLOAD_ENABLED": "true", "STORAGE_BACKEND": "s3"})
-
-
-def test_multipart_config_reads_the_upload_bucket_from_settings(monkeypatch, tmp_path):
-    from app.config import get_settings
-
+def test_a_retired_setting_in_the_env_file_or_secrets_directory_stops_the_server(monkeypatch, tmp_path):
+    from app import config
+    env_file = tmp_path / "local.env"
+    env_file.write_text("UPLOAD_BUCKET=old\n")
+    monkeypatch.setenv("UPLOAD_BUCKET", "")
+    monkeypatch.delenv("UPLOAD_BUCKET")
+    monkeypatch.setenv("DB_CONF_FILE", str(env_file))
+    monkeypatch.setattr(config, "_loaded_env_files", set())
+    get_settings.cache_clear()
+    with pytest.raises(ConfigurationError, match="UPLOAD_BUCKET \\(use"):
+        check_settings()
+    monkeypatch.delenv("UPLOAD_BUCKET")
     secrets = tmp_path / "secrets"
     secrets.mkdir()
-    (secrets / "UPLOAD_BUCKET").write_text("bucket-from-file")
+    (secrets / "S3_ACCESS_KEY_ID").write_text("old")
     monkeypatch.setenv("CRUCIBLE_SECRETS_DIR", str(secrets))
-    for name, value in (MULTIPART | {"MULTIPART_UPLOAD_BUCKET": "bucket-from-file"}).items():
-        monkeypatch.setenv(name, value)
     get_settings.cache_clear()
-    assert MultipartStorageConfig.from_env().bucket == "bucket-from-file"
+    with pytest.raises(ConfigurationError, match="S3_ACCESS_KEY_ID \\(use"):
+        check_settings()
+
+
+def test_the_stores_can_be_read_from_a_file(monkeypatch, tmp_path):
+    stores = tmp_path / "stores.json"
+    stores.write_text(json.dumps([gcs("mf-storage-prod", project="mf-crucible")]))
+    monkeypatch.delenv("STORAGE_STORES")
+    monkeypatch.setenv("STORAGE_STORES_FILE", str(stores))
+    get_settings.cache_clear()
+    assert [(store.id, store.project) for store in get_settings().storage.stores] == [("mf-storage-prod", "mf-crucible")]
+
+
+def test_the_documented_example_stores_are_valid(monkeypatch):
+    from pathlib import Path
+
+    example = Path(__file__).resolve().parents[1] / "docs" / "stores.example.json"
+    monkeypatch.delenv("STORAGE_STORES")
+    monkeypatch.setenv("STORAGE_STORES_FILE", str(example))
+    monkeypatch.setenv("STORAGE_DEFAULT_STORE", "mf-storage-prod")
+    get_settings.cache_clear()
+    assert [store.type for store in get_settings().storage.stores] == ["gcs", "s3"]

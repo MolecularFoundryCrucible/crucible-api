@@ -13,9 +13,10 @@ from app.general_utils import if_match_satisfied
 from app.tables import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead, file_etag
 from app.models.multipart import EMPTY_SHA256, MultipartStatus
-from app.storage import StorageFailure, UploadMissing
+from app.storage import StorageFailure, UploadMissing, store_config
 from app.storage.crc32c import combine_parts
 from app.services.file_versions import keep_version
+from app.services.store_choice import choose_store
 from app.services.storage_downloads import multipart_prefix
 from app.utils.auth_utils import caller_row, is_caller, load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
@@ -129,7 +130,7 @@ def file_read(session, upload):
 
 
 def status(session, upload):
-    return MultipartStatus(upload_id=upload.upload_id, state="expired" if expired(upload) else upload.state, expires_at=utc(upload.expires_at), part_size=upload.part_size or 0, part_count=part_total(upload), failure_code=upload.failure_code, existing_file=file_read(session, upload) if upload.state == "completed" else None)
+    return MultipartStatus(upload_id=upload.upload_id, store_id=upload.store_id, state="expired" if expired(upload) else upload.state, expires_at=utc(upload.expires_at), part_size=upload.part_size or 0, part_count=part_total(upload), failure_code=upload.failure_code, existing_file=file_read(session, upload) if upload.state == "completed" else None)
 
 
 def unavailable(message):
@@ -148,18 +149,25 @@ def idempotent(session, principal, dsid, key, fingerprint):
     return status(session, previous)
 
 
+def request_fingerprint(body, **extra):
+    """The idempotency fingerprint of a request; a body that names no store hashes as it did before
+    stores could be named, so retries spanning an upgrade still match."""
+    values = body.model_dump(exclude={"store_id"} if body.store_id is None else None) | extra
+    return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def choose_part_size(size):
     return min(PART_SIZE, max(MIN_PART_SIZE, -(-size // (PARALLEL_PARTS * MIB)) * MIB))
 
 
-def new_session(session, principal, dsid, size, key, fingerprint, claimed_sha256, config, filename, replace_file_mfid=None, replace_base_etag=None):
+def new_session(session, principal, dsid, size, key, fingerprint, claimed_sha256, config, filename, store, replace_file_mfid=None, replace_base_etag=None):
     for scope, count_limit, byte_limit in ((is_caller(UploadSession.user_id, principal), config.owner_sessions, config.owner_bytes), (UploadSession.dataset_mfid == dsid, config.dataset_sessions, config.dataset_bytes)):
         count, reserved = session.exec(select(func.count(UploadSession.id), func.coalesce(func.sum(UploadSession.size), 0)).where(scope, *live())).one()
         if count >= count_limit or reserved + size > byte_limit:
             raise HTTPException(429, "Upload reservation quota exceeded", headers={"Retry-After": "60"})
     identifier = uuid4().hex
     part_size = choose_part_size(size) if size else None
-    upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, user_id=principal.internal_user_id, object_key=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=filename, expires_at=now() + INITIATION_WINDOW, size=size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=part_size, part_count=(size + part_size - 1) // part_size if size else None, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=claimed_sha256, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0, replace_file_mfid=replace_file_mfid, replace_base_etag=replace_base_etag)
+    upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, user_id=principal.internal_user_id, object_key=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=filename, expires_at=now() + INITIATION_WINDOW, size=size, protocol=PROTOCOL, bucket=store.bucket, store_id=store.id, state="initiating", part_size=part_size, part_count=(size + part_size - 1) // part_size if size else None, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=claimed_sha256, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0, replace_file_mfid=replace_file_mfid, replace_base_etag=replace_base_etag)
     session.add(upload)
     session.commit()
     session.refresh(upload)
@@ -170,7 +178,7 @@ def new_session(session, principal, dsid, size, key, fingerprint, claimed_sha256
 def reserve(engine, principal, dsid, body, key, config):
     if body.size > config.max_upload_bytes:
         raise HTTPException(413, "File exceeds the configured upload limit")
-    fingerprint = hashlib.sha256(json.dumps(body.model_dump(), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    fingerprint = request_fingerprint(body)
     with Session(engine) as session:
         user = caller_row(session, principal, for_update=True)
         if user is None:
@@ -192,7 +200,8 @@ def reserve(engine, principal, dsid, body, key, config):
             raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing_name.mfid, "etag": file_etag(existing_name.storage_path, existing_name.storage_generation, existing_name.sha256_hash, existing_name.size), "message": "Filename already exists"})
         if filename_reserved(session, dsid, body.filename):
             raise HTTPException(409, "Filename is reserved by another upload")
-        return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, body.filename)
+        store = choose_store(session, dataset, body.store_id)
+        return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, body.filename, store=store)
 
 
 def initiate(engine, storage, principal, dsid, body, key, config):
@@ -206,8 +215,8 @@ def start(engine, storage, upload):
     provider_id = None
     if upload.size:
         try:
-            identifiers = sorted(storage().open_uploads(upload.bucket, upload.object_key))
-            provider_id = identifiers[0] if identifiers else storage().start_upload(upload.bucket, upload.object_key)
+            identifiers = sorted(storage(upload.store_id).open_uploads(upload.bucket, upload.object_key))
+            provider_id = identifiers[0] if identifiers else storage(upload.store_id).start_upload(upload.bucket, upload.object_key)
         except StorageFailure:
             raise unavailable("Storage is temporarily unavailable; retry with the same Idempotency-Key") from None
     with Session(engine) as session:
@@ -215,7 +224,7 @@ def start(engine, storage, upload):
         if current is None:
             try:
                 if provider_id:
-                    storage().abort_upload(upload.bucket, upload.object_key, provider_id)
+                    storage(upload.store_id).abort_upload(upload.bucket, upload.object_key, provider_id)
             except StorageFailure:
                 logger.warning("multipart_leftover_abort_deferred upload_id=%s", upload.upload_id)
             raise HTTPException(409, "Upload could not be started: dataset_deleted")
@@ -231,7 +240,7 @@ def start(engine, storage, upload):
 def reserve_replace(engine, principal, file_mfid, body, key, if_match, config, backfill=None):
     if body.size > config.max_upload_bytes:
         raise HTTPException(413, "File exceeds the configured upload limit")
-    fingerprint = hashlib.sha256(json.dumps(body.model_dump() | {"replace_file_mfid": file_mfid}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    fingerprint = request_fingerprint(body, replace_file_mfid=file_mfid)
     with Session(engine) as session:
         user = caller_row(session, principal, for_update=True)
         if user is None:
@@ -277,7 +286,7 @@ def reserve_replace(engine, principal, file_mfid, body, key, if_match, config, b
             if backfilled:
                 session.commit()
             return MultipartStatus(state="completed", existing_file=AssociatedFileRead.model_validate(file, update={"dataset_mfid": dsid}))
-        return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, file.filename, replace_file_mfid=file_mfid, replace_base_etag=base_etag)
+        return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, file.filename, replace_file_mfid=file_mfid, replace_base_etag=base_etag, store=choose_store(session, dataset, body.store_id) if body.store_id else store_config(file.store_id))
 
 
 def initiate_replace(engine, storage, principal, file_mfid, body, key, if_match, config, backfill=None):
@@ -408,9 +417,9 @@ def complete(engine, storage, principal, dsid, body):
         session.refresh(upload)
         session.expunge(upload)
     try:
-        metadata = assemble(storage(), upload)
+        metadata = assemble(storage(upload.store_id), upload)
     except InvalidUpload as error:
-        if fail(engine, storage(), upload, str(error)) == "aborted":
+        if fail(engine, storage(upload.store_id), upload, str(error)) == "aborted":
             raise HTTPException(409, "Upload was aborted during completion") from None
         raise HTTPException(422, f"Upload failed verification: {error}") from None
     except StorageFailure:
@@ -458,9 +467,10 @@ def complete(engine, storage, principal, dsid, body):
                         file.sha256_hash = current.claimed_sha256
                         file.storage_crc32c = current.claimed_crc32c
                         file.sha256_verified_at = None
+                        file.store_id = current.store_id
                         session.add(file)
                     else:
-                        file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.object_key}", size=current.size, sha256_hash=current.claimed_sha256, storage_generation=metadata.version, storage_crc32c=current.claimed_crc32c)
+                        file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.object_key}", size=current.size, sha256_hash=current.claimed_sha256, storage_generation=metadata.version, storage_crc32c=current.claimed_crc32c, store_id=current.store_id)
                         session.add(file)
                     current.result_file_mfid = file.mfid
                     current.storage_generation = metadata.version
@@ -471,16 +481,16 @@ def complete(engine, storage, principal, dsid, body):
                     result = file_read(session, current)
     if aborted:
         try:
-            cleanup(engine, storage(), upload)
+            cleanup(engine, storage(upload.store_id), upload)
         except StorageFailure:
             logger.warning("multipart_cleanup_deferred upload_id=%s", upload.upload_id)
         raise HTTPException(409, "Upload was aborted during completion")
     if code is not None:
-        fail(engine, storage(), upload, code)
+        fail(engine, storage(upload.store_id), upload, code)
         raise HTTPException(403 if code == "permission_revoked" else 409, f"Upload could not be published: {code}")
     try:
-        for provider_id in storage().open_uploads(upload.bucket, upload.object_key):
-            storage().abort_upload(upload.bucket, upload.object_key, provider_id)
+        for provider_id in storage(upload.store_id).open_uploads(upload.bucket, upload.object_key):
+            storage(upload.store_id).abort_upload(upload.bucket, upload.object_key, provider_id)
     except StorageFailure:
         logger.warning("multipart_leftover_abort_deferred upload_id=%s", upload.upload_id)
     if previous is not None:
@@ -502,6 +512,6 @@ def abort(engine, storage, principal, dsid, upload_id):
         session.refresh(upload)
         session.expunge(upload)
     try:
-        cleanup(engine, storage(), upload)
+        cleanup(engine, storage(upload.store_id), upload)
     except StorageFailure:
         raise unavailable("Storage cleanup is temporarily unavailable; retry the abort") from None

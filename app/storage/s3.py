@@ -41,13 +41,14 @@ def find(operation, **params):
 
 
 class S3Store:
-    """An S3-compatible store through boto3. Requests go to S3_ENDPOINT_URL; presigned URLs carry
-    S3_PUBLIC_URL, the address clients reach the store on. Keys are never overwritten, so versions
-    are informational: the VersionId when the bucket keeps versions, else the ETag."""
+    """An S3-compatible store through boto3. Requests go to the store's endpoint_url; presigned URLs
+    carry its public_url, the address clients reach the store on. Keys are never overwritten, so
+    versions are informational: the VersionId when the bucket keeps versions, else the ETag."""
 
-    def __init__(self, settings):
-        if not settings.s3_endpoint_url:
+    def __init__(self, store):
+        if not store.endpoint_url:
             raise StorageFailure("storage_not_configured")
+        self.store = store
         # boto3 1.36 and later add streaming checksums by default, which several S3 servers reject.
         config = Config(
             signature_version="s3v4",
@@ -59,12 +60,12 @@ class S3Store:
             retries={"mode": "standard", "max_attempts": 3},
         )
         session = boto3.session.Session(
-            aws_access_key_id=get_secret("S3_ACCESS_KEY_ID"),
-            aws_secret_access_key=get_secret("S3_SECRET_ACCESS_KEY"),
-            region_name=settings.s3_region,
+            aws_access_key_id=get_secret(store.access_key_name),
+            aws_secret_access_key=get_secret(store.secret_key_name),
+            region_name=store.region,
         )
-        self.client = session.client("s3", endpoint_url=settings.s3_endpoint_url, config=config)
-        self.presigner = session.client("s3", endpoint_url=settings.s3_public_url or settings.s3_endpoint_url, config=config)
+        self.client = session.client("s3", endpoint_url=store.endpoint_url, config=config)
+        self.presigner = session.client("s3", endpoint_url=store.public_url or store.endpoint_url, config=config)
 
     def start_upload(self, bucket, key):
         with failures():
@@ -133,6 +134,11 @@ class S3Store:
             params["ResponseContentType"] = content_type
         with failures("signing_failed"):
             return self.presigner.generate_presigned_url("get_object", Params=params, ExpiresIn=int(expires_in.total_seconds()))
+
+    def list_keys(self, bucket, prefix):
+        with failures():
+            pages = self.client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix)
+            return [item["Key"] for page in pages for item in page.get("Contents", [])]
 
     def put_bytes(self, bucket, key, data, content_type):
         with failures():

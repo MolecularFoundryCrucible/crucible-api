@@ -98,17 +98,11 @@ The credential is read from `CRUCIBLE_API_TOKEN` (`--token-env` names another va
 
 | Variable | Default and purpose |
 | --- | --- |
-| `STORAGE_BACKEND` | `gcs` (Google Cloud Storage); `s3` for an S3-compatible store |
-| `UPLOAD_BUCKET` | Required when files are stored: the deployment's single upload bucket |
-| `STORAGE_READ_BUCKETS` | Optional comma-separated list of other buckets that existing records may point at, served read-only |
+| `STORAGE_STORES` | Required when files are stored: the stores, a JSON list ([Stores](#stores)); usually given as a file with `STORAGE_STORES_FILE` |
+| `STORAGE_DEFAULT_STORE` | The id of the store uploads use when nothing chooses another; required when `STORAGE_STORES` lists more than one |
+| `STORAGE_{ID}_ACCESS_KEY_ID`, `STORAGE_{ID}_SECRET_ACCESS_KEY` | Required for each `s3` store, as secrets |
+| `STORAGE_{ID}_CREDENTIALS` | Optional for a `gcs` store: a service account key file, for a server outside Google Cloud |
 | `MULTIPART_UPLOAD_ENABLED` | `false`; controls initiation only |
-| `MULTIPART_UPLOAD_BUCKET` | Required when uploads are enabled; must equal `UPLOAD_BUCKET` |
-| `MULTIPART_UPLOAD_SIGNER` | Optional on `gcs`: a service account the server impersonates for every storage operation; required when the server's identity cannot sign URLs (GKE Workload Identity, Workload Identity Federation) |
-| `GCS_PROJECT`, `MULTIPART_UPLOAD_PROJECT` | Optional on `gcs`: project of the storage client; `MULTIPART_UPLOAD_PROJECT` applies only when `GCS_PROJECT` is unset |
-| `S3_ENDPOINT_URL` | Required on `s3`: the address the API reaches the store on |
-| `S3_PUBLIC_URL` | On `s3`: the address in signed URLs, which clients must reach; defaults to `S3_ENDPOINT_URL` |
-| `S3_REGION` | On `s3`: `us-east-1` |
-| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Required on `s3`, as secrets |
 | `MAX_UPLOAD_BYTES` | 500 GiB, which is also the maximum |
 | `MULTIPART_OWNER_SESSIONS` | 8 concurrent sessions per owner |
 | `MULTIPART_DATASET_SESSIONS` | 32 concurrent sessions per dataset |
@@ -118,22 +112,54 @@ The credential is read from `CRUCIBLE_API_TOKEN` (`--token-env` names another va
 | `STORAGE_CLEANUP_ENABLED` | `false`; enables `storage cleanup` (below) |
 | `FILE_VERSION_RETENTION_DAYS` | 14; how long replaced and deleted content is kept before `storage cleanup` removes it (see [File replacement](file_replacement.md)) |
 
+
+`{ID}` is the store's id in capitals, with `-` written as `_`: the store `mf-storage-prod` reads `STORAGE_MF_STORAGE_PROD_CREDENTIALS`.
+
+The single-store settings of earlier releases (`STORAGE_BACKEND`, `UPLOAD_BUCKET`, `STORAGE_READ_BUCKETS`, `GCS_PROJECT`, `S3_ENDPOINT_URL`, `S3_PUBLIC_URL`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `MULTIPART_UPLOAD_BUCKET`, `MULTIPART_UPLOAD_SIGNER`, `MULTIPART_UPLOAD_PROJECT`) are retired: the server refuses to start while one is set and names its replacement.
+
+## Stores
+
+A store is a bucket the API manages: it signs uploads and downloads, keeps versions and deletes content. `STORAGE_STORES` lists them; [`stores.example.json`](stores.example.json) shows a Google Cloud Storage store and an S3-compatible one. Each entry has:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Lowercase letters, digits and single hyphens, starting with a letter, at most 63, for example `mf-storage-prod`. Recorded on every file; never change it once files use it |
+| `display_name`, `description` | Shown to clients by `GET /storage/stores` |
+| `type` | `gcs` or `s3` |
+| `bucket` | The bucket new uploads go to |
+| `read_buckets` | Optional: other buckets this store's existing records may point at, served read-only |
+| `endpoint_url`, `public_url`, `region` | For `s3`: the address the API reaches the store on (required), the address in signed URLs, which clients must reach (default `endpoint_url`), and the region (default `us-east-1`) |
+| `project`, `service_account` | For `gcs`: the storage client's project, and a service account the server acts as for this store, which it needs when its own identity cannot sign URLs (GKE Workload Identity, Workload Identity Federation); the server's identity needs Service Account Token Creator on it |
+
+Every stored file records its store. An upload goes to the store it names (`store_id` in the initiation request; the session's responses report the store chosen as `store_id`), else the default of the dataset's project, else that of its instrument, else `STORAGE_DEFAULT_STORE`. Project and instrument admins set those defaults with `PATCH /projects/{project_ref}/settings` and `PATCH /instruments/{instrument_ref}/settings` (`{"default_store_id": "<id>"}`, a JSON Merge Patch with `ETag` and `If-Match`; members read them with `GET`). A replacement goes to the file's store unless it names another. A request naming a store that is not configured answers 422 `unknown_store`; a project or instrument default naming one is skipped.
+
+When a store is removed from `STORAGE_STORES`, its files keep their store id: their metadata stays readable, their download links and replacements answer 503 `store_unavailable`, the dataset's download links map them to `null`, and `storage cleanup` leaves their content. Deleting such a file still keeps its content for the grace period, and configuring the store again restores them. `python -m app.cli storage stores` lists the stores with their file counts and exits 1 when files are in a store that is not configured or have none.
+
+### Moving from the single-store settings
+
+Files stored by earlier releases have no store recorded and answer 503 `store_unavailable` until they get one:
+
+1. Replace the retired settings with `STORAGE_STORES`, one store for the existing bucket.
+2. Run the release's migrations.
+3. Run `python -m app.cli files assign-store --store <id>`, then again with `--commit`: it records the store on every stored file, file version and upload session without one.
+4. Run `python -m app.cli files backfill-locations --store <id>` (see [Missing storage paths](storage_downloads.md#missing-storage-paths)), then again with `--commit`.
+
 ## Google Cloud Storage
 
-The server's identity is Application Default Credentials: an attached service account, Workload Identity, or a key file named by `GOOGLE_APPLICATION_CREDENTIALS`. With `MULTIPART_UPLOAD_SIGNER` set, the server acts as that account for every storage operation, and the runtime identity needs Service Account Token Creator on it ([impersonated credentials](https://google-auth.readthedocs.io/en/latest/reference/google.auth.impersonated_credentials.html)). URLs are signed locally with a key file, otherwise through IAM signBlob, for which an attached account needs Token Creator on itself. The account needs object access on the upload and record buckets and read access on `STORAGE_READ_BUCKETS`.
+A `gcs` store's identity is its key file (`STORAGE_{ID}_CREDENTIALS`) when given, else the server's Application Default Credentials: an attached service account, Workload Identity, or a key file named by `GOOGLE_APPLICATION_CREDENTIALS`. With `service_account` set, the server acts as that account for every operation on the store, and its identity needs Service Account Token Creator on it ([impersonated credentials](https://google-auth.readthedocs.io/en/latest/reference/google.auth.impersonated_credentials.html)). URLs are signed locally with a key file, otherwise through IAM signBlob, for which an attached account needs Token Creator on itself. The account needs object access on the store's bucket (and the record bucket for the default store) and read access on its `read_buckets`.
 
 The upload bucket needs:
 
 - A lifecycle rule that aborts incomplete multipart uploads, with an age beyond the seven-day session lifetime. Where `storage cleanup` is not enabled, it is the only cleanup for sessions abandoned without an abort request.
 - A CORS rule for browser clients: their origins, `PUT`, the returned request headers (`content-type`, `x-goog-hash`), and `ETag` exposed.
 
-Google's S3 interface is not supported, because it does not check part or whole-object checksums: `STORAGE_BACKEND=s3` refuses an `S3_ENDPOINT_URL` on `googleapis.com`.
+Google's S3 interface is not supported, because it does not check part or whole-object checksums: an `s3` store refuses an `endpoint_url` on `googleapis.com`.
 
 ## S3-compatible stores
 
 Part URLs are presigned with SigV4 and bind the part's CRC32C and length (`x-amz-checksum-crc32c` and `Content-Length`, both returned as headers to send), so the store refuses a part with other content. Many S3 servers do not report a whole-object CRC32C, so the API combines the authorized part checksums and sizes and compares the result with the completion claim. When the store lists each part's own CRC32C (Versity S3 Gateway does; SeaweedFS 4.51 does not), the API first compares those with the authorized values; otherwise the check depends on the store enforcing the signed checksum. A store is supported only if `storage check` passes on it.
 
-Signed URLs embed `S3_PUBLIC_URL`: a client that reaches the store by another address receives signature errors. Objects are recorded with `storage_backend` `"gcs"`, which means "stored by the API" on every backend ([Remote file records](remote_file_records.md)). The Docker Compose bundle and external S3 stores are covered in the [installation guide](https://github.com/MolecularFoundryCrucible/crucible-selfhost/blob/main/compose/docs/storage.md).
+Signed URLs embed the store's `public_url`: a client that reaches the store by another address receives signature errors. Objects are recorded with `storage_backend` `"gcs"`, which means "stored by the API" on every backend ([Remote file records](remote_file_records.md)). The Docker Compose bundle and external S3 stores are covered in the [installation guide](https://github.com/MolecularFoundryCrucible/crucible-selfhost/blob/main/compose/docs/storage.md).
 
 ## Operations
 
@@ -141,7 +167,7 @@ Signed URLs embed `S3_PUBLIC_URL`: a client that reaches the store by another ad
 2. Create the upload bucket with the access, lifecycle and CORS rules above.
 3. Run `python -m app.cli storage check`, then set `MULTIPART_UPLOAD_ENABLED=true`.
 
-`python -m app.cli storage check` uploads a two-part file under `_crucible-check/` with the configured store, checks that the store refuses a part whose bytes do not match the signed checksum, completes the upload, downloads it through a signed URL, and deletes it. `--public` signs for `S3_PUBLIC_URL`, `--keep` leaves the test file, and `--size-mib` sets the first part's size. CI runs it against SeaweedFS and Versity S3 Gateway.
+`python -m app.cli storage check` uploads a two-part file under `_crucible-check/` in each store (`--store` names one), checks that the store refuses a part whose bytes do not match the signed checksum, completes the upload, downloads it through a signed URL, and deletes it. `--public` signs for an `s3` store's `public_url`, `--keep` leaves the test file, and `--size-mib` sets the first part's size. CI runs it against SeaweedFS and Versity S3 Gateway.
 
 `python -m app.cli storage cleanup` aborts sessions that expired or whose cleanup failed, and deletes replaced and deleted content past its retention period. Run it hourly; it does nothing unless `STORAGE_CLEANUP_ENABLED=true` (the bundle sets it), except with `--dry-run`. `--batch` caps the sessions and versions handled per run (default 500).
 

@@ -13,6 +13,7 @@ from app.services.storage_downloads import (
     resolve_storage_object,
 )
 import app.storage.gcs as google
+from tests.stores import gcs, use_stores
 
 DS = "0t3qajrnzhtn7000x6s0x427hg"
 MULTIPART = "mf-crucible-multipart-staging"
@@ -20,7 +21,13 @@ MULTIPART = "mf-crucible-multipart-staging"
 
 @pytest.fixture(autouse=True)
 def multipart_bucket(monkeypatch):
-    monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", MULTIPART)
+    use_stores(monkeypatch, gcs("staging", bucket=MULTIPART, read_buckets=["mf-storage-prod"]))
+
+
+def default_store():
+    from app.config import get_settings
+
+    return get_settings().storage.store("staging")
 
 
 @pytest.mark.parametrize("path, generation, expected", [
@@ -31,7 +38,7 @@ def multipart_bucket(monkeypatch):
     (f"{MULTIPART}/{DS}/_files/abc", "7", StorageObject(MULTIPART, f"{DS}/_files/abc", "7")),
 ])
 def test_paths_under_the_own_dataset_resolve(path, generation, expected):
-    assert resolve_storage_object(path, generation, DS) == expected
+    assert resolve_storage_object(default_store(), path, generation, DS) == expected
 
 
 @pytest.mark.parametrize("path, generation, reason", [
@@ -50,16 +57,8 @@ def test_paths_under_the_own_dataset_resolve(path, generation, expected):
 ])
 def test_paths_outside_the_rule_are_rejected(path, generation, reason):
     with pytest.raises(StorageLocationError) as error:
-        resolve_storage_object(path, generation, DS)
+        resolve_storage_object(default_store(), path, generation, DS)
     assert error.value.reason == reason
-
-
-def test_multipart_bucket_unset_allows_only_the_legacy_bucket(monkeypatch):
-    monkeypatch.delenv("MULTIPART_UPLOAD_BUCKET")
-    with pytest.raises(StorageLocationError) as error:
-        resolve_storage_object(f"{MULTIPART}/{DS}/_files/abc", "7", DS)
-    assert error.value.reason == "bucket_not_allowed"
-    assert resolve_storage_object(f"mf-storage-prod/{DS}/a.txt", None, DS).bucket == "mf-storage-prod"
 
 
 @pytest.mark.parametrize("filename, stored, expected_disposition, content_type", [
@@ -205,9 +204,9 @@ def test_signing_errors_stay_server_side(monkeypatch):
 
     def fail(*args, **kwargs):
         raise RuntimeError("https://iamcredentials.googleapis.com signer@mf-crucible.iam.gserviceaccount.com")
-    monkeypatch.setattr(gcs_storage, "get_store", lambda: SimpleNamespace(signed_download=fail))
+    monkeypatch.setattr(gcs_storage, "get_store", lambda *_: SimpleNamespace(signed_download=fail))
     with pytest.raises(HTTPException) as raised:
-        gcs_storage._signed_download("file", DS, f"mf-storage-prod/{DS}/scan.tif", None, "scan.tif")
+        gcs_storage._signed_download("file", DS, f"mf-storage-prod/{DS}/scan.tif", None, "scan.tif", store_id="staging")
     assert raised.value.status_code == 503
     assert "googleapis" not in raised.value.detail and "iam" not in raised.value.detail
 

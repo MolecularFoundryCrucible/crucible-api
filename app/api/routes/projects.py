@@ -1,15 +1,17 @@
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response
 from sqlalchemy import false, func, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ProjectRef, UserRef
 from app.tables import (
-    AccessGroup, Project, Resource, ScientificMetadataBinary, User, UserAccessGroupLink,
+    AccessGroup, Project, Resource, ResourceSettings, ScientificMetadataBinary, User, UserAccessGroupLink,
 )
+from app.models.resource_settings import ProjectSettings, ResourceSettingsRead
 from app.services.capabilities import record_capabilities
+from app.services.resource_settings import settings_response, update_settings
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
 from app.utils.auth_utils import (
@@ -626,3 +628,25 @@ def remove_user_from_project(
         return _get_project_users(proj, session, auth_res)
 
 
+def _project_for_settings(session, project_ref, principal, permission):
+    proj = resolve_project_reference(project_ref, session)
+    if proj is None:
+        raise HTTPException(status_code=404, detail=f"Project {project_ref} not found")
+    require_permission(session, principal, proj.unique_id, permission)
+    return proj.unique_id
+
+
+@router.get("/projects/{project_ref}/settings", response_model=ResourceSettingsRead, responses={200: {"headers": {"ETag": {"description": "Current settings revision; send it as `If-Match` on PATCH", "schema": {"type": "string"}}}}, 412: {"description": "If-Match does not match the current revision: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}, 422: {"description": "The patch is not an object, or the merged document has an unknown key, an unknown store (`unknown_store`), an invalid value, or exceeds 16 KiB"}})
+def read_project_settings(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)], response: Response):
+    '''The project's settings: `default_store_id`, the store uploads to its datasets use unless an upload names one. Members read them.'''
+    with Session(get_engine()) as session:
+        mfid = _project_for_settings(session, project_ref, auth_res, Permission.READ)
+        return settings_response(session.get(ResourceSettings, mfid), response)
+
+
+@router.patch("/projects/{project_ref}/settings", response_model=ResourceSettingsRead, responses={200: {"headers": {"ETag": {"description": "Current settings revision; send it as `If-Match` on PATCH", "schema": {"type": "string"}}}}, 412: {"description": "If-Match does not match the current revision: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}, 422: {"description": "The patch is not an object, or the merged document has an unknown key, an unknown store (`unknown_store`), an invalid value, or exceeds 16 KiB"}})
+def update_project_settings(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)], response: Response, patch: Annotated[Any, Body()], if_match: Annotated[Optional[str], Header()] = None):
+    '''Merge a JSON Merge Patch (RFC 7396) into the project's settings; `null` removes a key. Requires admin on the project. Send `If-Match` with the ETag from GET to refuse the change when another write happened first.'''
+    with Session(get_engine()) as session:
+        mfid = _project_for_settings(session, project_ref, auth_res, Permission.MANAGE_ACL)
+    return settings_response(update_settings(get_engine(), mfid, ProjectSettings, patch, if_match), response)

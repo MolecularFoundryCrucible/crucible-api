@@ -15,7 +15,7 @@ TRASH = "/datasets/ds/deleted_files"
 
 @pytest.fixture
 def trash(flow, monkeypatch):
-    monkeypatch.setattr(routes, "get_store", lambda: flow[2])
+    monkeypatch.setattr(routes, "get_store", flow[2])
     file = published_file(flow)
     assert flow[0].delete(f"/files/{file['mfid']}").status_code == 200
     return flow, file

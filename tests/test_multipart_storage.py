@@ -10,6 +10,7 @@ from google.oauth2 import service_account
 
 from app.storage import Part, StorageFailure, UploadMissing
 from app.storage import gcs
+from tests.stores import gcs as gcs_store, use_stores
 from app.storage.gcs import GoogleStore
 from app.services.multipart import now
 
@@ -17,6 +18,7 @@ from app.services.multipart import now
 def adapter():
     storage = GoogleStore.__new__(GoogleStore)
     storage.config = SimpleNamespace(bucket="dedicated")
+    storage.store, storage.bucket = None, "dedicated"
     storage.credentials = MagicMock(spec=Signing)
     storage.client = MagicMock()
     storage.http = MagicMock()
@@ -83,7 +85,7 @@ def test_an_attached_account_is_the_identity_and_signs_through_sign_blob(monkeyp
 
 
 def test_with_a_signer_every_operation_acts_as_it(monkeypatch):
-    monkeypatch.setenv("MULTIPART_UPLOAD_SIGNER", "signer@lab.iam.gserviceaccount.com")
+    use_stores(monkeypatch, gcs_store("dedicated", service_account="signer@lab.iam.gserviceaccount.com"))
     monkeypatch.setattr("app.storage.gcs.google.auth.default", lambda scopes: (TokenOnly("workload"), "lab"))
     identity = gcs.server_credentials()
     assert identity.signer_email == "signer@lab.iam.gserviceaccount.com"

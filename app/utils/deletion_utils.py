@@ -9,7 +9,7 @@ from app.tables import (
     AccessGroup, AccessGroupJoinRequest, AssociatedFile, Dataset,
     DatasetKeywordLink, DatasetLink, DatasetSampleLink, DeletionRequest,
     Instrument, IngestionRequest, PostprocessingRun, Project, Resource, ResourceACL,
-    ResourceEmbedding, Sample, ScientificMetadataBinary, SampleLink, UserRecentResource,
+    ResourceEmbedding, ResourceSettings, Sample, ScientificMetadataBinary, SampleLink, UserRecentResource,
     Thumbnail, UploadSession, UserAccessGroupLink,
 )
 
@@ -304,6 +304,7 @@ def hard_delete_resource(resource_id: str, session: Session, resource: Resource 
     session.execute(
         delete(UserRecentResource).where(UserRecentResource.resource_mfid == resource_id)
     )
+    session.execute(delete(ResourceSettings).where(ResourceSettings.mfid == resource_id))
     if resource.resource_type == "dataset":
         _hard_delete_dataset(resource_id, session, resource)
     elif resource.resource_type == "sample":

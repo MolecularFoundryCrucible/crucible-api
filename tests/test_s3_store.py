@@ -9,7 +9,7 @@ import app.storage.s3 as s3
 from app.storage import Part, StorageFailure, UploadMissing
 
 BUCKET, KEY, UPLOAD_ID = "crucible-files", "ds/_files/abc", "upload-1"
-SETTINGS = SimpleNamespace(s3_endpoint_url="http://seaweedfs:8333", s3_public_url="https://crucible.lab.example", s3_region="us-east-1")
+SETTINGS = SimpleNamespace(endpoint_url="http://seaweedfs:8333", public_url="https://crucible.lab.example", region="us-east-1", access_key_name="S3_ACCESS_KEY_ID", secret_key_name="S3_SECRET_ACCESS_KEY")
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def test_clients_use_path_style_signing_and_send_checksums_only_when_required(st
 
 def test_public_address_defaults_to_the_endpoint(monkeypatch):
     monkeypatch.setattr(s3, "get_secret", lambda name: "x")
-    store = s3.S3Store(SimpleNamespace(s3_endpoint_url="http://localhost:8333", s3_public_url=None, s3_region="us-east-1"))
+    store = s3.S3Store(SimpleNamespace(endpoint_url="http://localhost:8333", public_url=None, region="us-east-1", access_key_name="A", secret_key_name="B"))
     assert store.presigner.meta.endpoint_url == "http://localhost:8333"
 
 
@@ -138,17 +138,18 @@ def test_delete_ignores_the_version(store):
 
 def test_store_without_an_endpoint_is_not_configured():
     with pytest.raises(StorageFailure, match="storage_not_configured"):
-        s3.S3Store(SimpleNamespace(s3_endpoint_url=None, s3_public_url=None, s3_region="us-east-1"))
+        s3.S3Store(SimpleNamespace(endpoint_url=None))
 
 
 def test_get_store_chooses_the_backend(monkeypatch):
     from app import storage
 
-    monkeypatch.setenv("STORAGE_BACKEND", "s3")
-    monkeypatch.setenv("S3_ENDPOINT_URL", "http://seaweedfs:8333")
+    monkeypatch.setenv("STORAGE_STORES", '[{"id": "files", "display_name": "Files", "type": "s3", "bucket": "b", "endpoint_url": "http://seaweedfs:8333"}]')
     monkeypatch.setattr(s3, "get_secret", lambda name: "x")
+    from app.config import get_settings
+    get_settings.cache_clear()
     storage.get_store.cache_clear()
     try:
-        assert isinstance(storage.get_store(), s3.S3Store)
+        assert isinstance(storage.get_store("files"), s3.S3Store)
     finally:
         storage.get_store.cache_clear()

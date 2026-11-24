@@ -12,7 +12,9 @@ FEATURE_SETTINGS = (
     "UPLOAD_BUCKET", "GCS_PROJECT", "GCS_SA", "GCS_SA_VERSION", "STORAGE_READ_BUCKETS", "MULTIPART_UPLOAD_ENABLED", "RECORD_BUCKET",
     "STORAGE_BACKEND", "S3_ENDPOINT_URL", "S3_PUBLIC_URL", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY",
     "MULTIPART_UPLOAD_BUCKET", "MULTIPART_UPLOAD_SIGNER", "MULTIPART_UPLOAD_PROJECT", "FILE_VERSION_RETENTION_DAYS", "STORAGE_CLEANUP_ENABLED",
+    "STORAGE_STORES", "STORAGE_DEFAULT_STORE",
 )
+S3_STORE = '[{"id": "files", "display_name": "Files", "type": "s3", "bucket": "crucible-files", "endpoint_url": "http://seaweedfs:8333"}]'
 
 
 @pytest.fixture
@@ -181,74 +183,57 @@ def test_storage_is_off_when_not_configured(empty):
     assert missing_required_settings() == []
 
 
-@pytest.mark.parametrize("setting", [("MULTIPART_UPLOAD_ENABLED", "true"), ("STORAGE_READ_BUCKETS", "old-bucket")])
-def test_storage_requested_without_bucket_is_missing(empty, setting):
+def test_uploads_without_stores_are_missing(empty):
     _required(empty)
-    empty.setenv(*setting)
-    assert missing_required_settings() == ["UPLOAD_BUCKET"]
+    empty.setenv("MULTIPART_UPLOAD_ENABLED", "true")
+    assert missing_required_settings() == ["STORAGE_STORES"]
 
 
-def test_record_bucket_needs_no_upload_bucket(empty):
+def test_record_bucket_needs_a_store(empty):
     _required(empty)
     empty.setenv("RECORD_BUCKET", "records")
-    assert missing_required_settings() == []
+    assert missing_required_settings() == ["STORAGE_STORES"]
 
 
 def test_google_storage_needs_no_key_and_ignores_gcs_sa(empty):
     _required(empty)
-    empty.setenv("UPLOAD_BUCKET", "bucket")
+    empty.setenv("STORAGE_STORES", '[{"id": "main", "display_name": "Main", "type": "gcs", "bucket": "bucket"}]')
     empty.setenv("GCS_SA_VERSION", "projects/1/secrets/sa/versions/latest")
     assert missing_required_settings() == []
     assert "GCS_SA" not in secrets_in_use()
 
 
 @pytest.mark.parametrize("endpoint", ["https://storage.googleapis.com", "https://storage.us-central1.rep.googleapis.com/"])
-def test_s3_backend_refuses_google_endpoints(empty, endpoint):
+def test_s3_stores_refuse_google_endpoints(empty, endpoint):
     _required(empty)
-    empty.setenv("STORAGE_BACKEND", "s3")
-    empty.setenv("S3_ENDPOINT_URL", endpoint)
-    with pytest.raises(ConfigurationError, match="S3_ENDPOINT_URL .*use STORAGE_BACKEND=gcs"):
+    empty.setenv("STORAGE_STORES", S3_STORE.replace("http://seaweedfs:8333", endpoint))
+    with pytest.raises(ConfigurationError, match="Google Cloud Storage"):
         get_settings()
-    get_settings.cache_clear()
-    empty.setenv("STORAGE_BACKEND", "gcs")
-    assert get_settings().storage.backend == "gcs"
 
 
-def test_s3_storage_needs_its_endpoint_and_keys_but_not_gcs_credentials(empty):
+def test_s3_store_needs_its_keys_but_not_gcs_credentials(empty):
     _required(empty)
-    empty.setenv("STORAGE_BACKEND", "s3")
-    empty.setenv("UPLOAD_BUCKET", "crucible-files")
-    assert missing_required_settings() == ["S3_ACCESS_KEY_ID", "S3_ENDPOINT_URL", "S3_SECRET_ACCESS_KEY"]
+    empty.setenv("STORAGE_STORES", S3_STORE)
+    assert missing_required_settings() == ["STORAGE_FILES_ACCESS_KEY_ID", "STORAGE_FILES_SECRET_ACCESS_KEY"]
     get_settings.cache_clear()
-    for name, value in (("S3_ENDPOINT_URL", "http://seaweedfs:8333"), ("S3_ACCESS_KEY_ID", "key"), ("S3_SECRET_ACCESS_KEY", "secret")):
-        empty.setenv(name, value)
+    empty.setenv("STORAGE_FILES_ACCESS_KEY_ID", "key")
+    empty.setenv("STORAGE_FILES_SECRET_ACCESS_KEY", "secret")
     assert missing_required_settings() == []
-    storage = get_settings().storage
-    assert (storage.backend, storage.s3_region, storage.s3_public_url) == ("s3", "us-east-1", None)
+    store = get_settings().storage.store("files")
+    assert (store.type, store.region, store.public_url) == ("s3", "us-east-1", None)
 
 
-def test_s3_record_bucket_alone_needs_the_s3_credentials(empty):
+def test_unknown_store_type_is_refused(empty):
     _required(empty)
-    empty.setenv("STORAGE_BACKEND", "s3")
-    empty.setenv("RECORD_BUCKET", "crucible-records")
-    assert missing_required_settings() == ["S3_ACCESS_KEY_ID", "S3_ENDPOINT_URL", "S3_SECRET_ACCESS_KEY"]
-
-
-def test_unknown_storage_backend_is_refused(empty):
-    _required(empty)
-    empty.setenv("STORAGE_BACKEND", "azure")
-    with pytest.raises(ConfigurationError, match="STORAGE_BACKEND"):
+    empty.setenv("STORAGE_STORES", S3_STORE.replace('"s3"', '"azure"'))
+    with pytest.raises(ConfigurationError, match="STORAGE_STORES"):
         get_settings()
 
 
-def test_s3_multipart_needs_no_google_signer(empty):
+def test_s3_uploads_need_no_google_signer(empty):
     _required(empty)
-    for name, value in (("STORAGE_BACKEND", "s3"), ("UPLOAD_BUCKET", "crucible-files"), ("MULTIPART_UPLOAD_ENABLED", "true"), ("MULTIPART_UPLOAD_BUCKET", "crucible-files"),
-                        ("S3_ENDPOINT_URL", "http://seaweedfs:8333"), ("S3_ACCESS_KEY_ID", "key"), ("S3_SECRET_ACCESS_KEY", "secret")):
+    for name, value in (("STORAGE_STORES", S3_STORE), ("MULTIPART_UPLOAD_ENABLED", "true"), ("STORAGE_FILES_ACCESS_KEY_ID", "key"), ("STORAGE_FILES_SECRET_ACCESS_KEY", "secret")):
         empty.setenv(name, value)
-    check_settings()
-    get_settings.cache_clear()
-    empty.setenv("STORAGE_BACKEND", "gcs")
     check_settings()
 
 
@@ -342,11 +327,11 @@ def test_read_secrets_skips_features_that_are_off(startup, empty):
 
 
 def test_read_secrets_skips_storage_when_it_is_not_configured(startup, empty):
-    empty.setenv("STORAGE_BACKEND", "s3")
-    empty.setenv("S3_SECRET_ACCESS_KEY_VERSION", "projects/1/secrets/s3/versions/1")
+    empty.setenv("STORAGE_FILES_SECRET_ACCESS_KEY_VERSION", "projects/1/secrets/s3/versions/1")
     config.read_secrets()
     assert startup == [KEY_VERSION]
-    empty.setenv("RECORD_BUCKET", "records")
+    empty.setenv("STORAGE_STORES", S3_STORE)
+    empty.setenv("STORAGE_FILES_ACCESS_KEY_ID", "key")
     get_settings.cache_clear()
     config.read_secrets()
     assert "projects/1/secrets/s3/versions/1" in startup
@@ -418,6 +403,7 @@ def test_a_worker_starts_with_its_secrets_already_read(startup):
 
 
 def test_s3_keys_must_be_one_line(empty):
-    empty.setenv("S3_SECRET_ACCESS_KEY", "two\nlines")
-    with pytest.raises(ConfigurationError, match="S3_SECRET_ACCESS_KEY must be one line of printable ASCII"):
-        config.get_secret("S3_SECRET_ACCESS_KEY")
+    empty.setenv("STORAGE_STORES", S3_STORE)
+    empty.setenv("STORAGE_FILES_SECRET_ACCESS_KEY", "two\nlines")
+    with pytest.raises(ConfigurationError, match="STORAGE_FILES_SECRET_ACCESS_KEY must be one line of printable ASCII"):
+        config.get_secret("STORAGE_FILES_SECRET_ACCESS_KEY")

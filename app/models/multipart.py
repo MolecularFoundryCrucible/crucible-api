@@ -3,6 +3,7 @@ import hashlib
 from datetime import datetime
 from typing import Annotated, Literal
 
+from app.storage.registry import STORE_ID_PATTERN
 from pydantic import BaseModel, ConfigDict, Field, AfterValidator, field_validator, model_validator
 
 from app.models.datasets import AssociatedFileRead
@@ -45,6 +46,7 @@ class MultipartInitiate(BaseModel):
     filename: str = Field(min_length=1, max_length=1024)
     size: int = Field(ge=0, le=500 * 1024 ** 3, strict=True)
     sha256_hash: SHA256 | None = None
+    store_id: str | None = Field(default=None, max_length=63, pattern=STORE_ID_PATTERN, description="The store to upload to (see GET /storage/stores); by default the project's, then the instrument's, then the server's default store.")
     check_empty_hash = model_validator(mode="after")(empty_hash)
 
     @field_validator("filename")
@@ -57,6 +59,7 @@ class MultipartReplace(BaseModel):
     model_config = ConfigDict(extra="forbid")
     size: int = Field(ge=0, le=500 * 1024 ** 3, strict=True)
     sha256_hash: SHA256 | None = None
+    store_id: str | None = Field(default=None, max_length=63, pattern=STORE_ID_PATTERN, description="The store to upload the new content to; by default the file's current store.")
     check_empty_hash = model_validator(mode="after")(empty_hash)
 
 
@@ -94,6 +97,7 @@ class UploadedPart(BaseModel):
 class MultipartStatus(BaseModel):
     upload_id: str | None = None
     upload_protocol: Literal["xml-multipart-signed-v1"] = "xml-multipart-signed-v1"
+    store_id: str | None = Field(default=None, description="The store this upload goes to (see GET /storage/stores)")
     state: str
     expires_at: datetime | None = None
     part_size: int | None = None

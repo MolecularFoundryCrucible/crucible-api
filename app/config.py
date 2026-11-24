@@ -7,15 +7,31 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, SettingsError
 
+from app.storage.registry import StoreConfig
 from app.utils.multipart_config import MultipartStorageConfig
 
 logger = logging.getLogger(__name__)
 DEFAULT_SECRETS_DIR = "/run/secrets"
 _SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
-_KEYED_SECRET = re.compile(r"(?:OIDC|OAUTH)_[A-Z][A-Z0-9]*_CLIENT_SECRET|CRUCIBLE_AUTH_PREVIOUS_PEPPER_[A-Z0-9]+")
+_KEYED_SECRET = re.compile(r"(?:OIDC|OAUTH)_[A-Z][A-Z0-9]*_CLIENT_SECRET|CRUCIBLE_AUTH_PREVIOUS_PEPPER_[A-Z0-9]+|STORAGE_[A-Z][A-Z0-9_]*_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|CREDENTIALS)")
+# Single-store settings replaced by STORAGE_STORES; the server refuses to start while one is set.
+RETIRED_STORAGE_SETTINGS = {
+    "STORAGE_BACKEND": "the store's type in STORAGE_STORES",
+    "UPLOAD_BUCKET": "the store's bucket in STORAGE_STORES",
+    "STORAGE_READ_BUCKETS": "the store's read_buckets in STORAGE_STORES",
+    "GCS_PROJECT": "the store's project in STORAGE_STORES",
+    "S3_ENDPOINT_URL": "the store's endpoint_url in STORAGE_STORES",
+    "S3_PUBLIC_URL": "the store's public_url in STORAGE_STORES",
+    "S3_REGION": "the store's region in STORAGE_STORES",
+    "S3_ACCESS_KEY_ID": "the secret STORAGE_{ID}_ACCESS_KEY_ID",
+    "S3_SECRET_ACCESS_KEY": "the secret STORAGE_{ID}_SECRET_ACCESS_KEY",
+    "MULTIPART_UPLOAD_BUCKET": "the store's bucket in STORAGE_STORES",
+    "MULTIPART_UPLOAD_SIGNER": "the store's service_account in STORAGE_STORES",
+    "MULTIPART_UPLOAD_PROJECT": "the store's project in STORAGE_STORES",
+}
 MIN_CLIENT_SECRET_LENGTH = 32
 # OWASP Password Storage Cheat Sheet: Argon2id configurations of equal strength, as (memory KiB, iterations).
 ARGON2_FLOOR = ((47104, 1), (19456, 2), (12288, 3), (9216, 4), (7168, 5))
@@ -433,34 +449,58 @@ class HubSettings(SettingsGroup):
 
 
 class StorageSettings(SettingsGroup):
-    backend: Literal["gcs", "s3"] = Field("gcs", validation_alias="STORAGE_BACKEND")
-    upload_bucket: str | None = Field(None, validation_alias="UPLOAD_BUCKET")
-    gcs_project: str | None = Field(None, validation_alias="GCS_PROJECT")
+    configured_stores: list[StoreConfig] = Field(default_factory=list, validation_alias="STORAGE_STORES")
+    default_store: str | None = Field(None, validation_alias="STORAGE_DEFAULT_STORE")
     record_bucket: str | None = Field(None, validation_alias="RECORD_BUCKET")
-    read_buckets: str | None = Field(None, validation_alias="STORAGE_READ_BUCKETS")
-    s3_endpoint_url: str | None = Field(None, validation_alias="S3_ENDPOINT_URL")
-    s3_public_url: str | None = Field(None, validation_alias="S3_PUBLIC_URL")
-    s3_region: str = Field("us-east-1", validation_alias="S3_REGION")
-    s3_access_key_id: SecretStr | None = Field(None, validation_alias="S3_ACCESS_KEY_ID")
-    s3_secret_access_key: SecretStr | None = Field(None, validation_alias="S3_SECRET_ACCESS_KEY")
     file_version_retention_days: int = Field(14, ge=1, validation_alias="FILE_VERSION_RETENTION_DAYS")
     cleanup_enabled: bool = Field(False, validation_alias="STORAGE_CLEANUP_ENABLED")
 
-    @field_validator("s3_endpoint_url")
+    @field_validator("configured_stores", mode="before")
     @classmethod
-    def not_google(cls, value: str | None, info: ValidationInfo) -> str | None:
-        host = urlparse(value or "").hostname or ""
-        if info.data.get("backend") == "s3" and (host == "googleapis.com" or host.endswith(".googleapis.com")):
-            raise ValueError("points at Google Cloud Storage, whose S3 interface refuses the checksums S3 uploads send; use STORAGE_BACKEND=gcs")
-        return value
+    def parse_stores(cls, value):
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except ValueError:
+            raise ValueError("is not valid JSON") from None
+
+    @model_validator(mode="after")
+    def one_default_among_the_stores(self) -> "StorageSettings":
+        ids = [store.id for store in self.configured_stores]
+        if len(ids) != len(set(ids)):
+            raise ValueError("STORAGE_STORES lists the same id twice")
+        secret_names = [name for store in self.configured_stores for name in store.secret_names]
+        if len(secret_names) != len(set(secret_names)):
+            raise ValueError("STORAGE_STORES has two ids that differ only in - and _; their secrets would share a name")
+        if self.default_store is not None and self.default_store not in ids:
+            raise ValueError(f"STORAGE_DEFAULT_STORE names {self.default_store}, which STORAGE_STORES does not list")
+        if self.default_store is None and len(ids) > 1:
+            raise ValueError("STORAGE_DEFAULT_STORE must name one of the STORAGE_STORES")
+        return self
 
     @property
-    def read_bucket_names(self) -> set[str]:
-        return {name.strip() for name in (self.read_buckets or "").split(",")} - {""}
+    def stores(self) -> list[StoreConfig]:
+        return list(self.configured_stores)
+
+    @property
+    def default_store_id(self) -> str | None:
+        """STORAGE_DEFAULT_STORE, or the only store; None when no store is configured."""
+        if self.default_store is not None:
+            return self.default_store
+        return self.configured_stores[0].id if len(self.configured_stores) == 1 else None
+
+    def store(self, store_id: str | None) -> StoreConfig | None:
+        """The store with this id; None when this server does not configure it (or for no id)."""
+        return next((store for store in self.configured_stores if store_id is not None and store.id == store_id), None)
+
+    @property
+    def store_secret_names(self) -> list[str]:
+        return [name for store in self.configured_stores for name in store.secret_names]
 
     def serves_files(self) -> bool:
         multipart = (optional_env("MULTIPART_UPLOAD_ENABLED") or "").lower() == "true"
-        return bool(self.read_buckets or multipart or self.upload_bucket)
+        return bool(multipart or self.configured_stores)
 
     def in_use(self) -> bool:
         return self.serves_files() or bool(self.record_bucket)
@@ -468,8 +508,9 @@ class StorageSettings(SettingsGroup):
     def problems(self, settings: "Settings") -> list[str]:
         if not self.in_use():
             return []
-        credentials = ("s3_endpoint_url", "s3_access_key_id", "s3_secret_access_key") if self.backend == "s3" else ()
-        return self.missing("upload_bucket", *credentials) if self.serves_files() else self.missing(*credentials)
+        if not self.configured_stores:
+            return ["STORAGE_STORES"]
+        return [name for store in self.configured_stores if store.type == "s3" for name in (store.access_key_name, store.secret_key_name) if not _secret_given(name)]
 
 
 class IngestionSettings(SettingsGroup):
@@ -528,7 +569,7 @@ _SECRETS: dict[str, tuple[str, str]] = {
     if info.annotation == SecretStr | None
 }
 # Sent verbatim in HTTP Basic credentials and ORCID token requests, where a stray newline breaks every sign-in.
-_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "CRUCIBLE_AUTH_PEPPER", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"})
+_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "CRUCIBLE_AUTH_PEPPER"})
 _LONG_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "CRUCIBLE_SECRET_KEY", "CRUCIBLE_CURSOR_SIGNING_KEY"})
 _FEATURES = {"ingestion": "ingestion", "printing": "printing", "proposal_sync": "proposals"}
 
@@ -597,8 +638,14 @@ def get_settings() -> Settings:
 
 
 def _keyed_secret_names() -> list[str]:
-    auth = get_settings().auth
-    return [provider.secret_name for provider in auth.providers] + [client.secret_name for client in auth.clients if client.type == "confidential"] + auth.previous_pepper_names
+    settings = get_settings()
+    auth = settings.auth
+    return [provider.secret_name for provider in auth.providers] + [client.secret_name for client in auth.clients if client.type == "confidential"] + auth.previous_pepper_names + settings.storage.store_secret_names
+
+
+def _secret_given(name: str) -> bool:
+    version = optional_env(f"{name}_VERSION")
+    return (version is not None and _SECRET_VERSION.fullmatch(version) is not None) or configured_secret(name) is not None
 
 
 def configured_secret(name: str) -> str | None:
@@ -648,7 +695,7 @@ def get_secret(name: str) -> str:
                 raise ConfigurationError(f"{name}_VERSION names an empty secret")
             _fetched_secrets[version] = fetched
         value = _fetched_secrets[version]
-    if (name in _SINGLE_LINE_SECRETS or _KEYED_SECRET.fullmatch(name)) and not (value.isascii() and value.isprintable()):
+    if (name in _SINGLE_LINE_SECRETS or (_KEYED_SECRET.fullmatch(name) and not name.endswith("_CREDENTIALS"))) and not (value.isascii() and value.isprintable()):
         raise ConfigurationError(f"{name} must be one line of printable ASCII")
     if (name in _LONG_SECRETS or name.startswith(("OAUTH_", "CRUCIBLE_AUTH_PEPPER", "CRUCIBLE_AUTH_PREVIOUS_PEPPER_"))) and len(value) < MIN_CLIENT_SECRET_LENGTH:
         raise ConfigurationError(f"{name} must be at least {MIN_CLIENT_SECRET_LENGTH} characters")
@@ -675,7 +722,20 @@ def _warn_about_plain_http(settings) -> None:
         logger.warning("The public address %s is plain HTTP: API keys and sessions cross the network unencrypted. Use it on this machine only, or set up HTTPS.", address)
 
 
+def _retired_settings_given() -> list[str]:
+    load_env_file()
+    secrets_dir = _secrets_dir()
+    given = []
+    for name, replacement in RETIRED_STORAGE_SETTINGS.items():
+        if any(optional_env(f"{name}{suffix}") is not None for suffix in ("", "_FILE", "_VERSION")) or (secrets_dir and (Path(secrets_dir) / name).is_file()):
+            given.append(f"{name} (use {replacement})")
+    return given
+
+
 def check_settings() -> None:
+    retired = _retired_settings_given()
+    if retired:
+        raise ConfigurationError(f"Storage is configured with STORAGE_STORES now; remove {', '.join(retired)}")
     found = missing_required_settings()
     if found:
         raise ConfigurationError(f"Missing required settings: {', '.join(found)}")

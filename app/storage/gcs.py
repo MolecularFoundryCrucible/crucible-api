@@ -1,3 +1,4 @@
+import json
 import threading
 from functools import lru_cache
 from urllib.parse import quote
@@ -5,12 +6,13 @@ from xml.etree import ElementTree as ET
 
 import google.auth
 from google.auth import impersonated_credentials
+from google.oauth2 import service_account
 from google.auth.credentials import Scoped, Signing
 from google.auth.transport.requests import AuthorizedSession, Request
 from google.cloud import storage
 from google.api_core.exceptions import NotFound
 
-from app.config import get_settings, optional_env
+from app.config import get_settings, optional_secret
 from app.services.storage_downloads import download_headers
 from app.storage.base import ObjectInfo, Part, StorageFailure, UploadMissing, check_part_listing
 
@@ -24,16 +26,35 @@ READ_WRITE = "https://www.googleapis.com/auth/devstorage.read_write"
 
 
 @lru_cache
-def server_credentials():
-    """The server's one Google identity: Application Default Credentials (an attached service account,
-    Workload Identity, or a GOOGLE_APPLICATION_CREDENTIALS key file), acting as MULTIPART_UPLOAD_SIGNER
-    when it is set, which an identity that cannot sign URLs needs. The legacy upload token inherits
-    the lifetime, so impersonation asks for the one-hour maximum."""
-    source, _ = google.auth.default(scopes=[CLOUD_PLATFORM])
-    account = (optional_env("MULTIPART_UPLOAD_SIGNER") or "").strip()
-    if not account:
+def store_credentials(store):
+    """A store's Google identity: its key file (secret STORAGE_{ID}_CREDENTIALS) when given, else
+    Application Default Credentials (an attached service account, Workload Identity, or a
+    GOOGLE_APPLICATION_CREDENTIALS key file), acting as the store's service_account when it names one,
+    which an identity that cannot sign URLs needs. Impersonation asks for the one-hour maximum."""
+    key = optional_secret(store.credentials_name) if store.credentials_name else None
+    if key:
+        source = service_account.Credentials.from_service_account_info(json.loads(key), scopes=[CLOUD_PLATFORM])
+    else:
+        source, _ = google.auth.default(scopes=[CLOUD_PLATFORM])
+    if not store.service_account:
         return source
-    return impersonated_credentials.Credentials(source_credentials=source, target_principal=account, target_scopes=[READ_WRITE], lifetime=3600)
+    return impersonated_credentials.Credentials(source_credentials=source, target_principal=store.service_account, target_scopes=[READ_WRITE], lifetime=3600)
+
+
+@lru_cache
+def store_client(store):
+    return storage.Client(project=store.project, credentials=store_credentials(store))
+
+
+def default_store():
+    storage = get_settings().storage
+    return storage.store(storage.default_store_id)
+
+
+@lru_cache
+def server_credentials():
+    """The default store's identity."""
+    return store_credentials(default_store())
 
 
 def storage_scoped(credentials):
@@ -43,8 +64,7 @@ def storage_scoped(credentials):
 
 @lru_cache
 def server_client():
-    project = get_settings().storage.gcs_project or (optional_env("MULTIPART_UPLOAD_PROJECT") or "").strip() or None
-    return storage.Client(project=project, credentials=server_credentials())
+    return store_client(default_store())
 
 
 def signing(credentials):
@@ -61,22 +81,31 @@ def signing(credentials):
 
 
 class GoogleStore:
-    """Google Cloud Storage as the server's identity (server_credentials) for every operation."""
+    """Google Cloud Storage as the store's identity for every operation. Without a store (tests), the
+    default store's identity and the multipart config's bucket."""
 
-    def __init__(self, config):
+    def __init__(self, config, store=None):
         self.config = config
+        self.store = store
+        self.bucket = store.bucket if store is not None else config.bucket
         self.credentials = self.client = self.http = None
         self.connecting = threading.Lock()
+
+    def identity(self):
+        return store_credentials(self.store) if self.store is not None else server_credentials()
+
+    def storage_client(self):
+        return store_client(self.store) if self.store is not None else server_client()
 
     def connect(self):
         """Set up the multipart session on the first multipart call, so the rest never needs it."""
         with self.connecting:
             if self.http is not None:
                 return
-            if not self.config.bucket:
+            if not self.bucket:
                 raise StorageFailure("storage_not_configured")
             try:
-                self.credentials, self.client = server_credentials(), server_client()
+                self.credentials, self.client = self.identity(), self.storage_client()
             except Exception:
                 raise StorageFailure("provider_unavailable") from None
             self.http = AuthorizedSession(self.credentials)
@@ -88,7 +117,7 @@ class GoogleStore:
     def check_bucket(self, bucket):
         if self.http is None:
             self.connect()
-        if bucket != self.config.bucket:
+        if bucket != self.bucket:
             raise StorageFailure("bucket_mismatch")
 
     def request(self, method, bucket, key=None, **kwargs):
@@ -193,7 +222,7 @@ class GoogleStore:
 
     def signed_download(self, bucket, key, version, filename, disposition, expires_in):
         generation = int(version) if version is not None else None
-        blob = server_client().bucket(bucket).blob(key, generation=generation)
+        blob = self.storage_client().bucket(bucket).blob(key, generation=generation)
         try:
             blob.reload(timeout=60)
         except NotFound:
@@ -202,16 +231,22 @@ class GoogleStore:
         overrides = {"response_disposition": content_disposition}
         if content_type:
             overrides["response_type"] = content_type
-        return blob.generate_signed_url(version="v4", expiration=expires_in, method="GET", generation=generation, **overrides, **signing(server_credentials()))
+        return blob.generate_signed_url(version="v4", expiration=expires_in, method="GET", generation=generation, **overrides, **signing(self.identity()))
+
+    def list_keys(self, bucket, prefix):
+        try:
+            return [blob.name for blob in self.storage_client().bucket(bucket).list_blobs(prefix=prefix, timeout=30)]
+        except Exception:
+            raise StorageFailure("provider_unavailable") from None
 
     def put_bytes(self, bucket, key, data, content_type):
         try:
-            server_client().bucket(bucket).blob(key).upload_from_string(data, content_type=content_type, timeout=60)
+            self.storage_client().bucket(bucket).blob(key).upload_from_string(data, content_type=content_type, timeout=60)
         except Exception:
             raise StorageFailure("provider_unavailable") from None
 
     def get_text(self, bucket, key):
-        blob = server_client().bucket(bucket).blob(key)
+        blob = self.storage_client().bucket(bucket).blob(key)
         try:
             return blob.download_as_text(timeout=60)
         except NotFound:

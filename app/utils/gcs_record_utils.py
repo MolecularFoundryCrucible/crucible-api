@@ -4,7 +4,7 @@ import logging
 
 from app.config import get_settings
 from app.general_utils import get_utc_isoformat
-from app.storage import get_store
+from app.storage import get_default_store
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ def write_record(mfid: str, record: dict, actor: str, operation: str) -> None:
     if not bucket:
         return
     try:
-        store, key = get_store(), f"{mfid}/record.json"
+        store, key = get_default_store(), f"{mfid}/record.json"
         audit = _build_audit(store, bucket, key, record, actor, operation)
         if audit is None:
             return
@@ -125,7 +125,7 @@ def write_metadata(mfid: str, metadata: dict, actor: str, operation: str) -> Non
     if not bucket:
         return
     try:
-        store, key = get_store(), f"{mfid}/metadata.json"
+        store, key = get_default_store(), f"{mfid}/metadata.json"
         audit = _build_audit(store, bucket, key, metadata, actor, operation)
         if audit is None:
             return

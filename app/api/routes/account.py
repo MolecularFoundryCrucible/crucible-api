@@ -11,7 +11,7 @@ from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_utc_datetime, if_match_satisfied
+from app.general_utils import get_utc_datetime, if_match_satisfied, merge_patch
 from app.tables import Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
 from app.models.preferences import MAX_DOCUMENT_BYTES, PREFERENCES_SCHEMA_VERSION, PreferencesDocument, PreferencesRead, RecentResourceRead, RecentResourceRecord, serialized_size
 from app.models.response_schemas import AccountInfo, ApiKeyVerify, ProjectSyncResult
@@ -161,18 +161,6 @@ def verify_account_apikey(
         return ApiKeyVerify(valid=status.valid, created_at=status.created_at, expires_at=status.expires_at, last_used_at=status.last_used_at)
 
 
-def _merge_patch(target, patch):
-    if not isinstance(patch, dict):
-        return patch
-    result = dict(target) if isinstance(target, dict) else {}
-    for key, value in patch.items():
-        if value is None:
-            result.pop(key, None)
-        else:
-            result[key] = _merge_patch(result.get(key), value)
-    return result
-
-
 def _preferences_etag(revision: int) -> str:
     return f'"p{revision}"'
 
@@ -212,7 +200,7 @@ def update_account_preferences(auth_res: Annotated[Principal, Depends(authorize_
             current = _preferences_etag(row.revision if row else 0)
             if not if_match_satisfied(if_match, current):
                 raise HTTPException(status_code=412, detail={"code": "etag_mismatch", "etag": current, "message": "Preferences changed since the given ETag"})
-            merged = _merge_patch(row.preferences if row else {}, patch)
+            merged = merge_patch(row.preferences if row else {}, patch)
             try:
                 PreferencesDocument.model_validate(merged)
             except ValidationError as error:

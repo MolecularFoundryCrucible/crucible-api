@@ -88,7 +88,7 @@ While the content is kept, a dataset admin can manage the dataset's deleted file
 
 | Route | Effect |
 |---|---|
-| `GET /datasets/{dataset_mfid}/deleted_files` | Lists those that can still be restored, newest first, with `file_mfid`, `filename`, `size`, `sha256_hash`, `deleted_at` and `restorable_until` |
+| `GET /datasets/{dataset_mfid}/deleted_files` | Lists those that can still be restored, newest first, with `file_mfid`, `filename`, `size`, `sha256_hash`, `store_id`, `deleted_at` and `restorable_until` |
 | `POST /datasets/{dataset_mfid}/deleted_files/{file_mfid}/restore` | Recreates the file with its MFID, filename and content, and its ingestion requests with their IDs (a new ID only where the old one is taken) |
 | `DELETE /datasets/{dataset_mfid}/deleted_files/{file_mfid}` | Ends the grace period now: the file can no longer be restored and the next cleanup deletes its content |
 

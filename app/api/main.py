@@ -22,7 +22,7 @@ from app.utils.cursor_utils import check_signing_keys
 from app.api.dependencies import get_api_root_path
 from app.utils.auth_utils import PRIVILEGE_MODE_HEADER
 from app.utils.permissions import PrivilegeMode, PrivilegeModeSource
-from app.api.routes import (account, api_keys, auth, identities, files, deleted_files, datasets, gcs_storage, resources,
+from app.api.routes import (account, api_keys, auth, identities, files, deleted_files, datasets, storage, gcs_storage, resources,
                             samples, instruments, users, projects,
                             entities, misc, deletion,
                             ingestion_requests, join_requests, pipelines, service_accounts,
@@ -346,6 +346,7 @@ app.include_router(passwords.pages)
 app.include_router(sessions.router)
 app.include_router(files.router)
 app.include_router(deleted_files.router)
+app.include_router(storage.router)
 app.include_router(ingestion_requests.router)
 app.include_router(pipelines.router)
 app.include_router(datasets.router)

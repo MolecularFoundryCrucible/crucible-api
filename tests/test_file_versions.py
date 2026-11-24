@@ -70,7 +70,7 @@ def test_cleanup_keeps_a_version_another_file_still_uses(flow):
     file, _ = replaced(flow)
     with Session(engine) as session:
         dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
-        session.add(AssociatedFile(dataset_id=dataset_id, filename="copy.bin", storage_path=file["storage_path"], size=1, sha256_hash="b" * 64))
+        session.add(AssociatedFile(dataset_id=dataset_id, filename="copy.bin", storage_path=file["storage_path"], size=1, sha256_hash="b" * 64, store_id="dedicated"))
         session.commit()
     report = run_cleanup(engine, storage, service.now() + timedelta(days=15))
     assert (report.deleted_versions, report.kept_in_use, storage.deleted) == (0, 1, [])
@@ -159,7 +159,7 @@ def test_only_one_waiting_version_per_stored_object(flow):
     _, engine, _ = flow
     with Session(engine) as session:
         for _ in range(2):
-            session.add(FileVersion(file_mfid="f", dataset_mfid="ds", storage_path="dedicated/ds/_files/x", size=1, sha256_hash="a" * 64, reason="replaced", created_at=service.now(), delete_after=service.now()))
+            session.add(FileVersion(file_mfid="f", dataset_mfid="ds", storage_path="dedicated/ds/_files/x", size=1, sha256_hash="a" * 64, reason="replaced", store_id="dedicated", created_at=service.now(), delete_after=service.now()))
         with pytest.raises(Exception):
             session.commit()
 
@@ -180,9 +180,9 @@ def due_version(engine, storage, path, used_by=None):
     with Session(engine) as session:
         if used_by is not None:
             dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
-            session.add(AssociatedFile(dataset_id=dataset_id, filename=used_by, storage_path=path, size=1, sha256_hash="b" * 64))
+            session.add(AssociatedFile(dataset_id=dataset_id, filename=used_by, storage_path=path, size=1, sha256_hash="b" * 64, store_id="dedicated"))
         version = FileVersion(file_mfid="f", dataset_mfid="ds", storage_path=path, storage_generation="7", size=1, sha256_hash="a" * 64,
-                              reason="replaced", created_at=service.now() - timedelta(days=20), delete_after=service.now() - timedelta(days=6))
+                              reason="replaced", store_id="dedicated", created_at=service.now() - timedelta(days=20), delete_after=service.now() - timedelta(days=6))
         session.add(version)
         session.commit()
         session.refresh(version)
@@ -195,7 +195,7 @@ def test_a_dry_run_writes_nothing_for_a_version_outside_the_own_buckets(flow):
     published_file(flow)
     with Session(engine) as session:
         session.add(FileVersion(file_mfid="f", dataset_mfid="ds", storage_path="elsewhere/ds/_files/x", storage_generation="7", size=1, sha256_hash="a" * 64,
-                                reason="replaced", created_at=service.now(), delete_after=service.now() - timedelta(days=1)))
+                                reason="replaced", store_id="dedicated", created_at=service.now(), delete_after=service.now() - timedelta(days=1)))
         session.commit()
     report = run_cleanup(engine, storage, service.now(), dry_run=True)
     assert report.failures == [f"version {versions(engine)[0].id}: not_owned"]
@@ -250,7 +250,7 @@ def test_a_second_file_sharing_the_object_gets_its_full_grace_period(flow):
     file = published_file(flow)
     with Session(engine) as session:
         dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
-        twin = AssociatedFile(dataset_id=dataset_id, filename="twin.bin", storage_path=file["storage_path"], storage_generation="7", size=len(DATA), sha256_hash=SHA)
+        twin = AssociatedFile(dataset_id=dataset_id, filename="twin.bin", storage_path=file["storage_path"], storage_generation="7", size=len(DATA), sha256_hash=SHA, store_id="dedicated")
         session.add(twin)
         session.commit()
         twin_mfid = twin.mfid
@@ -290,7 +290,7 @@ def test_cleanup_command_runs_only_when_enabled_or_dry(monkeypatch, capsys, enab
     from app.cli.__main__ import main
     calls = []
     monkeypatch.setattr("app.config.check_settings", lambda: None)
-    monkeypatch.setattr("app.storage.get_store", lambda: object())
+    monkeypatch.setattr("app.storage.get_store", lambda *_: object())
     monkeypatch.setattr("app.api.dependencies.get_engine", lambda: object())
     monkeypatch.setattr("app.services.storage_cleanup.run_cleanup", lambda engine, store, now, dry_run, batch: calls.append(dry_run) or lifecycle_report())
     if enabled is None:
@@ -384,7 +384,7 @@ def test_trashed_content_another_record_uses_is_kept(flow):
     file = published_file(flow)
     with Session(engine) as session:
         dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
-        session.add(AssociatedFile(dataset_id=dataset_id, filename="copy.bin", storage_path=file["storage_path"], size=1, sha256_hash="b" * 64))
+        session.add(AssociatedFile(dataset_id=dataset_id, filename="copy.bin", storage_path=file["storage_path"], size=1, sha256_hash="b" * 64, store_id="dedicated"))
         session.commit()
     assert flow[0].delete(f"/files/{file['mfid']}").status_code == 200
     report = run_cleanup(engine, storage, service.now() + timedelta(days=15))

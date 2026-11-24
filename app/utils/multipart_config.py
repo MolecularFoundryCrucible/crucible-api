@@ -5,10 +5,8 @@ from collections.abc import Mapping
 
 @dataclass(frozen=True)
 class MultipartStorageConfig:
+    """Upload limits. Where uploads go is the store chosen for each one (STORAGE_STORES)."""
     enabled: bool = False
-    bucket: str | None = None
-    signer_service_account: str | None = None
-    project: str | None = None
 
     max_upload_bytes: int = 500 * 1024 ** 3
     owner_sessions: int = 8
@@ -19,13 +17,7 @@ class MultipartStorageConfig:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "MultipartStorageConfig":
-        if env is None:
-            from app.config import get_settings
-
-            env = os.environ
-            upload_bucket = get_settings().storage.upload_bucket
-        else:
-            upload_bucket = env.get("UPLOAD_BUCKET", "").strip() or None
+        env = os.environ if env is None else env
         flag = env.get("MULTIPART_UPLOAD_ENABLED", "false").strip().lower()
         if flag not in {"true", "false"}:
             raise ValueError("MULTIPART_UPLOAD_ENABLED must be true or false")
@@ -37,14 +29,7 @@ class MultipartStorageConfig:
                 "owner_bytes": 1024 ** 4, "dataset_bytes": 4 * 1024 ** 4,
                 "signing_interval_seconds": 5,
             }.items()},
-            bucket=env.get("MULTIPART_UPLOAD_BUCKET", "").strip() or None,
-            signer_service_account=env.get("MULTIPART_UPLOAD_SIGNER", "").strip() or None,
-            project=env.get("MULTIPART_UPLOAD_PROJECT", "").strip() or None,
         )
         if min(config.max_upload_bytes, config.owner_sessions, config.dataset_sessions, config.owner_bytes, config.dataset_bytes, config.signing_interval_seconds) < 1:
             raise ValueError("Multipart limits must be positive")
-        if config.enabled and not config.bucket:
-            raise ValueError("Multipart uploads require an explicit bucket")
-        if config.enabled and config.bucket != upload_bucket:
-            raise ValueError("Multipart uploads must use UPLOAD_BUCKET, the environment's single upload bucket")
         return config

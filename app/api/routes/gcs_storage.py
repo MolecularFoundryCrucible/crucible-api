@@ -2,28 +2,28 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from app.config import get_settings
-from app.services.storage_downloads import DOWNLOAD_LIFETIME, StorageLocationError, multipart_prefix, resolve_storage_object, upload_bucket
-from app.storage import get_store
-from app.storage.gcs import server_client
+from app.services.storage_downloads import DOWNLOAD_LIFETIME, StorageLocationError, multipart_prefix, resolve_storage_object
+from app.storage import StoreUnavailable, get_store, store_config
+from app.storage.gcs import store_client
 
 router = APIRouter(tags=["storage"])
 logger = logging.getLogger(__name__)
 
-def _determine_storage_path(dataset_mfid, filename):
+def _determine_storage_path(dataset_mfid, filename, store_id):
     """
     For a given dataset ID, list the gcs blobs in the corresponding
-    folder and return the storage path for the file. 
+    folder of the file's store and return the storage path for the file.
     """
-    bucket = upload_bucket()
     # Files without a recorded location predate the multipart uploads and exist only in Google Cloud Storage.
-    if get_settings().storage.backend != "gcs":
+    store = store_config(store_id)
+    if store.type != "gcs":
         raise HTTPException(status_code=404, detail="File not found in storage")
+    bucket = store.bucket
     basename = filename.split("/")[-1]
     exact = f"{dataset_mfid}/{filename}"
     names = [
         blob.name
-        for blob in server_client().bucket(bucket).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
+        for blob in store_client(store).bucket(bucket).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
         if not blob.name.startswith(multipart_prefix(dataset_mfid))
     ]
     if exact in names:
@@ -41,20 +41,22 @@ def _determine_storage_path(dataset_mfid, filename):
 def _ensure_storage_path(af, dsid: str, session) -> str:
     """Backfill storage_path from GCS if not set. Returns the storage_path."""
     if not af.storage_path:
-        af.storage_path = _determine_storage_path(dsid, af.filename)
+        af.storage_path = _determine_storage_path(dsid, af.filename, af.store_id)
         session.add(af)
     return af.storage_path
 
-
-def _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename, disposition="attachment"):
-    """Return (signed_url, expires_in_seconds) for a file record's object, enforcing the storage location rule."""
+def _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename, disposition="attachment", store_id=None):
+    """Return (signed_url, expires_in_seconds) for a file record's object in its store, enforcing the storage location rule."""
+    store = store_config(store_id)
     try:
-        obj = resolve_storage_object(storage_path, generation, dataset_mfid)
+        obj = resolve_storage_object(store, storage_path, generation, dataset_mfid)
     except StorageLocationError as error:
         logger.warning("file_location_rejected file=%s dataset=%s reason=%s", file_mfid, dataset_mfid, error.reason)
         raise HTTPException(status_code=409, detail=error.detail()) from None
     try:
-        url = get_store().signed_download(obj.bucket, obj.key, obj.version, filename, disposition, DOWNLOAD_LIFETIME)
+        url = get_store(store_id).signed_download(obj.bucket, obj.key, obj.version, filename, disposition, DOWNLOAD_LIFETIME)
+    except StoreUnavailable:
+        raise
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found in storage") from None
     except Exception:

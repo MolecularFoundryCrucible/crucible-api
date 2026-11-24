@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -10,12 +11,13 @@ import app.api.routes.gcs_storage as gcs_storage
 import app.storage.gcs as google
 from app.tables import AssociatedFile, Dataset, IngestionRequest, Resource
 from app.utils.permissions import PlatformRole
+from tests.stores import gcs, no_stores, s3, use_stores
 
 DS = "0t3qajrnzhtn7000x6s0x427hg"
 OTHER = "0t3qajvcgnvx7000h49ya23r7c"
 
 
-def _file(db_engine, storage_path, filename="scan.pdf", generation=None, backend="gcs", dsid=DS):
+def _file(db_engine, storage_path, filename="scan.pdf", generation=None, backend="gcs", dsid=DS, store_id="mf-storage-prod"):
     with Session(db_engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if dataset is None:
@@ -24,7 +26,7 @@ def _file(db_engine, storage_path, filename="scan.pdf", generation=None, backend
             session.add(dataset)
             session.commit()
             session.refresh(dataset)
-        af = AssociatedFile(filename=filename, storage_path=storage_path, storage_backend=backend, storage_generation=generation, size=10, sha256_hash="a" * 64, dataset_id=dataset.id)
+        af = AssociatedFile(filename=filename, storage_path=storage_path, storage_backend=backend, storage_generation=generation, size=10, sha256_hash="a" * 64, dataset_id=dataset.id, store_id=store_id if backend == "gcs" else None)
         session.add(af)
         session.commit()
         session.refresh(af)
@@ -38,7 +40,7 @@ def signer(monkeypatch):
     blob.content_type = "application/octet-stream"
     blob.generate_signed_url.return_value = "https://signed.example/x"
     monkeypatch.setattr(google, "server_client", lambda: client)
-    monkeypatch.setattr(gcs_storage, "get_store", lambda: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
+    monkeypatch.setattr(gcs_storage, "get_store", lambda *_: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
     return client
 
 
@@ -137,7 +139,7 @@ def test_registered_gcs_record_without_path_downloads_via_backfill(client, db_en
     created = client.post(f"/datasets/{DS}/files", json={"filename": "placed.pdf", "size": 5, "sha256_hash": "d" * 64})
     assert created.status_code == 200, created.text
     assert created.json()["storage_path"] is None
-    monkeypatch.setattr(gcs_storage, "_determine_storage_path", lambda dsid, filename: f"mf-storage-prod/{dsid}/{filename}")
+    monkeypatch.setattr(gcs_storage, "_determine_storage_path", lambda dsid, filename, store_id: f"mf-storage-prod/{dsid}/{filename}")
     response = client.get(f"/files/{created.json()['mfid']}/download_link")
     assert response.status_code == 200, response.text
     signer.bucket.return_value.blob.assert_called_with(f"{DS}/placed.pdf", generation=None)
@@ -147,31 +149,31 @@ def test_backfill_skips_multipart_objects(db_engine, monkeypatch):
     listed = [SimpleNamespace(name=f"{DS}/_files/abc-scan.pdf"), SimpleNamespace(name=f"{DS}/raw/scan.pdf")]
     client = MagicMock()
     client.bucket.return_value.list_blobs.return_value = listed
-    monkeypatch.setattr(gcs_storage, "server_client", lambda: client)
-    assert gcs_storage._determine_storage_path(DS, "scan.pdf") == f"mf-storage-prod/{DS}/raw/scan.pdf"
+    monkeypatch.setattr(gcs_storage, "store_client", lambda store: client)
+    assert gcs_storage._determine_storage_path(DS, "scan.pdf", "mf-storage-prod") == f"mf-storage-prod/{DS}/raw/scan.pdf"
 
 
 def _listing(monkeypatch, *names):
     client = MagicMock()
     client.bucket.return_value.list_blobs.return_value = [SimpleNamespace(name=f"{DS}/{name}") for name in names]
-    monkeypatch.setattr(gcs_storage, "server_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "store_client", lambda store: client)
 
 
 def test_backfill_needs_a_whole_name_match(monkeypatch):
     _listing(monkeypatch, "foobar.tif", "raw/bar.tif")
-    assert gcs_storage._determine_storage_path(DS, "bar.tif") == f"mf-storage-prod/{DS}/raw/bar.tif"
+    assert gcs_storage._determine_storage_path(DS, "bar.tif", "mf-storage-prod") == f"mf-storage-prod/{DS}/raw/bar.tif"
     _listing(monkeypatch, "foobar.tif")
     with pytest.raises(HTTPException) as error:
-        gcs_storage._determine_storage_path(DS, "bar.tif")
+        gcs_storage._determine_storage_path(DS, "bar.tif", "mf-storage-prod")
     assert error.value.status_code == 404
 
 
 def test_backfill_prefers_the_exact_path_and_refuses_to_guess(monkeypatch):
     _listing(monkeypatch, "a/bar.tif", "bar.tif", "b/bar.tif")
-    assert gcs_storage._determine_storage_path(DS, "bar.tif") == f"mf-storage-prod/{DS}/bar.tif"
+    assert gcs_storage._determine_storage_path(DS, "bar.tif", "mf-storage-prod") == f"mf-storage-prod/{DS}/bar.tif"
     _listing(monkeypatch, "a/bar.tif", "b/bar.tif")
     with pytest.raises(HTTPException) as error:
-        gcs_storage._determine_storage_path(DS, "bar.tif")
+        gcs_storage._determine_storage_path(DS, "bar.tif", "mf-storage-prod")
     assert error.value.status_code == 409
 
 
@@ -192,7 +194,7 @@ def test_ingest_refuses_a_file_outside_its_dataset(client, db_engine, admin):
 
 def test_ingest_backfills_missing_storage_path(client, db_engine, admin, monkeypatch):
     file_mfid = _file(db_engine, None)
-    monkeypatch.setattr(gcs_storage, "_determine_storage_path", lambda dsid, filename: f"mf-storage-prod/{dsid}/{filename}")
+    monkeypatch.setattr(gcs_storage, "_determine_storage_path", lambda dsid, filename, store_id: f"mf-storage-prod/{dsid}/{filename}")
     with patch("app.api.routes.files.send_pika_message") as send, patch("app.api.routes.files.get_secret", return_value="pw"):
         response = client.post(f"/files/{file_mfid}/ingest")
     assert response.status_code == 200, response.text
@@ -249,7 +251,7 @@ MULTIPART = "mf-crucible-multipart-staging"
 
 
 def test_patch_cannot_clear_the_path_of_a_published_multipart_record(client, db_engine, admin, monkeypatch):
-    monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", MULTIPART)
+    use_stores(monkeypatch, gcs(read_buckets=[MULTIPART]))
     file_mfid = _file(db_engine, f"{MULTIPART}/{DS}/_files/abc", generation="7")
     response = client.patch(f"/files/{file_mfid}", json={"storage_path": None})
     assert response.status_code == 422
@@ -257,7 +259,7 @@ def test_patch_cannot_clear_the_path_of_a_published_multipart_record(client, db_
 
 
 def test_patch_cannot_switch_a_published_multipart_record_off_gcs(client, db_engine, admin, monkeypatch):
-    monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", MULTIPART)
+    use_stores(monkeypatch, gcs(read_buckets=[MULTIPART]))
     file_mfid = _file(db_engine, f"{MULTIPART}/{DS}/_files/abc", generation="7")
     response = client.patch(f"/files/{file_mfid}", json={"storage_backend": "local"})
     assert response.status_code == 409
@@ -265,7 +267,7 @@ def test_patch_cannot_switch_a_published_multipart_record_off_gcs(client, db_eng
 
 
 def test_patch_may_rename_a_published_multipart_record(client, db_engine, admin, monkeypatch):
-    monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", MULTIPART)
+    use_stores(monkeypatch, gcs(read_buckets=[MULTIPART]))
     file_mfid = _file(db_engine, f"{MULTIPART}/{DS}/_files/abc", generation="7")
     response = client.patch(f"/files/{file_mfid}", json={"filename": "renamed.pdf"})
     assert response.status_code == 200, response.text
@@ -312,7 +314,7 @@ def _switch(monkeypatch, name, value):
 def test_ingest_disabled_creates_no_request(client, db_engine, admin, monkeypatch):
     file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
     _switch(monkeypatch, "INGESTION_ENABLED", None)
-    _switch(monkeypatch, "UPLOAD_BUCKET", None)
+    no_stores(monkeypatch)
     with patch("app.api.routes.files.send_pika_message") as send:
         response = client.post(f"/files/{file_mfid}/ingest")
     assert response.status_code == 501
@@ -352,11 +354,12 @@ def test_ingest_publishes_with_configured_routing(client, db_engine, admin, monk
     assert response.status_code == 200, response.text
     assert send.call_args.kwargs["routing_key"] == "ingestion-lab-small"
     assert "user" not in send.call_args.kwargs
+    assert json.loads(send.call_args.kwargs["message"])["store_id"] == "mf-storage-prod"
 
 
 def test_download_without_storage_is_not_configured(client, db_engine, signer, admin, monkeypatch):
     file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
-    _switch(monkeypatch, "UPLOAD_BUCKET", None)
+    no_stores(monkeypatch)
     response = client.get(f"/files/{file_mfid}/download_link")
     assert response.status_code == 501
     assert response.json()["detail"]["code"] == "storage_not_configured"
@@ -364,10 +367,10 @@ def test_download_without_storage_is_not_configured(client, db_engine, signer, a
 
 
 def test_a_file_without_a_location_is_not_found_on_s3(client, db_engine, admin, monkeypatch):
-    def refuse():
+    def refuse(store):
         raise AssertionError("Google storage was asked")
-    monkeypatch.setattr(gcs_storage, "server_client", refuse)
-    _switch(monkeypatch, "STORAGE_BACKEND", "s3")
+    monkeypatch.setattr(gcs_storage, "store_client", refuse)
+    use_stores(monkeypatch, s3("mf-storage-prod", "mf-storage-prod"))
     file_mfid = _file(db_engine, None)
     assert client.get(f"/files/{file_mfid}/download_link").status_code == 404
     response = client.get(f"/datasets/{DS}/download_links")

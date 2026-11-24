@@ -436,11 +436,10 @@ def test_patch_guards_file_identity(client, db_engine, auth_as):
 def test_catalog_records_work_on_an_s3_server(client, db_engine, auth_as, monkeypatch):
     from app.config import get_settings
     from app.storage import get_store
-    monkeypatch.setenv("STORAGE_BACKEND", "s3")
-    monkeypatch.setenv("S3_ENDPOINT_URL", "http://seaweedfs:8333")
+    monkeypatch.setenv("STORAGE_STORES", '[{"id": "files", "display_name": "Files", "type": "s3", "bucket": "b", "endpoint_url": "http://seaweedfs:8333"}]')
     get_settings.cache_clear()
     get_store.cache_clear()
-    assert get_settings().storage.backend == "s3"
+    assert get_settings().storage.store("files").type == "s3"
     user_id = "0000-0000-0000-0001"
     ag_id = _grant_write_access(db_engine, "ds_s3_catalog", user_id)
     auth_as(user_id, groups=[("ds_s3_catalog", ag_id)])

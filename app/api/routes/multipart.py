@@ -7,13 +7,13 @@ from sqlmodel import Session
 
 import app.api.routes.gcs_storage as gcs_storage
 from app.api.dependencies import get_engine
-from app.api.errors import feature_disabled_response
+from app.api.errors import STORE_UNAVAILABLE_RESPONSE, feature_disabled_response
 from app.api.path_params import DatasetMfid
 from app.config import FeatureDisabled
 from app.models.datasets import AssociatedFileRead
 from app.models.multipart import MultipartComplete, MultipartInitiate, MultipartParts, MultipartReplace, MultipartStatus, SignedPart, SignedParts, UploadedPart
 from app.services import multipart as service
-from app.storage import StorageFailure, UploadMissing, get_store
+from app.storage import StorageFailure, StoreUnavailable, UploadMissing, get_store
 from app.utils.auth_utils import authorize_user
 from app.utils.multipart_config import MultipartStorageConfig
 from app.utils.permissions import Principal
@@ -30,7 +30,7 @@ def initiate(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Data
     return service.initiate(get_engine(), get_store, auth_res, dsid, body, idempotency_key, config)
 
 
-@router.post("/files/{file_mfid}/upload/multipart/initiate", response_model=MultipartStatus, responses={**feature_disabled_response("uploads"), 400: {"description": "The file is a catalog-only (non-GCS) record; edit it with `PATCH /files/{file_id}`"}, 409: {"description": "Another replace of this file is in progress: `{\"detail\": {\"code\": \"replace_in_progress\", \"upload_id\": ..., \"message\": ...}}`. A reused Idempotency-Key with a different request returns a plain string detail"}, 412: {"description": "If-Match does not match the file's current ETag: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}})
+@router.post("/files/{file_mfid}/upload/multipart/initiate", response_model=MultipartStatus, responses={**feature_disabled_response("uploads"), **STORE_UNAVAILABLE_RESPONSE, 400: {"description": "The file is a catalog-only (non-GCS) record; edit it with `PATCH /files/{file_id}`"}, 409: {"description": "Another replace of this file is in progress: `{\"detail\": {\"code\": \"replace_in_progress\", \"upload_id\": ..., \"message\": ...}}`. A reused Idempotency-Key with a different request returns a plain string detail"}, 412: {"description": "If-Match does not match the file's current ETag: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}})
 def initiate_replace(auth_res: Annotated[Principal, Depends(authorize_user)], file_mfid: str, body: MultipartReplace, idempotency_key: Annotated[str | None, Header(min_length=1, max_length=128)] = None, if_match: Annotated[str | None, Header()] = None):
     """Start replacing an existing GCS file's content. Requires EDIT on its dataset. Upload parts and complete through the dataset's multipart routes; completion keeps the file MFID and filename. Send If-Match with the file's ETag to refuse the replace when the file has changed; `If-Match: *` matches any ETag."""
     config = MultipartStorageConfig.from_env()
@@ -73,9 +73,11 @@ def sign_parts(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
         return SignedPart(part_number=part.part_number, url=url, headers=headers, offset=(part.part_number - 1) * upload.part_size, size=size, expires_at=expires_at)
 
     try:
-        storage = get_store()
+        storage = get_store(upload.store_id)
         with ThreadPoolExecutor(max_workers=8) as pool:
             return SignedParts(parts=list(pool.map(sign, body.parts)))
+    except StoreUnavailable:
+        raise
     except Exception:
         raise HTTPException(503, "Part signing unavailable; retry with the same checksums") from None
 
@@ -88,11 +90,13 @@ def get_status(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
         session.expunge(upload)
     if upload.state == "uploading" and upload.provider_upload_id and not service.expired(upload):
         try:
-            parts, marker = get_store().list_parts(upload.bucket, upload.object_key, upload.provider_upload_id, part_number_marker, limit)
+            parts, marker = get_store(upload.store_id).list_parts(upload.bucket, upload.object_key, upload.provider_upload_id, part_number_marker, limit)
             result.parts = [UploadedPart(part_number=part.part_number, size=part.size, etag=part.etag) for part in parts]
             result.next_part_number_marker = marker
         except UploadMissing:
             raise HTTPException(409, "Provider upload is unavailable; abort and start a new upload") from None
+        except StoreUnavailable:
+            raise
         except StorageFailure:
             raise HTTPException(503, "Upload progress is temporarily unavailable") from None
     return result

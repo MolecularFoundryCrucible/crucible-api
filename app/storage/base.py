@@ -11,6 +11,14 @@ class UploadMissing(StorageFailure):
     pass
 
 
+class StoreUnavailable(StorageFailure):
+    """The named store is not configured on this server; rows that name it keep their store id."""
+
+    def __init__(self, store_id: str | None):
+        super().__init__("store_unavailable")
+        self.store_id = store_id
+
+
 @dataclass(frozen=True)
 class Part:
     """An uploaded part. `crc32c` is the base64 checksum the store computed, when it reports one."""
@@ -63,5 +71,7 @@ class ObjectStore(Protocol):
     def signed_download(self, bucket: str, key: str, version: str | None, filename: str, disposition: str, expires_in: timedelta) -> str: ...
 
     def put_bytes(self, bucket: str, key: str, data: bytes, content_type: str) -> None: ...
+
+    def list_keys(self, bucket: str, prefix: str) -> list[str]: ...
 
     def get_text(self, bucket: str, key: str) -> str | None: ...

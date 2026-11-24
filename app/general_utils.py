@@ -68,3 +68,16 @@ def if_match_satisfied(if_match, current_etag):
         return True
     current = current_etag.removeprefix("W/")
     return any(candidate.strip().removeprefix("W/") == current for candidate in if_match.split(","))
+
+
+def merge_patch(target, patch):
+    """Apply a JSON Merge Patch (RFC 7396): null removes a key, objects merge, anything else replaces."""
+    if not isinstance(patch, dict):
+        return patch
+    result = dict(target) if isinstance(target, dict) else {}
+    for key, value in patch.items():
+        if value is None:
+            result.pop(key, None)
+        else:
+            result[key] = merge_patch(result.get(key), value)
+    return result

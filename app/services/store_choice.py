@@ -3,7 +3,7 @@ import logging
 from fastapi import HTTPException
 
 from app.config import get_settings
-from app.services.record_settings import read_settings
+from app.services.resource_settings import read_settings
 from app.services.storage_downloads import StorageNotConfigured
 
 logger = logging.getLogger(__name__)

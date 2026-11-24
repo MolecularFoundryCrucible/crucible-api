@@ -4,11 +4,11 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.models.timestamps import UtcDatetime
 
-RECORD_SETTINGS_SCHEMA_VERSION = 1
+RESOURCE_SETTINGS_SCHEMA_VERSION = 1
 MAX_SETTINGS_BYTES = 16 * 1024
 
 
-class RecordSettings(BaseModel):
+class ResourceSettingsDocument(BaseModel):
     '''Settings shared by every record type that has them.'''
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -24,15 +24,15 @@ class RecordSettings(BaseModel):
         return value
 
 
-class ProjectSettings(RecordSettings):
+class ProjectSettings(ResourceSettingsDocument):
     '''A project's settings. default_store_id: where uploads to the project's datasets go unless the upload names a store.'''
 
 
-class InstrumentSettings(RecordSettings):
+class InstrumentSettings(ResourceSettingsDocument):
     '''An instrument's settings. default_store_id: where uploads to the instrument's datasets go when neither the upload nor the project names a store.'''
 
 
-class RecordSettingsRead(BaseModel):
+class ResourceSettingsRead(BaseModel):
     schema_version: int
     revision: int
     updated_at: Optional[UtcDatetime] = None

@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 from app.general_utils import get_utc_datetime, if_match_satisfied, merge_patch
 from app.models.preferences import serialized_size
-from app.models.record_settings import MAX_SETTINGS_BYTES, RECORD_SETTINGS_SCHEMA_VERSION, RecordSettingsRead
+from app.models.resource_settings import MAX_SETTINGS_BYTES, RESOURCE_SETTINGS_SCHEMA_VERSION, ResourceSettingsRead
 from app.tables import ResourceSettings
 
 
@@ -22,11 +22,11 @@ def read_settings(session: Session, mfid: str) -> dict[str, Any]:
     return dict(row.settings) if row is not None else {}
 
 
-def settings_response(row: ResourceSettings | None, response: Response) -> RecordSettingsRead:
+def settings_response(row: ResourceSettings | None, response: Response) -> ResourceSettingsRead:
     response.headers["ETag"] = settings_etag(row.revision if row else 0)
     if row is None:
-        return RecordSettingsRead(schema_version=RECORD_SETTINGS_SCHEMA_VERSION, revision=0, settings={})
-    return RecordSettingsRead(schema_version=row.schema_version, revision=row.revision, updated_at=row.updated_at, settings=row.settings)
+        return ResourceSettingsRead(schema_version=RESOURCE_SETTINGS_SCHEMA_VERSION, revision=0, settings={})
+    return ResourceSettingsRead(schema_version=row.schema_version, revision=row.revision, updated_at=row.updated_at, settings=row.settings)
 
 
 def update_settings(engine, mfid: str, model: type[BaseModel], patch: Any, if_match: str | None) -> ResourceSettings:
@@ -48,7 +48,7 @@ def update_settings(engine, mfid: str, model: type[BaseModel], patch: Any, if_ma
             if serialized_size(merged) > MAX_SETTINGS_BYTES:
                 raise RequestValidationError([{"type": "too_long", "loc": ("body",), "msg": f"Settings exceed {MAX_SETTINGS_BYTES} bytes", "input": None}])
             if row is None:
-                row = ResourceSettings(mfid=mfid, settings=merged, schema_version=RECORD_SETTINGS_SCHEMA_VERSION, revision=1, updated_at=get_utc_datetime())
+                row = ResourceSettings(mfid=mfid, settings=merged, schema_version=RESOURCE_SETTINGS_SCHEMA_VERSION, revision=1, updated_at=get_utc_datetime())
             else:
                 row.settings = merged
                 row.revision += 1

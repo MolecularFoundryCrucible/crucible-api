@@ -220,6 +220,8 @@ def test_the_store_follows_upload_then_project_then_instrument_then_deployment(s
     response = initiate(client, requested)
     assert response.status_code == 200, response.text
     assert session_store(engine, response.json()["upload_id"]) == expected
+    assert response.json()["store_id"] == expected
+    assert client.get(f"{BASE}/{response.json()['upload_id']}").json()["store_id"] == expected
 
 
 def test_a_default_naming_a_removed_store_falls_through(stores):

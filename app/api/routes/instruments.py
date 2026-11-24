@@ -17,9 +17,9 @@ from app.models.query_params import (
     InstrumentAffiliation, InstrumentDetailQuery, InstrumentListQuery,
     InstrumentSearchQuery, InstrumentStatus)
 from app.models.users import UserPublicRead
-from app.models.record_settings import InstrumentSettings, RecordSettingsRead
+from app.models.resource_settings import InstrumentSettings, ResourceSettingsRead
 from app.services.capabilities import record_capabilities
-from app.services.record_settings import settings_response, update_settings
+from app.services.resource_settings import settings_response, update_settings
 from app.services.instrument_members import (
     create_members_group, load_members, member_filter, member_link,
     require_members_group)
@@ -678,7 +678,7 @@ def remove_instrument_user(
         return load_members(session, auth_res, instrument_mfid)
 
 
-@router.get("/instruments/{instrument_ref}/settings", response_model=RecordSettingsRead, responses={200: {"headers": {"ETag": {"description": "Current settings revision; send it as `If-Match` on PATCH", "schema": {"type": "string"}}}}, 412: {"description": "If-Match does not match the current revision: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}, 422: {"description": "The patch is not an object, or the merged document has an unknown key, an unknown store (`unknown_store`), an invalid value, or exceeds 16 KiB"}})
+@router.get("/instruments/{instrument_ref}/settings", response_model=ResourceSettingsRead, responses={200: {"headers": {"ETag": {"description": "Current settings revision; send it as `If-Match` on PATCH", "schema": {"type": "string"}}}}, 412: {"description": "If-Match does not match the current revision: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}, 422: {"description": "The patch is not an object, or the merged document has an unknown key, an unknown store (`unknown_store`), an invalid value, or exceeds 16 KiB"}})
 def read_instrument_settings(instrument_ref: InstrumentRef, auth_res: Annotated[Principal, Depends(authorize_user)], response: Response):
     '''The instrument's settings: `default_store_id`, the store uploads to its datasets use when neither the upload nor the dataset's project names one. Members read them.'''
     with Session(get_engine()) as session:
@@ -687,7 +687,7 @@ def read_instrument_settings(instrument_ref: InstrumentRef, auth_res: Annotated[
         return settings_response(session.get(ResourceSettings, mfid), response)
 
 
-@router.patch("/instruments/{instrument_ref}/settings", response_model=RecordSettingsRead, responses={200: {"headers": {"ETag": {"description": "Current settings revision; send it as `If-Match` on PATCH", "schema": {"type": "string"}}}}, 412: {"description": "If-Match does not match the current revision: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}, 422: {"description": "The patch is not an object, or the merged document has an unknown key, an unknown store (`unknown_store`), an invalid value, or exceeds 16 KiB"}})
+@router.patch("/instruments/{instrument_ref}/settings", response_model=ResourceSettingsRead, responses={200: {"headers": {"ETag": {"description": "Current settings revision; send it as `If-Match` on PATCH", "schema": {"type": "string"}}}}, 412: {"description": "If-Match does not match the current revision: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}, 422: {"description": "The patch is not an object, or the merged document has an unknown key, an unknown store (`unknown_store`), an invalid value, or exceeds 16 KiB"}})
 def update_instrument_settings(instrument_ref: InstrumentRef, auth_res: Annotated[Principal, Depends(authorize_user)], response: Response, patch: Annotated[Any, Body()], if_match: Annotated[Optional[str], Header()] = None):
     '''Merge a JSON Merge Patch (RFC 7396) into the instrument's settings; `null` removes a key. Requires admin on the instrument. Send `If-Match` with the ETag from GET to refuse the change when another write happened first.'''
     with Session(get_engine()) as session:

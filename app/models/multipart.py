@@ -97,6 +97,7 @@ class UploadedPart(BaseModel):
 class MultipartStatus(BaseModel):
     upload_id: str | None = None
     upload_protocol: Literal["xml-multipart-signed-v1"] = "xml-multipart-signed-v1"
+    store_id: str | None = Field(default=None, description="The store this upload goes to (see GET /storage/stores)")
     state: str
     expires_at: datetime | None = None
     part_size: int | None = None

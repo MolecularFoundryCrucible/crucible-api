@@ -130,7 +130,7 @@ def file_read(session, upload):
 
 
 def status(session, upload):
-    return MultipartStatus(upload_id=upload.upload_id, state="expired" if expired(upload) else upload.state, expires_at=utc(upload.expires_at), part_size=upload.part_size or 0, part_count=part_total(upload), failure_code=upload.failure_code, existing_file=file_read(session, upload) if upload.state == "completed" else None)
+    return MultipartStatus(upload_id=upload.upload_id, store_id=upload.store_id, state="expired" if expired(upload) else upload.state, expires_at=utc(upload.expires_at), part_size=upload.part_size or 0, part_count=part_total(upload), failure_code=upload.failure_code, existing_file=file_read(session, upload) if upload.state == "completed" else None)
 
 
 def unavailable(message):

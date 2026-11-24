@@ -60,7 +60,7 @@ def test_a_project_admin_sets_and_clears_the_default_store(client, project):
 
 
 @pytest.mark.parametrize("body", [{"colour": 1}, {"default_store_id": "gone"}, {"default_store_id": 3}])
-def test_record_settings_refuse_unknown_keys_and_stores(client, project, body):
+def test_resource_settings_refuse_unknown_keys_and_stores(client, project, body):
     assert patch(client, "/projects/proj_x/settings", body).status_code == 422
 
 
@@ -71,7 +71,7 @@ def test_a_stale_if_match_is_refused(client, project):
 
 
 @pytest.mark.parametrize("role, can_change", [(Role.VIEWER, False), (Role.EDITOR, False), (Role.ADMIN, True)])
-def test_only_admins_change_record_settings(client, project, auth_as, role, can_change):
+def test_only_admins_change_resource_settings(client, project, auth_as, role, can_change):
     group_id, mfid = project
     auth_as("0000-0002-2222-2222", groups=[(mfid, group_id, role)])
     assert client.get("/projects/proj_x/settings").status_code == 200

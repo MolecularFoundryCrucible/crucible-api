@@ -232,6 +232,12 @@ class GoogleStore:
             overrides["response_type"] = content_type
         return blob.generate_signed_url(version="v4", expiration=expires_in, method="GET", generation=generation, **overrides, **signing(self.identity()))
 
+    def list_keys(self, bucket, prefix):
+        try:
+            return [blob.name for blob in self.storage_client().bucket(bucket).list_blobs(prefix=prefix, timeout=30)]
+        except Exception:
+            raise StorageFailure("provider_unavailable") from None
+
     def put_bytes(self, bucket, key, data, content_type):
         try:
             self.storage_client().bucket(bucket).blob(key).upload_from_string(data, content_type=content_type, timeout=60)

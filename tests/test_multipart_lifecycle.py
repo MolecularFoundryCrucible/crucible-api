@@ -103,6 +103,9 @@ class MemoryStorage:
     def signed_download(self, bucket, key, version, filename, disposition, expires_in):
         return f"https://{self.name}/{bucket}/{key}?generation={version}"
 
+    def list_keys(self, bucket, prefix):
+        return sorted(key for key in self.objects if key.startswith(prefix))
+
     def __call__(self, store_id=None):
         return self
 

@@ -135,6 +135,11 @@ class S3Store:
         with failures("signing_failed"):
             return self.presigner.generate_presigned_url("get_object", Params=params, ExpiresIn=int(expires_in.total_seconds()))
 
+    def list_keys(self, bucket, prefix):
+        with failures():
+            pages = self.client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix)
+            return [item["Key"] for page in pages for item in page.get("Contents", [])]
+
     def put_bytes(self, bucket, key, data, content_type):
         with failures():
             self.client.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)

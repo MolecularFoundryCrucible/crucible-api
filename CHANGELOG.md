@@ -30,6 +30,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Every commit on `main` is published to `ghcr.io/molecularfoundrycrucible/crucible-api` as `:sha-<commit>` and `:main`; a release tag adds `X.Y.Z` and `X.Y` to that image instead of building a new one, so a release has the digest staging ran.
 - A sign-in provider whose discovery document lists an `authorization_endpoint`, `token_endpoint`, `jwks_uri` or `userinfo_endpoint` that is not `https` is unavailable; `http` is accepted only on loopback for a loopback issuer, as for a local test provider.
 - Demoting or removing a project member drops their cached API keys, so the change applies at once on the worker that served it and within `AUTH_CACHE_TTL` on the others.
 - `DELETE /files/{file_id}` returns 409 `replace_in_progress` with the `upload_id` while a replacement of the file is in progress.

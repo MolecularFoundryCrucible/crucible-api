@@ -146,3 +146,28 @@ def test_replacing_and_restoring_stay_in_the_files_store(stores):
     restore_latest(engine, lookup, file["mfid"], service.now())
     with Session(engine) as session:
         assert session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file["mfid"])).one().storage_path == file["storage_path"]
+
+
+def test_stores_are_listed_without_endpoints_or_secrets(stores):
+    client = stores[0]
+    listed = client.get("/storage/stores")
+    assert listed.status_code == 200, listed.text
+    assert [set(item) for item in listed.json()] == [{"id", "display_name", "description", "default"}] * 2
+    assert [(item["id"], item["default"]) for item in listed.json()] == [("default", True), ("vm", False)]
+
+
+def test_file_responses_name_their_store(stores):
+    client, engine, known, _ = stores
+    file = complete((client, engine, known["default"]), publish((client, engine, known["default"]))).json()
+    assert file["store"] == "default"
+    move_to(engine, file["mfid"], "vm", known["vm"], known["default"])
+    assert client.get(f"/files/{file['mfid']}").json()["store"] == "vm"
+    with Session(engine) as session:
+        record = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file["mfid"])).one()
+        record.store_id = None
+        session.add(record)
+        dataset_id = record.dataset_id
+        session.add(AssociatedFile(dataset_id=dataset_id, filename="remote.h5", storage_backend="nersc-perlmutter", storage_path="/global/cfs/x", size=1, sha256_hash="b" * 64))
+        session.commit()
+    by_name = {item["filename"]: item["store"] for item in client.get("/datasets/ds/files").json()}
+    assert by_name == {"data.bin": "default", "remote.h5": None}

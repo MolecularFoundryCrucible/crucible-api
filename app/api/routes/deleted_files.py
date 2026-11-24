@@ -10,7 +10,7 @@ from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import MessageResponse
 from app.services.file_versions import RestoreRefused, deleted_versions, purge_deleted, restore_deleted
 from app.services.multipart import now
-from app.storage import get_store
+from app.storage import get_store, stored_in
 from app.tables import FileVersion
 from app.utils.auth_utils import authorize_user, require_permission
 from app.utils.permissions import Permission, Principal
@@ -52,7 +52,7 @@ def list_deleted_files(
         _require_dataset_admin(session, auth_res, dsid)
         total, rows = offset_page(session, deleted_versions(dsid).where(FileVersion.delete_after > now()), limit, offset)
         items = [
-            DeletedFileRead(file_mfid=version.file_mfid, dataset_mfid=version.dataset_mfid, filename=version.filename, size=version.size, sha256_hash=version.sha256_hash, deleted_at=version.created_at, restorable_until=version.delete_after)
+            DeletedFileRead(file_mfid=version.file_mfid, dataset_mfid=version.dataset_mfid, filename=version.filename, size=version.size, sha256_hash=version.sha256_hash, store=stored_in(version.store_id), deleted_at=version.created_at, restorable_until=version.delete_after)
             for version in rows
         ]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)

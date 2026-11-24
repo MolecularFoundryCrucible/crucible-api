@@ -2,11 +2,13 @@
 
 This changelog records changes that affect API users, operators, or downstream clients. Add entries under `Unreleased` in the same change that modifies the observable contract or operational behavior. Internal-only changes do not require an entry.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The major version follows the API version (`/api/vN`); minor releases may change deployment settings, remove routes deprecated in the previous release, and add migrations, each listed under `Upgrade notes`.
 
 ## [Unreleased]
 
-### Breaking changes
+## [4.1.0] - 2026-11-24
+
+### Upgrade notes
 
 - Storage is configured only with `STORAGE_STORES`: `STORAGE_BACKEND`, `UPLOAD_BUCKET`, `STORAGE_READ_BUCKETS`, `GCS_PROJECT`, `S3_ENDPOINT_URL`, `S3_PUBLIC_URL`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `MULTIPART_UPLOAD_BUCKET`, `MULTIPART_UPLOAD_SIGNER` and `MULTIPART_UPLOAD_PROJECT` are retired, and the server refuses to start while one is set. Files stored earlier answer 503 `store_unavailable` until `files assign-store` records their store ([Moving from the single-store settings](docs/uploads.md#moving-from-the-single-store-settings)).
 - Needs migration `afcc2eef5a87`, which adds `store_id` to files, file versions and upload sessions, and the `resource_settings` table.

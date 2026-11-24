@@ -638,7 +638,7 @@ def _project_for_settings(session, project_ref, principal, permission):
 
 @router.get("/projects/{project_ref}/settings", response_model=RecordSettingsRead, responses={200: {"headers": {"ETag": {"description": "Current settings revision; send it as `If-Match` on PATCH", "schema": {"type": "string"}}}}, 412: {"description": "If-Match does not match the current revision: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}, 422: {"description": "The patch is not an object, or the merged document has an unknown key, an unknown store (`unknown_store`), an invalid value, or exceeds 16 KiB"}})
 def read_project_settings(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)], response: Response):
-    '''The project's settings: `default_store`, the store uploads to its datasets use unless an upload names one. Members read them.'''
+    '''The project's settings: `default_store_id`, the store uploads to its datasets use unless an upload names one. Members read them.'''
     with Session(get_engine()) as session:
         mfid = _project_for_settings(session, project_ref, auth_res, Permission.READ)
         return settings_response(session.get(ResourceSettings, mfid), response)

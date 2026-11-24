@@ -152,14 +152,14 @@ def test_two_s3_servers_as_two_stores(db_engine, client, auth_as, monkeypatch):
     data = os.urandom(10)
     keys = {}
     for store in stores:
-        started = client.post(BASE + "/initiate", json={"filename": f"{store['id']}.bin", "size": len(data), "store": store["id"]}, headers={"Idempotency-Key": store["id"]})
+        started = client.post(BASE + "/initiate", json={"filename": f"{store['id']}.bin", "size": len(data), "store_id": store["id"]}, headers={"Idempotency-Key": store["id"]})
         assert started.status_code == 200, started.text
         upload = started.json()
         part = client.post(BASE + f"/{upload['upload_id']}/parts", json={"parts": [{"part_number": 1, "crc32c": crc32c(data)}]}).json()["parts"][0]
         assert send("PUT", part["url"], data, part["headers"])[0] == 200
         finished = client.post(BASE + "/complete", json={"upload_id": upload["upload_id"], "sha256_hash": hashlib.sha256(data).hexdigest(), "crc32c": crc32c(data)})
         assert finished.status_code == 200, finished.text
-        assert finished.json()["store"] == store["id"]
+        assert finished.json()["store_id"] == store["id"]
         keys[store["id"]] = finished.json()["storage_path"].partition("/")[2]
     first, second = (storage.get_store(store["id"]) for store in stores)
     assert first.head(BUCKETS[0], keys["s0"]) is not None and first.head(BUCKETS[0], keys["s1"]) is None

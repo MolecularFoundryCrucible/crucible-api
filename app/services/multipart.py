@@ -152,7 +152,7 @@ def idempotent(session, principal, dsid, key, fingerprint):
 def request_fingerprint(body, **extra):
     """The idempotency fingerprint of a request; a body that names no store hashes as it did before
     stores could be named, so retries spanning an upgrade still match."""
-    values = body.model_dump(exclude={"store"} if body.store is None else None) | extra
+    values = body.model_dump(exclude={"store_id"} if body.store_id is None else None) | extra
     return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -200,7 +200,7 @@ def reserve(engine, principal, dsid, body, key, config):
             raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing_name.mfid, "etag": file_etag(existing_name.storage_path, existing_name.storage_generation, existing_name.sha256_hash, existing_name.size), "message": "Filename already exists"})
         if filename_reserved(session, dsid, body.filename):
             raise HTTPException(409, "Filename is reserved by another upload")
-        store = choose_store(session, dataset, body.store)
+        store = choose_store(session, dataset, body.store_id)
         return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, body.filename, store=store)
 
 
@@ -286,7 +286,7 @@ def reserve_replace(engine, principal, file_mfid, body, key, if_match, config, b
             if backfilled:
                 session.commit()
             return MultipartStatus(state="completed", existing_file=AssociatedFileRead.model_validate(file, update={"dataset_mfid": dsid}))
-        return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, file.filename, replace_file_mfid=file_mfid, replace_base_etag=base_etag, store=choose_store(session, dataset, body.store) if body.store else store_config(file.store_id))
+        return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, file.filename, replace_file_mfid=file_mfid, replace_base_etag=base_etag, store=choose_store(session, dataset, body.store_id) if body.store_id else store_config(file.store_id))
 
 
 def initiate_replace(engine, storage, principal, file_mfid, body, key, if_match, config, backfill=None):

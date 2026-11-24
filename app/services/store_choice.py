@@ -11,7 +11,7 @@ _reported: set[str] = set()
 
 
 def unknown_store(store_id: str) -> HTTPException:
-    return HTTPException(422, {"code": "unknown_store", "store": store_id, "message": f"{store_id} is not a store on this server (see GET /storage/stores)"})
+    return HTTPException(422, {"code": "unknown_store", "store_id": store_id, "message": f"{store_id} is not a store on this server (see GET /storage/stores)"})
 
 
 def choose_store(session, dataset, requested: str | None):
@@ -25,7 +25,7 @@ def choose_store(session, dataset, requested: str | None):
             raise unknown_store(requested)
         return store
     for mfid in (dataset.project_mfid, dataset.instrument_mfid):
-        wanted = read_settings(session, mfid).get("default_store") if mfid else None
+        wanted = read_settings(session, mfid).get("default_store_id") if mfid else None
         if wanted is None:
             continue
         store = storage.store(wanted)

@@ -12,9 +12,9 @@ class RecordSettings(BaseModel):
     '''Settings shared by every record type that has them.'''
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    default_store: Optional[str] = None
+    default_store_id: Optional[str] = None
 
-    @field_validator("default_store")
+    @field_validator("default_store_id")
     @classmethod
     def configured_store(cls, value):
         from app.config import get_settings
@@ -25,11 +25,11 @@ class RecordSettings(BaseModel):
 
 
 class ProjectSettings(RecordSettings):
-    '''A project's settings. default_store: where uploads to the project's datasets go unless the upload names a store.'''
+    '''A project's settings. default_store_id: where uploads to the project's datasets go unless the upload names a store.'''
 
 
 class InstrumentSettings(RecordSettings):
-    '''An instrument's settings. default_store: where uploads to the instrument's datasets go when neither the upload nor the project names a store.'''
+    '''An instrument's settings. default_store_id: where uploads to the instrument's datasets go when neither the upload nor the project names a store.'''
 
 
 class RecordSettingsRead(BaseModel):

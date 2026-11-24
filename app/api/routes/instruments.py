@@ -680,7 +680,7 @@ def remove_instrument_user(
 
 @router.get("/instruments/{instrument_ref}/settings", response_model=RecordSettingsRead, responses={200: {"headers": {"ETag": {"description": "Current settings revision; send it as `If-Match` on PATCH", "schema": {"type": "string"}}}}, 412: {"description": "If-Match does not match the current revision: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}, 422: {"description": "The patch is not an object, or the merged document has an unknown key, an unknown store (`unknown_store`), an invalid value, or exceeds 16 KiB"}})
 def read_instrument_settings(instrument_ref: InstrumentRef, auth_res: Annotated[Principal, Depends(authorize_user)], response: Response):
-    '''The instrument's settings: `default_store`, the store uploads to its datasets use when neither the upload nor the dataset's project names one. Members read them.'''
+    '''The instrument's settings: `default_store_id`, the store uploads to its datasets use when neither the upload nor the dataset's project names one. Members read them.'''
     with Session(get_engine()) as session:
         mfid = get_instrument_or_404(session, instrument_ref).unique_id
         require_permission(session, auth_res, mfid, Permission.READ)

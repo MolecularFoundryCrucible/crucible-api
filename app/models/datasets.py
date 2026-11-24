@@ -311,18 +311,17 @@ class AssociatedFileRead(SQLModel):
     size: int
     sha256_hash: str
     storage_generation: Optional[str] = Field(default=None, exclude=True)
-    store_id: Optional[str] = Field(default=None, exclude=True)
+    store_id: Optional[str] = Field(default=None, description="The store holding a stored file (see GET /storage/stores); null for a catalog-only record.")
 
     @computed_field
     @property
     def etag(self) -> str:
         return file_etag(self.storage_path, self.storage_generation, self.sha256_hash, self.size)
 
-    @computed_field
-    @property
-    def store(self) -> Optional[str]:
-        """The store holding a stored file (see GET /storage/stores); null for a catalog-only record."""
-        return (self.store_id or "default") if self.storage_backend == "gcs" else None
+    @model_validator(mode="after")
+    def stored_files_name_their_store(self):
+        self.store_id = (self.store_id or "default") if self.storage_backend == "gcs" else None
+        return self
 
 
 class DeletedFileRead(SQLModel):
@@ -332,7 +331,7 @@ class DeletedFileRead(SQLModel):
     filename: str
     size: int
     sha256_hash: str
-    store: str
+    store_id: str
     deleted_at: UtcDatetime
     restorable_until: UtcDatetime
 

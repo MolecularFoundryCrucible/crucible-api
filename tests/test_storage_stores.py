@@ -75,7 +75,7 @@ def test_a_file_in_an_unconfigured_store_answers_503(stores):
     move_to(engine, file["mfid"], "gone", None, None)
     response = client.get(f"/files/{file['mfid']}/download_link")
     assert response.status_code == 503
-    assert {key: response.json()["detail"][key] for key in ("code", "store")} == {"code": "store_unavailable", "store": "gone"}
+    assert {key: response.json()["detail"][key] for key in ("code", "store_id")} == {"code": "store_unavailable", "store_id": "gone"}
     assert client.get(f"/files/{file['mfid']}").status_code == 200
 
 
@@ -159,9 +159,9 @@ def test_stores_are_listed_without_endpoints_or_secrets(stores):
 def test_file_responses_name_their_store(stores):
     client, engine, known, _ = stores
     file = complete((client, engine, known["default"]), publish((client, engine, known["default"]))).json()
-    assert file["store"] == "default"
+    assert file["store_id"] == "default"
     move_to(engine, file["mfid"], "vm", known["vm"], known["default"])
-    assert client.get(f"/files/{file['mfid']}").json()["store"] == "vm"
+    assert client.get(f"/files/{file['mfid']}").json()["store_id"] == "vm"
     with Session(engine) as session:
         record = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file["mfid"])).one()
         record.store_id = None
@@ -169,7 +169,7 @@ def test_file_responses_name_their_store(stores):
         dataset_id = record.dataset_id
         session.add(AssociatedFile(dataset_id=dataset_id, filename="remote.h5", storage_backend="nersc-perlmutter", storage_path="/global/cfs/x", size=1, sha256_hash="b" * 64))
         session.commit()
-    by_name = {item["filename"]: item["store"] for item in client.get("/datasets/ds/files").json()}
+    by_name = {item["filename"]: item["store_id"] for item in client.get("/datasets/ds/files").json()}
     assert by_name == {"data.bin": "default", "remote.h5": None}
 
 
@@ -183,7 +183,7 @@ def defaults(engine, project=None, instrument=None):
         session.add_all([Project(unique_id="pj", project_id="pj", organization="x", project_lead_orcid="owner"), Instrument(unique_id="in1", instrument_name="TEM", owner="owner", location="x")])
         for mfid, store in (("pj", project), ("in1", instrument)):
             if store is not None:
-                session.add(ResourceSettings(mfid=mfid, settings={"default_store": store}, updated_at=service.now()))
+                session.add(ResourceSettings(mfid=mfid, settings={"default_store_id": store}, updated_at=service.now()))
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
         dataset.project_mfid, dataset.instrument_mfid = "pj", "in1"
         session.add(dataset)
@@ -191,7 +191,7 @@ def defaults(engine, project=None, instrument=None):
 
 
 def initiate(client, store=None, filename="data.bin"):
-    body = {"filename": filename, "size": len(DATA), "sha256_hash": SHA} | ({"store": store} if store else {})
+    body = {"filename": filename, "size": len(DATA), "sha256_hash": SHA} | ({"store_id": store} if store else {})
     return client.post(BASE + "/initiate", json=body, headers={"Idempotency-Key": filename})
 
 
@@ -230,7 +230,7 @@ def test_a_default_naming_a_removed_store_falls_through(stores):
 def test_an_upload_naming_an_unknown_store_is_refused(stores):
     response = initiate(stores[0], "gone")
     assert response.status_code == 422
-    assert {key: response.json()["detail"][key] for key in ("code", "store")} == {"code": "unknown_store", "store": "gone"}
+    assert {key: response.json()["detail"][key] for key in ("code", "store_id")} == {"code": "unknown_store", "store_id": "gone"}
 
 
 def test_a_replace_keeps_the_files_store_unless_another_is_named(stores):
@@ -241,7 +241,7 @@ def test_a_replace_keeps_the_files_store_unless_another_is_named(stores):
     assert kept.status_code == 200, kept.text
     assert session_store(engine, kept.json()["upload_id"]) == "vm"
     assert client.delete(BASE + f"/{kept.json()['upload_id']}").status_code == 204
-    moved = client.post(f"/files/{file['mfid']}/upload/multipart/initiate", json={"size": len(DATA), "store": "default"})
+    moved = client.post(f"/files/{file['mfid']}/upload/multipart/initiate", json={"size": len(DATA), "store_id": "default"})
     assert moved.status_code == 200, moved.text
     assert session_store(engine, moved.json()["upload_id"]) == "default"
 
@@ -250,7 +250,7 @@ def test_the_request_fingerprint_without_store_is_unchanged():
     body = MultipartInitiate(filename="a", size=1)
     before = json.dumps({"filename": "a", "size": 1, "sha256_hash": None}, sort_keys=True, separators=(",", ":"))
     assert service.request_fingerprint(body) == hashlib.sha256(before.encode()).hexdigest()
-    assert service.request_fingerprint(MultipartInitiate(filename="a", size=1, store="vm")) != service.request_fingerprint(body)
+    assert service.request_fingerprint(MultipartInitiate(filename="a", size=1, store_id="vm")) != service.request_fingerprint(body)
     assert COMPATIBILITY_STORE_ID == "default"
 
 
@@ -347,4 +347,4 @@ def test_a_legacy_file_without_the_store_default_does_not_break_the_dataset_link
     assert links.status_code == 200, links.text
     assert links.json()[legacy_mfid] is None and links.json()[current_mfid].startswith("https://vm.test/")
     single = client.get(f"/files/{legacy_mfid}/download_link")
-    assert (single.status_code, single.json()["detail"]["store"]) == (503, "default")
+    assert (single.status_code, single.json()["detail"]["store_id"]) == (503, "default")

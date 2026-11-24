@@ -53,21 +53,21 @@ def test_a_project_admin_sets_and_clears_the_default_store(client, project):
     url = "/projects/proj_x/settings"
     first = client.get(url)
     assert (first.status_code, first.json()["settings"], first.headers["ETag"]) == (200, {}, '"s0"')
-    changed = patch(client, url, {"default_store": "vm"}, if_match='"s0"')
+    changed = patch(client, url, {"default_store_id": "vm"}, if_match='"s0"')
     assert changed.status_code == 200, changed.text
-    assert (changed.json()["settings"], changed.headers["ETag"]) == ({"default_store": "vm"}, '"s1"')
-    cleared = patch(client, url, {"default_store": None})
+    assert (changed.json()["settings"], changed.headers["ETag"]) == ({"default_store_id": "vm"}, '"s1"')
+    cleared = patch(client, url, {"default_store_id": None})
     assert (cleared.json()["settings"], cleared.json()["revision"]) == ({}, 2)
 
 
-@pytest.mark.parametrize("body", [{"colour": 1}, {"default_store": "gone"}, {"default_store": 3}])
+@pytest.mark.parametrize("body", [{"colour": 1}, {"default_store_id": "gone"}, {"default_store_id": 3}])
 def test_record_settings_refuse_unknown_keys_and_stores(client, project, body):
     assert patch(client, "/projects/proj_x/settings", body).status_code == 422
 
 
 def test_a_stale_if_match_is_refused(client, project):
-    assert patch(client, "/projects/proj_x/settings", {"default_store": "vm"}).status_code == 200
-    stale = patch(client, "/projects/proj_x/settings", {"default_store": "main"}, if_match='"s0"')
+    assert patch(client, "/projects/proj_x/settings", {"default_store_id": "vm"}).status_code == 200
+    stale = patch(client, "/projects/proj_x/settings", {"default_store_id": "main"}, if_match='"s0"')
     assert (stale.status_code, stale.json()["detail"]["code"]) == (412, "etag_mismatch")
 
 
@@ -76,13 +76,13 @@ def test_only_admins_change_record_settings(client, project, auth_as, role, can_
     group_id, mfid = project
     auth_as("0000-0002-2222-2222", groups=[(mfid, group_id, role)])
     assert client.get("/projects/proj_x/settings").status_code == 200
-    assert patch(client, "/projects/proj_x/settings", {"default_store": "vm"}).status_code == (200 if can_change else 403)
+    assert patch(client, "/projects/proj_x/settings", {"default_store_id": "vm"}).status_code == (200 if can_change else 403)
 
 
 def test_an_instrument_admin_sets_the_default_store(client, instrument):
-    changed = patch(client, "/instruments/TEM_1/settings", {"default_store": "vm"})
+    changed = patch(client, "/instruments/TEM_1/settings", {"default_store_id": "vm"})
     assert changed.status_code == 200, changed.text
-    assert client.get("/instruments/TEM_1/settings").json()["settings"] == {"default_store": "vm"}
+    assert client.get("/instruments/TEM_1/settings").json()["settings"] == {"default_store_id": "vm"}
 
 
 def test_settings_of_an_unknown_record_are_not_found(client, project):

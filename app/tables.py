@@ -78,6 +78,7 @@ class AssociatedFile(SQLModel, table=True):
     storage_generation: Optional[str] = None
     storage_crc32c: Optional[str] = None
     sha256_verified_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    store_id: Optional[str] = None  # the store holding a stored file; null means the store with id "default"
     dataset_id: int = Field(foreign_key="dataset.id")
     dataset: "Dataset" = Relationship(back_populates='associated_files')
     ingestion_requests: List["IngestionRequest"] = Relationship(back_populates="associated_file")
@@ -416,6 +417,17 @@ class ApiKey(SQLModel, table=True):
 class UserPreferences(SQLModel, table=True):
     user_id: int = Field(sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True))
     preferences: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False))
+    schema_version: int = 1
+    revision: int = 1
+    updated_at: datetime = Field(sa_type=DateTime(timezone=True))
+
+
+class ResourceSettings(SQLModel, table=True):
+    """A record's settings document (projects and instruments today), validated per record type."""
+    __tablename__ = "resource_settings"
+
+    mfid: str = Field(sa_column=Column(String, ForeignKey("idtype.mfid", ondelete="CASCADE"), primary_key=True))
+    settings: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False))
     schema_version: int = 1
     revision: int = 1
     updated_at: datetime = Field(sa_type=DateTime(timezone=True))
@@ -799,6 +811,7 @@ class FileVersion(SQLModel, table=True):
     attempts: int = Field(default=0, sa_column=Column(Integer(), nullable=False, server_default="0"))
     failure_code: Optional[str] = None
     filename: Optional[str] = None
+    store_id: Optional[str] = None
     ingestion_requests: Optional[list[dict[str, Any]]] = Field(default=None, sa_column=Column(JSON().with_variant(JSONB(), "postgresql")))
 
 
@@ -823,6 +836,7 @@ class UploadSession(SQLModel, table=True):
     size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))
     protocol: Optional[str] = None
     bucket: Optional[str] = None
+    store_id: Optional[str] = None
     provider_upload_id: Optional[str] = None
     state: Optional[str] = None
     part_size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))

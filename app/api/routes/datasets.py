@@ -92,6 +92,7 @@ from app.utils.user_utils import owned_by_any, owner_fields, owner_unique_id, ow
 from app.utils.sql_utils import record_resource, is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for, dataset_or_404, file_named, offset_page
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
+from app.services.storage_downloads import StorageNotConfigured
 from app.storage import StoreUnavailable
 
 router = APIRouter(tags=["datasets"])
@@ -1243,7 +1244,7 @@ def generate_dataset_download_links(
                 continue
             try:
                 mfid_to_path[af.mfid] = (_ensure_storage_path(af, dsid, session), af.storage_generation, af.filename, af.store_id)
-            except HTTPException:
+            except (HTTPException, StoreUnavailable, StorageNotConfigured):
                 mfid_to_path[af.mfid] = None
         session.commit()
 

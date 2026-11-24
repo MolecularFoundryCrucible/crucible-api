@@ -44,7 +44,7 @@ def store_config(store_id: str | None):
 
     store = get_settings().storage.store(stored_in(store_id))
     if store is None:
-        raise StoreUnavailable(store_id)
+        raise StoreUnavailable(stored_in(store_id))
     return store
 
 

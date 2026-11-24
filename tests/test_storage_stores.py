@@ -100,11 +100,8 @@ def test_cleanup_deletes_versions_in_their_own_store_and_reports_an_unavailable_
     assert client.delete(f"/files/{gone['mfid']}").status_code == 200
     with Session(engine) as session:
         versions = {version.file_mfid: version for version in session.exec(select(FileVersion)).all()}
-    assert set(versions) == {in_vm["mfid"]}
-    with Session(engine) as session:
-        session.add(FileVersion(file_mfid=gone["mfid"], dataset_mfid="ds", storage_path=gone["storage_path"], storage_generation="7", size=1, sha256_hash=SHA, reason="deleted", store_id="gone", created_at=service.now(), delete_after=service.now()))
-        session.commit()
-        gone_id = session.exec(select(FileVersion.id).where(FileVersion.store_id == "gone")).one()
+    assert set(versions) == {in_vm["mfid"], gone["mfid"]}
+    gone_id = versions[gone["mfid"]].id
     report = run_cleanup(engine, lookup, service.now() + timedelta(days=15))
     assert known["vm"].deleted == [(vm_key, "7")]
     assert report.failures == [f"version {gone_id}: store_unavailable"]
@@ -298,3 +295,56 @@ def test_the_store_listing_reports_files_in_unconfigured_stores(stores, capsys):
     assert "default  configured, default  1 files" in output
     assert "vm  configured  0 files" in output
     assert "gone  NOT CONFIGURED  1 files" in output
+
+
+def test_read_buckets_belong_to_the_store_default_even_when_another_is_the_deployment_default(monkeypatch):
+    from app.services.storage_downloads import StorageLocationError, resolve_storage_object
+    monkeypatch.delenv("UPLOAD_BUCKET")
+    monkeypatch.setenv("STORAGE_STORES", json.dumps([{**STORES[0], "bucket": "legacy"}, {**STORES[1], "id": "main", "bucket": "new"}]))
+    monkeypatch.setenv("STORAGE_DEFAULT_STORE", "main")
+    monkeypatch.setenv("STORAGE_READ_BUCKETS", "old")
+    get_settings.cache_clear()
+    storage = get_settings().storage
+    assert resolve_storage_object(storage.store("default"), "old/ds/a.txt", None, "ds").bucket == "old"
+    with pytest.raises(StorageLocationError):
+        resolve_storage_object(storage.store("main"), "old/ds/a.txt", None, "ds")
+
+
+def test_a_named_multipart_bucket_stays_readable_while_uploads_are_off(monkeypatch):
+    from app.services.storage_downloads import resolve_storage_object
+    from app.utils.multipart_config import MultipartStorageConfig
+    monkeypatch.setenv("MULTIPART_UPLOAD_ENABLED", "false")
+    monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", "other")
+    get_settings.cache_clear()
+    assert MultipartStorageConfig.from_env().enabled is False
+    assert resolve_storage_object(get_settings().storage.store(None), "other/ds/_files/x", "7", "ds").bucket == "other"
+
+
+def test_deleting_a_file_in_an_unconfigured_store_still_keeps_it(stores):
+    client, engine, known, _ = stores
+    file = complete((client, engine, known["default"]), publish((client, engine, known["default"]))).json()
+    move_to(engine, file["mfid"], "gone", None, None)
+    assert client.delete(f"/files/{file['mfid']}").status_code == 200
+    with Session(engine) as session:
+        [version] = session.exec(select(FileVersion)).all()
+    assert (version.reason, version.store_id, version.storage_path) == ("deleted", "gone", file["storage_path"])
+
+
+def test_a_legacy_file_without_the_store_default_does_not_break_the_dataset_links(stores, monkeypatch):
+    client, engine, known, _ = stores
+    monkeypatch.setenv("STORAGE_STORES", json.dumps([STORES[1]]))
+    monkeypatch.setenv("STORAGE_DEFAULT_STORE", "vm")
+    get_settings.cache_clear()
+    known["vm"].objects["ds/_files/new"] = {"generation": "7", "size": 1, "crc32c": None, "data": b"x"}
+    with Session(engine) as session:
+        dataset_id = session.exec(select(Dataset.id)).one()
+        current = AssociatedFile(dataset_id=dataset_id, filename="new.bin", size=1, sha256_hash=SHA, storage_path="dedicated/ds/_files/new", storage_generation="7", store_id="vm")
+        legacy = AssociatedFile(dataset_id=dataset_id, filename="old.bin", size=1, sha256_hash=SHA)
+        session.add_all([current, legacy])
+        session.commit()
+        current_mfid, legacy_mfid = current.mfid, legacy.mfid
+    links = client.get("/datasets/ds/download_links")
+    assert links.status_code == 200, links.text
+    assert links.json()[legacy_mfid] is None and links.json()[current_mfid].startswith("https://vm.test/")
+    single = client.get(f"/files/{legacy_mfid}/download_link")
+    assert (single.status_code, single.json()["detail"]["store"]) == (503, "default")

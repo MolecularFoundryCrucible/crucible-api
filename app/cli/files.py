@@ -18,7 +18,7 @@ def register(groups: argparse._SubParsersAction) -> None:
         description="Gives every stored file without a recorded store the store \"default\", and finds the storage path and generation of files from before multipart uploads in that store: the exact key {dataset}/{filename}, else the one object ending in the file's basename. Reports files where several objects or none match, and leaves them. Reports only, unless --commit. Exits 1 when any file could not be located.",
     )
     backfill.add_argument("--commit", action="store_true", help="Write the locations found")
-    backfill.add_argument("--batch", type=int, default=500, help="Rows per transaction (default 500)")
+    backfill.add_argument("--batch", type=int, default=500, help="Rows read at a time (default 500)")
     backfill.set_defaults(handler=_run_backfill)
 
 
@@ -60,4 +60,6 @@ def _run_backfill(args: argparse.Namespace) -> int:
         print(f"  ambiguous: {mfid}")
     for mfid in report.missing:
         print(f"  not found: {mfid}")
+    for mfid in report.changed:
+        print(f"  changed meanwhile, left as it is: {mfid}")
     return 1 if report.ambiguous or report.missing else 0

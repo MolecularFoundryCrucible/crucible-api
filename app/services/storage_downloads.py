@@ -35,13 +35,15 @@ class StorageNotConfigured(Exception):
 
 
 def store_buckets(store):
-    """The buckets a store's files may be in: its own, and for the default store STORAGE_READ_BUCKETS."""
-    from app.config import get_settings
+    """The buckets a store's files may be in: its own, and for the store "default", which holds the
+    files from before stores were recorded, STORAGE_READ_BUCKETS and a MULTIPART_UPLOAD_BUCKET named
+    while uploads are off, as before."""
+    from app.config import get_settings, optional_env
+    from app.storage.registry import COMPATIBILITY_STORE_ID
 
-    settings = get_settings().storage
     buckets = {store.bucket} - {"", None}
-    if store.id == settings.default_store_id:
-        buckets |= settings.read_bucket_names
+    if store.id == COMPATIBILITY_STORE_ID:
+        buckets |= get_settings().storage.read_bucket_names | ({optional_env("MULTIPART_UPLOAD_BUCKET")} - {None})
     return buckets
 
 

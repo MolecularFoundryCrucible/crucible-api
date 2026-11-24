@@ -95,3 +95,21 @@ def test_the_command_reports_and_fails_on_unlocated_files(db_engine, store, monk
     assert main(["files", "backfill-locations"]) == 1
     output = capsys.readouterr().out
     assert "would fill 1 locations" in output and "ambiguous:" in output
+
+
+def test_a_replace_finishing_during_the_backfill_is_not_undone(db_engine, store, monkeypatch):
+    mfid = add(db_engine, "a.txt")
+    looked_up = store.head
+
+    def replaced_meanwhile(bucket, key):
+        with Session(db_engine) as session:
+            file = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == mfid)).one()
+            file.storage_path, file.storage_generation, file.store_id = "dedicated/ds/_files/new", "9", "default"
+            session.add(file)
+            session.commit()
+        return looked_up(bucket, key)
+
+    monkeypatch.setattr(store, "head", replaced_meanwhile)
+    report = backfill_locations(db_engine, store, commit=True)
+    assert report.filled == 0
+    assert row(db_engine, mfid) == ("dedicated/ds/_files/new", "9", "default")

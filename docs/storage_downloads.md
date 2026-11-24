@@ -17,7 +17,7 @@ A stored record's `storage_path` is `{bucket}/{key}`. Existing records have one 
 
 An object is served, and an ingestion request created for it, only when its `storage_path` satisfies all of the following:
 
-1. The bucket is the file's store's bucket, or for the default store one of `STORAGE_READ_BUCKETS`.
+1. The bucket is the file's store's bucket, or for the store `default` one of `STORAGE_READ_BUCKETS`.
 2. The key starts with `{dataset_mfid}/`, where `dataset_mfid` is the dataset that owns the record, and continues after it.
 3. The key has no `.` or `..` segment and no leading `/`. Empty segments are allowed, because Google Cloud Storage treats them literally and keys of the older layout contain them.
 4. A key under `{dataset_mfid}/_files/` has a recorded `storage_generation`; without one the object is not a published upload.

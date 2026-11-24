@@ -102,9 +102,9 @@ The credential is read from `CRUCIBLE_API_TOKEN` (`--token-env` names another va
 | `STORAGE_DEFAULT_STORE` | With `STORAGE_STORES`: the store uploads use when nothing chooses another; required when it lists more than one |
 | `STORAGE_BACKEND` | Without `STORAGE_STORES`: `gcs` (Google Cloud Storage); `s3` for an S3-compatible store |
 | `UPLOAD_BUCKET` | Without `STORAGE_STORES`: required when files are stored; the bucket of the single store `default` |
-| `STORAGE_READ_BUCKETS` | Optional comma-separated list of other buckets that existing records of the default store may point at, served read-only |
+| `STORAGE_READ_BUCKETS` | Optional comma-separated list of other buckets that existing records of the store `default` may point at, served read-only |
 | `MULTIPART_UPLOAD_ENABLED` | `false`; controls initiation only |
-| `MULTIPART_UPLOAD_BUCKET` | Optional; when set, must equal the default store's bucket |
+| `MULTIPART_UPLOAD_BUCKET` | Optional; while uploads are enabled it must equal the default store's bucket, otherwise it is read like `STORAGE_READ_BUCKETS` |
 | `MULTIPART_UPLOAD_SIGNER` | Optional on `gcs`: a service account the server impersonates for every storage operation; required when the server's identity cannot sign URLs (GKE Workload Identity, Workload Identity Federation) |
 | `GCS_PROJECT`, `MULTIPART_UPLOAD_PROJECT` | Optional on `gcs`: project of the storage client; `MULTIPART_UPLOAD_PROJECT` applies only when `GCS_PROJECT` is unset |
 | `S3_ENDPOINT_URL` | Required on `s3`: the address the API reaches the store on |
@@ -137,7 +137,7 @@ Credentials are per store, read like other secrets: `STORAGE_{ID}_ACCESS_KEY_ID`
 
 An upload goes to the store it names (`store` in the initiation request), else the default of the dataset's project, else that of its instrument, else `STORAGE_DEFAULT_STORE`. Project and instrument admins set those defaults with `PATCH /projects/{project_ref}/settings` and `PATCH /instruments/{instrument_ref}/settings` (`{"default_store": "<id>"}`, a JSON Merge Patch with `ETag` and `If-Match`; members read them with `GET`). A replacement goes to the file's store unless it names another. A request naming a store that is not configured answers 422 `unknown_store`; a project or instrument default naming one is skipped.
 
-When a store is removed from `STORAGE_STORES`, its files keep their store id: their metadata stays readable, their download links and replacements answer 503 `store_unavailable`, the dataset's download links map them to `null`, and `storage cleanup` leaves their content. Configuring the store again restores them. `python -m app.cli storage stores` lists the stores with their file counts and exits 1 when files are in a store that is not configured.
+When a store is removed from `STORAGE_STORES`, its files keep their store id: their metadata stays readable, their download links and replacements answer 503 `store_unavailable`, the dataset's download links map them to `null`, and `storage cleanup` leaves their content. Deleting such a file still keeps its content for the grace period, and configuring the store again restores them. `python -m app.cli storage stores` lists the stores with their file counts and exits 1 when files are in a store that is not configured.
 
 ## Google Cloud Storage
 

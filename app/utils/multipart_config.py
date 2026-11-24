@@ -45,7 +45,7 @@ class MultipartStorageConfig:
         if min(config.max_upload_bytes, config.owner_sessions, config.dataset_sessions, config.owner_bytes, config.dataset_bytes, config.signing_interval_seconds) < 1:
             raise ValueError("Multipart limits must be positive")
         named = env.get("MULTIPART_UPLOAD_BUCKET", "").strip() or None
-        if named is not None and named != upload_bucket:
+        if config.enabled and named is not None and named != upload_bucket:
             raise ValueError("MULTIPART_UPLOAD_BUCKET must be the default store's bucket; uploads go to the store chosen for them")
         if config.enabled and not config.bucket:
             raise ValueError("Multipart uploads require a store with a bucket")

@@ -38,12 +38,15 @@ def trash_file(session: Session, file: AssociatedFile, dataset_mfid: str, when) 
 
 
 def _keep(session, file, dataset_mfid, when, reason):
+    if not file.storage_path or file.storage_generation is None:
+        return None
     try:
-        store = store_config(file.store_id)
+        store_id = store_config(file.store_id).id
+        if not owned_object(store_config(file.store_id), file.storage_path, file.storage_generation, dataset_mfid):
+            return None
     except StoreUnavailable:
-        return None
-    if not file.storage_path or file.storage_generation is None or not owned_object(store, file.storage_path, file.storage_generation, dataset_mfid):
-        return None
+        # Kept so it can be restored or cleaned once the store is configured again; cleanup checks ownership then.
+        store_id = stored_in(file.store_id)
     deadline = when + timedelta(days=get_settings().storage.file_version_retention_days)
     existing = session.exec(select(FileVersion).where(FileVersion.storage_path == file.storage_path, *waiting())).first()
     if existing is not None:
@@ -54,7 +57,7 @@ def _keep(session, file, dataset_mfid, when, reason):
     version = FileVersion(
         file_mfid=file.mfid, dataset_mfid=dataset_mfid, storage_path=file.storage_path, storage_generation=file.storage_generation,
         size=file.size, sha256_hash=file.sha256_hash, storage_crc32c=file.storage_crc32c, reason=reason,
-        store_id=store.id, created_at=when, delete_after=deadline,
+        store_id=store_id, created_at=when, delete_after=deadline,
     )
     if reason == "deleted":
         version.filename = file.filename

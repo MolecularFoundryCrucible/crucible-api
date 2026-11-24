@@ -43,6 +43,7 @@ dependencies = [
     "jinja2>=3.1.6",
     "anyascii>=0.3.3",
     "email-validator>=2.2",
+    "uvicorn-worker>=0.4.0",
 ]
 
 [tool.uv]

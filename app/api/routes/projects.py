@@ -15,7 +15,7 @@ from app.services.record_settings import settings_response, update_settings
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
 from app.utils.auth_utils import (
-    caller_row,
+    caller_row, forget_cached_keys,
     access_selector_filter, authorize_user,
     load_principal, project_member_filter, project_owner_affiliation_filter,
     require_grant, require_permission, resolve_access_principal)
@@ -579,6 +579,7 @@ def set_project_user_role(
         session.add(link)
         touch_resource_modification_time(session, proj.unique_id)
         session.commit()
+        forget_cached_keys(session, user.id)
 
         return _get_project_users(proj, session, auth_res)
 
@@ -623,6 +624,7 @@ def remove_user_from_project(
 
         touch_resource_modification_time(session, proj.unique_id)
         session.commit()
+        forget_cached_keys(session, user.id)
         return _get_project_users(proj, session, auth_res)
 
 

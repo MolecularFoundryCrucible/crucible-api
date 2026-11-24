@@ -7,16 +7,31 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, SettingsError
 
-from app.storage.registry import COMPATIBILITY_STORE_ID, StoreConfig
+from app.storage.registry import StoreConfig
 from app.utils.multipart_config import MultipartStorageConfig
 
 logger = logging.getLogger(__name__)
 DEFAULT_SECRETS_DIR = "/run/secrets"
 _SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
-_KEYED_SECRET = re.compile(r"(?:OIDC|OAUTH)_[A-Z][A-Z0-9]*_CLIENT_SECRET|CRUCIBLE_AUTH_PREVIOUS_PEPPER_[A-Z0-9]+|STORAGE_[A-Z][A-Z0-9]*_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|CREDENTIALS)")
+_KEYED_SECRET = re.compile(r"(?:OIDC|OAUTH)_[A-Z][A-Z0-9]*_CLIENT_SECRET|CRUCIBLE_AUTH_PREVIOUS_PEPPER_[A-Z0-9]+|STORAGE_[A-Z][A-Z0-9_]*_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|CREDENTIALS)")
+# Single-store settings replaced by STORAGE_STORES; the server refuses to start while one is set.
+RETIRED_STORAGE_SETTINGS = {
+    "STORAGE_BACKEND": "the store's type in STORAGE_STORES",
+    "UPLOAD_BUCKET": "the store's bucket in STORAGE_STORES",
+    "STORAGE_READ_BUCKETS": "the store's read_buckets in STORAGE_STORES",
+    "GCS_PROJECT": "the store's project in STORAGE_STORES",
+    "S3_ENDPOINT_URL": "the store's endpoint_url in STORAGE_STORES",
+    "S3_PUBLIC_URL": "the store's public_url in STORAGE_STORES",
+    "S3_REGION": "the store's region in STORAGE_STORES",
+    "S3_ACCESS_KEY_ID": "the secret STORAGE_{ID}_ACCESS_KEY_ID",
+    "S3_SECRET_ACCESS_KEY": "the secret STORAGE_{ID}_SECRET_ACCESS_KEY",
+    "MULTIPART_UPLOAD_BUCKET": "the store's bucket in STORAGE_STORES",
+    "MULTIPART_UPLOAD_SIGNER": "the store's service_account in STORAGE_STORES",
+    "MULTIPART_UPLOAD_PROJECT": "the store's project in STORAGE_STORES",
+}
 MIN_CLIENT_SECRET_LENGTH = 32
 # OWASP Password Storage Cheat Sheet: Argon2id configurations of equal strength, as (memory KiB, iterations).
 ARGON2_FLOOR = ((47104, 1), (19456, 2), (12288, 3), (9216, 4), (7168, 5))
@@ -434,20 +449,11 @@ class HubSettings(SettingsGroup):
 
 
 class StorageSettings(SettingsGroup):
-    backend: Literal["gcs", "s3"] = Field("gcs", validation_alias="STORAGE_BACKEND")
-    upload_bucket: str | None = Field(None, validation_alias="UPLOAD_BUCKET")
-    gcs_project: str | None = Field(None, validation_alias="GCS_PROJECT")
-    record_bucket: str | None = Field(None, validation_alias="RECORD_BUCKET")
-    read_buckets: str | None = Field(None, validation_alias="STORAGE_READ_BUCKETS")
-    s3_endpoint_url: str | None = Field(None, validation_alias="S3_ENDPOINT_URL")
-    s3_public_url: str | None = Field(None, validation_alias="S3_PUBLIC_URL")
-    s3_region: str = Field("us-east-1", validation_alias="S3_REGION")
-    s3_access_key_id: SecretStr | None = Field(None, validation_alias="S3_ACCESS_KEY_ID")
-    s3_secret_access_key: SecretStr | None = Field(None, validation_alias="S3_SECRET_ACCESS_KEY")
-    file_version_retention_days: int = Field(14, ge=1, validation_alias="FILE_VERSION_RETENTION_DAYS")
-    cleanup_enabled: bool = Field(False, validation_alias="STORAGE_CLEANUP_ENABLED")
     configured_stores: list[StoreConfig] = Field(default_factory=list, validation_alias="STORAGE_STORES")
     default_store: str | None = Field(None, validation_alias="STORAGE_DEFAULT_STORE")
+    record_bucket: str | None = Field(None, validation_alias="RECORD_BUCKET")
+    file_version_retention_days: int = Field(14, ge=1, validation_alias="FILE_VERSION_RETENTION_DAYS")
+    cleanup_enabled: bool = Field(False, validation_alias="STORAGE_CLEANUP_ENABLED")
 
     @field_validator("configured_stores", mode="before")
     @classmethod
@@ -460,71 +466,41 @@ class StorageSettings(SettingsGroup):
             raise ValueError("is not valid JSON") from None
 
     @model_validator(mode="after")
-    def one_way_to_name_stores(self) -> "StorageSettings":
-        if not self.configured_stores:
-            if self.default_store not in (None, COMPATIBILITY_STORE_ID):
-                raise ValueError(f"STORAGE_DEFAULT_STORE names {self.default_store}, but STORAGE_STORES is not set")
-            return self
+    def one_default_among_the_stores(self) -> "StorageSettings":
         ids = [store.id for store in self.configured_stores]
         if len(ids) != len(set(ids)):
             raise ValueError("STORAGE_STORES lists the same id twice")
-        older = sorted({"backend": "STORAGE_BACKEND", "upload_bucket": "UPLOAD_BUCKET", "s3_endpoint_url": "S3_ENDPOINT_URL"}[name] for name in self.model_fields_set & {"backend", "upload_bucket", "s3_endpoint_url"})
-        if older:
-            raise ValueError(f"STORAGE_STORES replaces {', '.join(older)}; set one or the other")
-        if self.default_store is None and len(ids) > 1:
-            raise ValueError("STORAGE_DEFAULT_STORE must name one of the STORAGE_STORES")
+        secret_names = [name for store in self.configured_stores for name in store.secret_names]
+        if len(secret_names) != len(set(secret_names)):
+            raise ValueError("STORAGE_STORES has two ids that differ only in - and _; their secrets would share a name")
         if self.default_store is not None and self.default_store not in ids:
             raise ValueError(f"STORAGE_DEFAULT_STORE names {self.default_store}, which STORAGE_STORES does not list")
+        if self.default_store is None and len(ids) > 1:
+            raise ValueError("STORAGE_DEFAULT_STORE must name one of the STORAGE_STORES")
         return self
-
-    def _old_settings_store(self) -> StoreConfig:
-        google = self.backend == "gcs"
-        return StoreConfig.from_old_settings(
-            type=self.backend, bucket=self.upload_bucket or "", endpoint_url=self.s3_endpoint_url, public_url=self.s3_public_url, region=self.s3_region,
-            project=(self.gcs_project or optional_env("MULTIPART_UPLOAD_PROJECT")) if google else None,
-            service_account=optional_env("MULTIPART_UPLOAD_SIGNER") if google else None,
-        )
 
     @property
     def stores(self) -> list[StoreConfig]:
-        """The stores files can be in: STORAGE_STORES, else the one store the older settings describe."""
-        if self.configured_stores:
-            return list(self.configured_stores)
-        return [self._old_settings_store()] if self.upload_bucket else []
+        return list(self.configured_stores)
 
     @property
-    def default_store_id(self) -> str:
-        if self.configured_stores:
-            return self.default_store or self.configured_stores[0].id
-        return COMPATIBILITY_STORE_ID
+    def default_store_id(self) -> str | None:
+        """STORAGE_DEFAULT_STORE, or the only store; None when no store is configured."""
+        if self.default_store is not None:
+            return self.default_store
+        return self.configured_stores[0].id if len(self.configured_stores) == 1 else None
 
     def store(self, store_id: str | None) -> StoreConfig | None:
-        """The store with this id; None asks for the default. A server with no storage settings still
-        has the older settings' store, so callers keep failing as storage_not_configured."""
-        wanted = store_id or self.default_store_id
-        if not self.configured_stores:
-            return self._old_settings_store() if wanted == COMPATIBILITY_STORE_ID else None
-        return next((store for store in self.configured_stores if store.id == wanted), None)
+        """The store with this id; None when this server does not configure it (or for no id)."""
+        return next((store for store in self.configured_stores if store_id is not None and store.id == store_id), None)
 
     @property
     def store_secret_names(self) -> list[str]:
         return [name for store in self.configured_stores for name in store.secret_names]
 
-    @field_validator("s3_endpoint_url")
-    @classmethod
-    def not_google(cls, value: str | None, info: ValidationInfo) -> str | None:
-        host = urlparse(value or "").hostname or ""
-        if info.data.get("backend") == "s3" and (host == "googleapis.com" or host.endswith(".googleapis.com")):
-            raise ValueError("points at Google Cloud Storage, whose S3 interface refuses the checksums S3 uploads send; use STORAGE_BACKEND=gcs")
-        return value
-
-    @property
-    def read_bucket_names(self) -> set[str]:
-        return {name.strip() for name in (self.read_buckets or "").split(",")} - {""}
-
     def serves_files(self) -> bool:
         multipart = (optional_env("MULTIPART_UPLOAD_ENABLED") or "").lower() == "true"
-        return bool(self.read_buckets or multipart or self.upload_bucket or self.configured_stores)
+        return bool(multipart or self.configured_stores)
 
     def in_use(self) -> bool:
         return self.serves_files() or bool(self.record_bucket)
@@ -532,10 +508,9 @@ class StorageSettings(SettingsGroup):
     def problems(self, settings: "Settings") -> list[str]:
         if not self.in_use():
             return []
-        if self.configured_stores:
-            return [store.access_key_name for store in self.configured_stores if store.type == "s3" and not _secret_given(store.access_key_name)] + [store.secret_key_name for store in self.configured_stores if store.type == "s3" and not _secret_given(store.secret_key_name)]
-        credentials = ("s3_endpoint_url", "s3_access_key_id", "s3_secret_access_key") if self.backend == "s3" else ()
-        return self.missing("upload_bucket", *credentials) if self.serves_files() else self.missing(*credentials)
+        if not self.configured_stores:
+            return ["STORAGE_STORES"]
+        return [name for store in self.configured_stores if store.type == "s3" for name in (store.access_key_name, store.secret_key_name) if not _secret_given(name)]
 
 
 class IngestionSettings(SettingsGroup):
@@ -594,7 +569,7 @@ _SECRETS: dict[str, tuple[str, str]] = {
     if info.annotation == SecretStr | None
 }
 # Sent verbatim in HTTP Basic credentials and ORCID token requests, where a stray newline breaks every sign-in.
-_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "CRUCIBLE_AUTH_PEPPER", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"})
+_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "CRUCIBLE_AUTH_PEPPER"})
 _LONG_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "CRUCIBLE_SECRET_KEY", "CRUCIBLE_CURSOR_SIGNING_KEY"})
 _FEATURES = {"ingestion": "ingestion", "printing": "printing", "proposal_sync": "proposals"}
 
@@ -748,6 +723,9 @@ def _warn_about_plain_http(settings) -> None:
 
 
 def check_settings() -> None:
+    retired = [f"{name} (use {replacement})" for name, replacement in RETIRED_STORAGE_SETTINGS.items() if optional_env(name) is not None or optional_env(f"{name}_FILE") is not None]
+    if retired:
+        raise ConfigurationError(f"Storage is configured with STORAGE_STORES now; remove {', '.join(retired)}")
     found = missing_required_settings()
     if found:
         raise ConfigurationError(f"Missing required settings: {', '.join(found)}")

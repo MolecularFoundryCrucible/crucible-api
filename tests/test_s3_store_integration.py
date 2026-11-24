@@ -3,6 +3,7 @@
 
 import base64
 import hashlib
+import json
 import os
 from urllib.parse import urlparse
 
@@ -33,14 +34,14 @@ def store(request, monkeypatch):
     from app.config import get_settings
 
     for name, value in {
-        "STORAGE_BACKEND": "s3", "S3_ENDPOINT_URL": request.param,
-        "S3_ACCESS_KEY_ID": os.environ["S3_TEST_ACCESS_KEY"], "S3_SECRET_ACCESS_KEY": os.environ["S3_TEST_SECRET_KEY"],
-        "UPLOAD_BUCKET": BUCKETS[0], "RECORD_BUCKET": BUCKETS[1], "MULTIPART_UPLOAD_ENABLED": "true", "MULTIPART_UPLOAD_BUCKET": BUCKETS[0],
+        "STORAGE_STORES": json.dumps([{"id": "test", "display_name": "Test", "type": "s3", "bucket": BUCKETS[0], "endpoint_url": request.param}]),
+        "STORAGE_TEST_ACCESS_KEY_ID": os.environ["S3_TEST_ACCESS_KEY"], "STORAGE_TEST_SECRET_ACCESS_KEY": os.environ["S3_TEST_SECRET_KEY"],
+        "RECORD_BUCKET": BUCKETS[1], "MULTIPART_UPLOAD_ENABLED": "true",
     }.items():
         monkeypatch.setenv(name, value)
     get_settings.cache_clear()
     storage.get_store.cache_clear()
-    store = storage.get_store()
+    store = storage.get_store("test")
     assert isinstance(store, S3Store)
     existing = {bucket["Name"] for bucket in store.client.list_buckets()["Buckets"]}
     for bucket in set(BUCKETS) - existing:
@@ -121,12 +122,8 @@ def test_an_empty_file_uploads_and_downloads(api):
 
 @pytest.mark.skipif(len(ENDPOINTS) < 2, reason="needs two S3 servers in S3_TEST_ENDPOINTS")
 def test_two_s3_servers_as_two_stores(db_engine, client, auth_as, monkeypatch):
-    import json
-
     from app.config import get_settings
     stores = [{"id": f"s{index}", "display_name": f"Server {index}", "type": "s3", "bucket": BUCKETS[0], "endpoint_url": url} for index, url in enumerate(ENDPOINTS[:2])]
-    for name in ("UPLOAD_BUCKET", "STORAGE_BACKEND", "S3_ENDPOINT_URL", "MULTIPART_UPLOAD_BUCKET"):
-        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("STORAGE_STORES", json.dumps(stores))
     monkeypatch.setenv("STORAGE_DEFAULT_STORE", "s0")
     monkeypatch.setenv("MULTIPART_UPLOAD_ENABLED", "true")

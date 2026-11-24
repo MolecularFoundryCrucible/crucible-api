@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 from app.config import get_settings
 from app.tables import AssociatedFile, Dataset, FileVersion, IngestionRequest
 from app.services.storage_downloads import owned_object
-from app.storage import StoreUnavailable, store_config, stored_in
+from app.storage import StoreUnavailable, store_config
 from app.utils.sql_utils import file_named, get_active_deletion_request, touch_resource_modification_time
 
 
@@ -46,7 +46,7 @@ def _keep(session, file, dataset_mfid, when, reason):
             return None
     except StoreUnavailable:
         # Kept so it can be restored or cleaned once the store is configured again; cleanup checks ownership then.
-        store_id = stored_in(file.store_id)
+        store_id = file.store_id
     deadline = when + timedelta(days=get_settings().storage.file_version_retention_days)
     existing = session.exec(select(FileVersion).where(FileVersion.storage_path == file.storage_path, *waiting())).first()
     if existing is not None:
@@ -102,7 +102,7 @@ def restore_latest(engine, stores, file_mfid: str, when) -> Restored:
         file.sha256_hash = version.sha256_hash
         file.storage_crc32c = version.storage_crc32c
         file.sha256_verified_at = None
-        file.store_id = stored_in(version.store_id)
+        file.store_id = version.store_id
         version.restored_at = when
         session.add_all([file, version])
         touch_resource_modification_time(session, dataset_mfid)
@@ -118,7 +118,7 @@ def _check_restorable(stores, version, when) -> None:
     if utc(version.delete_after) <= when:
         raise RestoreRefused("version_expired")
     bucket, _, key = version.storage_path.partition("/")
-    stored = stores(stored_in(version.store_id)).head(bucket, key)
+    stored = stores(version.store_id).head(bucket, key)
     if stored is None:
         raise RestoreRefused("version_missing_in_storage")
     if stored.size != version.size:
@@ -156,7 +156,7 @@ def restore_deleted(engine, stores, dataset_mfid: str, file_mfid: str, when) -> 
         file = AssociatedFile(
             mfid=version.file_mfid, dataset_id=dataset.id, filename=version.filename, storage_path=version.storage_path,
             storage_generation=version.storage_generation, size=version.size, sha256_hash=version.sha256_hash, storage_crc32c=version.storage_crc32c,
-            store_id=stored_in(version.store_id),
+            store_id=version.store_id,
         )
         session.add(file)
         session.flush()

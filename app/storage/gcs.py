@@ -47,12 +47,13 @@ def store_client(store):
 
 
 def default_store():
-    return get_settings().storage.store(None)
+    storage = get_settings().storage
+    return storage.store(storage.default_store_id)
 
 
 @lru_cache
 def server_credentials():
-    """The default store's identity; for the older settings, ADC acting as MULTIPART_UPLOAD_SIGNER."""
+    """The default store's identity."""
     return store_credentials(default_store())
 
 

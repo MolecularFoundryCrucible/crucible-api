@@ -35,22 +35,14 @@ class StorageNotConfigured(Exception):
 
 
 def store_buckets(store):
-    """The buckets a store's files may be in: its own, and for the store "default", which holds the
-    files from before stores were recorded, STORAGE_READ_BUCKETS and a MULTIPART_UPLOAD_BUCKET named
-    while uploads are off, as before."""
-    from app.config import get_settings, optional_env
-    from app.storage.registry import COMPATIBILITY_STORE_ID
-
-    buckets = {store.bucket} - {"", None}
-    if store.id == COMPATIBILITY_STORE_ID:
-        buckets |= get_settings().storage.read_bucket_names | ({optional_env("MULTIPART_UPLOAD_BUCKET")} - {None})
-    return buckets
+    """The buckets a store's files may be in: its own bucket and its read_buckets."""
+    return ({store.bucket} | set(store.read_buckets)) - {"", None}
 
 
 def resolve_storage_object(store, storage_path, generation, dataset_mfid):
     allowed = store_buckets(store)
     if not allowed:
-        raise StorageNotConfigured("File storage is not configured on this server (UPLOAD_BUCKET is not set)")
+        raise StorageNotConfigured("File storage is not configured on this server (STORAGE_STORES is not set)")
     bucket, separator, key = (storage_path or "").partition("/")
     if not separator or not bucket or not key:
         raise StorageLocationError("unparseable")

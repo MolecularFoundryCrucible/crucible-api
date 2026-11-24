@@ -180,9 +180,9 @@ def due_version(engine, storage, path, used_by=None):
     with Session(engine) as session:
         if used_by is not None:
             dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
-            session.add(AssociatedFile(dataset_id=dataset_id, filename=used_by, storage_path=path, size=1, sha256_hash="b" * 64))
+            session.add(AssociatedFile(dataset_id=dataset_id, filename=used_by, storage_path=path, size=1, sha256_hash="b" * 64, store_id="dedicated"))
         version = FileVersion(file_mfid="f", dataset_mfid="ds", storage_path=path, storage_generation="7", size=1, sha256_hash="a" * 64,
-                              reason="replaced", created_at=service.now() - timedelta(days=20), delete_after=service.now() - timedelta(days=6))
+                              reason="replaced", store_id="dedicated", created_at=service.now() - timedelta(days=20), delete_after=service.now() - timedelta(days=6))
         session.add(version)
         session.commit()
         session.refresh(version)
@@ -195,7 +195,7 @@ def test_a_dry_run_writes_nothing_for_a_version_outside_the_own_buckets(flow):
     published_file(flow)
     with Session(engine) as session:
         session.add(FileVersion(file_mfid="f", dataset_mfid="ds", storage_path="elsewhere/ds/_files/x", storage_generation="7", size=1, sha256_hash="a" * 64,
-                                reason="replaced", created_at=service.now(), delete_after=service.now() - timedelta(days=1)))
+                                reason="replaced", store_id="dedicated", created_at=service.now(), delete_after=service.now() - timedelta(days=1)))
         session.commit()
     report = run_cleanup(engine, storage, service.now(), dry_run=True)
     assert report.failures == [f"version {versions(engine)[0].id}: not_owned"]
@@ -250,7 +250,7 @@ def test_a_second_file_sharing_the_object_gets_its_full_grace_period(flow):
     file = published_file(flow)
     with Session(engine) as session:
         dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
-        twin = AssociatedFile(dataset_id=dataset_id, filename="twin.bin", storage_path=file["storage_path"], storage_generation="7", size=len(DATA), sha256_hash=SHA)
+        twin = AssociatedFile(dataset_id=dataset_id, filename="twin.bin", storage_path=file["storage_path"], storage_generation="7", size=len(DATA), sha256_hash=SHA, store_id="dedicated")
         session.add(twin)
         session.commit()
         twin_mfid = twin.mfid

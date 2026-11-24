@@ -12,11 +12,20 @@ def register(groups: argparse._SubParsersAction) -> None:
     )
     restore.add_argument("file_mfid", metavar="FILE_MFID")
     restore.set_defaults(handler=_run_restore)
+    assign = commands.add_parser(
+        "assign-store",
+        help="Record a store on the files that were stored before stores were recorded",
+        description="Sets store_id to the given configured store on every stored file, file version and upload session that has none, in batches. Run once when moving to STORAGE_STORES, with the store that holds the existing files; until then those files answer 503 store_unavailable. Reports only, unless --commit.",
+    )
+    assign.add_argument("--store", required=True, metavar="ID", help="The store that holds the existing files")
+    assign.add_argument("--commit", action="store_true", help="Write the store")
+    assign.set_defaults(handler=_run_assign)
     backfill = commands.add_parser(
         "backfill-locations",
         help="Record the path and generation of files stored before multipart uploads",
-        description="Pass 1: for files without a storage path, finds their object in the store \"default\" (the exact key {dataset}/{filename}, else the one object ending in the file's basename) and records its path and generation. With --generations, pass 2: records the generation of files that have a path in that store's bucket but none, so cleanup may delete their content once they are replaced or deleted. Files where several objects or none match are listed and left. Reports only, unless --commit; each row is written only if it has not changed since it was read. Exits 1 when any file could not be located.",
+        description="Pass 1: for the store's files without a storage path, finds their object in that store (the exact key {dataset}/{filename}, else the one object ending in the file's basename) and records its path and generation. With --generations, pass 2: records the generation of files that have a path in that store's bucket but none, so cleanup may delete their content once they are replaced or deleted. Files where several objects or none match are listed and left. Reports only, unless --commit; each row is written only if it has not changed since it was read. Exits 1 when any file could not be located.",
     )
+    backfill.add_argument("--store", required=True, metavar="ID", help="The store whose files to complete")
     backfill.add_argument("--commit", action="store_true", help="Write what was found")
     backfill.add_argument("--generations", action="store_true", help="Also record the generation of files that have a path")
     backfill.add_argument("--batch", type=int, default=500, help="Rows read at a time (default 500)")
@@ -52,7 +61,7 @@ def _run_backfill(args: argparse.Namespace) -> int:
 
     try:
         check_settings()
-        report = backfill_locations(get_engine(), get_store, commit=args.commit, generations=args.generations, batch=args.batch, workers=args.workers)
+        report = backfill_locations(get_engine(), get_store, args.store, commit=args.commit, generations=args.generations, batch=args.batch, workers=args.workers)
     except Exception as error:
         print(f"Not done: {error}", file=sys.stderr)
         return 1
@@ -65,3 +74,19 @@ def _run_backfill(args: argparse.Namespace) -> int:
     for mfid in report.changed:
         print(f"  changed meanwhile, left as it is: {mfid}")
     return 1 if report.ambiguous or report.missing else 0
+
+
+def _run_assign(args: argparse.Namespace) -> int:
+    from app.api.dependencies import get_engine
+    from app.config import check_settings
+    from app.services.store_assignment import assign_store
+
+    try:
+        check_settings()
+        counts = assign_store(get_engine(), args.store, commit=args.commit)
+    except Exception as error:
+        print(f"Not done: {error}", file=sys.stderr)
+        return 1
+    verb = "assigned" if args.commit else "would assign"
+    print(f"{verb} store {args.store} to " + ", ".join(f"{count} {table}" for table, count in counts.items()))
+    return 0

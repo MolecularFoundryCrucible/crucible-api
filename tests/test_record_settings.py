@@ -17,7 +17,6 @@ LEAD = "0000-0001-1111-1111"
 
 @pytest.fixture(autouse=True)
 def two_stores(monkeypatch):
-    monkeypatch.delenv("UPLOAD_BUCKET")
     monkeypatch.setenv("STORAGE_STORES", json.dumps(STORES))
     monkeypatch.setenv("STORAGE_DEFAULT_STORE", "main")
     get_settings.cache_clear()

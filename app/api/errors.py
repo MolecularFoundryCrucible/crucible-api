@@ -29,4 +29,4 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StoreUnavailable)
     async def store_unavailable(request: Request, error: StoreUnavailable):
-        return JSONResponse(status_code=503, content={"detail": {"code": "store_unavailable", "store_id": error.store_id, "message": f"The store {error.store_id} holding this file is not available on this server"}})
+        return JSONResponse(status_code=503, content={"detail": {"code": "store_unavailable", "store_id": error.store_id, "message": f"The store {error.store_id} holding this file is not available on this server" if error.store_id else "This file has no store recorded yet; an operator runs files assign-store"}})

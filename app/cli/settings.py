@@ -8,6 +8,8 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 
+from app.config import RETIRED_STORAGE_SETTINGS
+
 POD_SPEC_PATHS = {
     "Pod": ("spec",),
     "Deployment": ("spec", "template", "spec"),
@@ -23,7 +25,7 @@ OTHER_VARIABLES = frozenset({
     "CRUCIBLE_SECRETS_DIR", "DB_CONF_FILE", "FORWARDED_ALLOW_IPS", "GITHASH", "GOOGLE_APPLICATION_CREDENTIALS",
     "GOOGLE_CLOUD_PROJECT", "MAX_UPLOAD_BYTES", "MULTIPART_DATASET_BYTES", "MULTIPART_DATASET_SESSIONS",
     "MULTIPART_OWNER_BYTES", "MULTIPART_OWNER_SESSIONS", "MULTIPART_SIGNING_INTERVAL_SECONDS",
-    "MULTIPART_UPLOAD_BUCKET", "MULTIPART_UPLOAD_ENABLED", "MULTIPART_UPLOAD_PROJECT", "MULTIPART_UPLOAD_SIGNER",
+    "MULTIPART_UPLOAD_ENABLED",
     "PORT", "PYTHONUNBUFFERED", "THUMBNAIL_LARGE_LOOKUP_WARNING_SIZE", "THUMBNAIL_MAX_SOURCE_BYTES",
     "THUMBNAIL_MAX_SOURCE_PIXELS", "WEB_CONCURRENCY",
 })
@@ -39,6 +41,7 @@ RETIRED_VARIABLES = {
     },
     "API_CONF_FILE": "the YAML settings files are gone; set API_PUBLIC_URL and API_PATH",
     "LEGACY_UPLOAD_TOKEN_DOWNSCOPE": "the upload routes that handed out storage tokens were removed",
+    **{name: f"STORAGE_STORES names it now: {replacement}" for name, replacement in RETIRED_STORAGE_SETTINGS.items()},
     **{
         name: "the browser page that handed out an API key was removed; the ORCID provider in CRUCIBLE_AUTH_PROVIDERS has its own client_id and OIDC_ORCID_CLIENT_SECRET"
         for name in ("ORCID_CLIENT_ID", "ORCID_CLIENT_SECRET", "ORCID_CLIENT_SECRET_FILE", "ORCID_CLIENT_SECRET_VERSION")

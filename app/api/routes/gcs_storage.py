@@ -2,22 +2,20 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from app.services.storage_downloads import DOWNLOAD_LIFETIME, StorageLocationError, StorageNotConfigured, multipart_prefix, resolve_storage_object
-from app.storage import StoreUnavailable, get_store, store_config, stored_in
+from app.services.storage_downloads import DOWNLOAD_LIFETIME, StorageLocationError, multipart_prefix, resolve_storage_object
+from app.storage import StoreUnavailable, get_store, store_config
 from app.storage.gcs import store_client
 
 router = APIRouter(tags=["storage"])
 logger = logging.getLogger(__name__)
 
-def _determine_storage_path(dataset_mfid, filename):
+def _determine_storage_path(dataset_mfid, filename, store_id):
     """
     For a given dataset ID, list the gcs blobs in the corresponding
-    folder and return the storage path for the file.
+    folder of the file's store and return the storage path for the file.
     """
-    # Files without a recorded location predate the multipart uploads and exist only in Google Cloud Storage, in the store "default".
-    store = store_config(None)
-    if not store.bucket:
-        raise StorageNotConfigured("File storage is not configured on this server (UPLOAD_BUCKET is not set)")
+    # Files without a recorded location predate the multipart uploads and exist only in Google Cloud Storage.
+    store = store_config(store_id)
     if store.type != "gcs":
         raise HTTPException(status_code=404, detail="File not found in storage")
     bucket = store.bucket
@@ -43,7 +41,7 @@ def _determine_storage_path(dataset_mfid, filename):
 def _ensure_storage_path(af, dsid: str, session) -> str:
     """Backfill storage_path from GCS if not set. Returns the storage_path."""
     if not af.storage_path:
-        af.storage_path = _determine_storage_path(dsid, af.filename)
+        af.storage_path = _determine_storage_path(dsid, af.filename, af.store_id)
         session.add(af)
     return af.storage_path
 
@@ -56,7 +54,7 @@ def _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename
         logger.warning("file_location_rejected file=%s dataset=%s reason=%s", file_mfid, dataset_mfid, error.reason)
         raise HTTPException(status_code=409, detail=error.detail()) from None
     try:
-        url = get_store(stored_in(store_id)).signed_download(obj.bucket, obj.key, obj.version, filename, disposition, DOWNLOAD_LIFETIME)
+        url = get_store(store_id).signed_download(obj.bucket, obj.key, obj.version, filename, disposition, DOWNLOAD_LIFETIME)
     except StoreUnavailable:
         raise
     except FileNotFoundError:

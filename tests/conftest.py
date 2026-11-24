@@ -34,8 +34,7 @@ for _name, _value in {
     "RABBITMQ_DEFAULT_PW": "test-only",
     "API_PUBLIC_URL": "https://127.0.0.1:7777",
     "API_PATH": "testapi",
-    "UPLOAD_BUCKET": "mf-storage-prod",
-    "GCS_PROJECT": "crucible-prod",
+    "STORAGE_STORES": '[{"id": "mf-storage-prod", "display_name": "Test storage", "type": "gcs", "bucket": "mf-storage-prod", "project": "crucible-prod"}]',
     "INGESTION_ENABLED": "true",
     "RMQ_HOST": "localhost",
     "RMQ_USER": "test",
@@ -175,7 +174,7 @@ def fresh_settings(monkeypatch):
 def block_record_bucket(monkeypatch):
     def _refuse():
         raise RuntimeError("tests must not write to the record bucket")
-    monkeypatch.setattr(gcs_record_utils, "get_store", _refuse)
+    monkeypatch.setattr(gcs_record_utils, "get_default_store", _refuse)
 
 
 @pytest.fixture

@@ -18,6 +18,7 @@ from app.services import multipart as service
 from app.storage import ObjectInfo, Part, StorageFailure, UploadMissing
 from app.utils.permissions import Role
 from tests.people import internal_id
+from tests.stores import gcs, use_stores
 
 BASE = "/datasets/ds/upload/multipart"
 DATA = b"verified scientific data"
@@ -123,10 +124,7 @@ def flow(request, db_engine, client, auth_as, monkeypatch):
         group_id = group.id
     auth_as("owner", groups=[("owner-group", group_id, Role.OWNER)])
     monkeypatch.setenv("MULTIPART_UPLOAD_ENABLED", "true")
-    monkeypatch.setenv("UPLOAD_BUCKET", "dedicated")
-    monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", "dedicated")
-    monkeypatch.setenv("MULTIPART_UPLOAD_SIGNER", "signer@example.iam.gserviceaccount.com")
-    monkeypatch.setenv("MULTIPART_UPLOAD_PROJECT", "test-project")
+    use_stores(monkeypatch, gcs("dedicated", service_account="signer@example.iam.gserviceaccount.com", project="test-project"))
     storage = MemoryStorage(reports_crc32c=request.param == "store_crc32c")
     monkeypatch.setattr(routes, "get_store", storage)
     return client, db_engine, storage
@@ -679,7 +677,7 @@ def test_cleanup_protection_requires_server_recorded_generation(flow, generation
     upload = row(engine, identifier)
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        session.add(AssociatedFile(dataset_id=dataset.id, filename="reference", storage_path=f"{upload.bucket}/{upload.object_key}", size=len(DATA), sha256_hash=SHA, storage_generation=generation))
+        session.add(AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="reference", storage_path=f"{upload.bucket}/{upload.object_key}", size=len(DATA), sha256_hash=SHA, storage_generation=generation))
         session.commit()
     assert client.delete(BASE + f"/{identifier}").status_code == 204
     assert bool(storage.objects) == (generation is not None)
@@ -834,7 +832,7 @@ def test_replace_of_catalog_record_is_400(flow):
     client, engine, _ = flow
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        record = AssociatedFile(dataset_id=dataset.id, filename="remote.h5", size=5, sha256_hash="b" * 64, storage_backend="globus", storage_path="globus://x/remote.h5")
+        record = AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="remote.h5", size=5, sha256_hash="b" * 64, storage_backend="globus", storage_path="globus://x/remote.h5")
         session.add(record)
         session.commit()
         session.refresh(record)
@@ -875,7 +873,7 @@ def test_replace_denied_without_access_never_runs_the_backfill(flow, monkeypatch
     client, engine, _ = flow
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        record = AssociatedFile(dataset_id=dataset.id, filename="legacy.bin", size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path=None)
+        record = AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="legacy.bin", size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path=None)
         session.add(record)
         session.commit()
         session.refresh(record)
@@ -896,7 +894,7 @@ def test_replace_backfills_the_storage_path_before_creating_the_session(flow, mo
     client, engine, _ = flow
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        record = AssociatedFile(dataset_id=dataset.id, filename="legacy.bin", size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path=None)
+        record = AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="legacy.bin", size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path=None)
         session.add(record)
         session.commit()
         session.refresh(record)
@@ -913,7 +911,7 @@ def test_replace_trusted_short_circuit_persists_the_backfilled_path(flow, monkey
     client, engine, _ = flow
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        record = AssociatedFile(dataset_id=dataset.id, filename="legacy.bin", size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path=None)
+        record = AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="legacy.bin", size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path=None)
         session.add(record)
         session.commit()
         session.refresh(record)
@@ -962,7 +960,7 @@ def test_replace_moves_a_legacy_file_into_the_multipart_layout(flow, kept):
     client, engine, _ = flow
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        legacy = AssociatedFile(dataset_id=dataset.id, filename="old.bin", size=3, sha256_hash="c" * 64, storage_path="dedicated/ds/old.bin")
+        legacy = AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="old.bin", size=3, sha256_hash="c" * 64, storage_path="dedicated/ds/old.bin")
         session.add(legacy)
         session.commit()
         session.refresh(legacy)
@@ -981,12 +979,12 @@ def test_replace_of_pathless_legacy_file_backfills_and_skips_missing_object(flow
     client, engine, _ = flow
     import app.api.routes.gcs_storage as gcs_storage
     from fastapi import HTTPException
-    def missing(dsid, filename):
+    def missing(dsid, filename, store_id):
         raise HTTPException(status_code=404, detail="File not found in production storage")
     monkeypatch.setattr(gcs_storage, "_determine_storage_path", missing)
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        legacy = AssociatedFile(dataset_id=dataset.id, filename="nopath.bin", size=3, sha256_hash="e" * 64, storage_path=None)
+        legacy = AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="nopath.bin", size=3, sha256_hash="e" * 64, storage_path=None)
         session.add(legacy)
         session.commit()
         session.refresh(legacy)
@@ -1078,7 +1076,7 @@ def test_repeated_replace_completion_keeps_one_version(flow, kept):
 def pathless_file(engine, filename="legacy.bin"):
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        record = AssociatedFile(dataset_id=dataset.id, filename=filename, size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path=None)
+        record = AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename=filename, size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path=None)
         session.add(record)
         session.commit()
         session.refresh(record)
@@ -1108,7 +1106,7 @@ def test_if_match_star_matches_any_etag(flow):
 def test_replace_of_file_whose_dataset_vanished_is_404(flow):
     client, engine, _ = flow
     with Session(engine) as session:
-        record = AssociatedFile(dataset_id=9999, filename="orphan.bin", size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path="dedicated/gone/orphan.bin")
+        record = AssociatedFile(store_id="dedicated", dataset_id=9999, filename="orphan.bin", size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path="dedicated/gone/orphan.bin")
         session.add(record)
         session.commit()
         session.refresh(record)
@@ -1121,7 +1119,7 @@ def test_replace_of_file_whose_dataset_vanished_is_404(flow):
 def test_identical_content_does_not_short_circuit_when_bytes_are_missing(flow, monkeypatch):
     client, engine, _ = flow
     from fastapi import HTTPException
-    def missing(dsid, filename):
+    def missing(dsid, filename, store_id):
         raise HTTPException(status_code=404, detail="File not found in production storage")
     monkeypatch.setattr(gcs_storage, "_determine_storage_path", missing)
     mfid = pathless_file(engine)
@@ -1134,7 +1132,7 @@ def test_identical_content_does_not_short_circuit_when_bytes_are_missing(flow, m
 def test_replace_without_previous_path_is_logged(flow, kept, monkeypatch, caplog):
     client, engine, _ = flow
     from fastapi import HTTPException
-    def missing(dsid, filename):
+    def missing(dsid, filename, store_id):
         raise HTTPException(status_code=404, detail="File not found in production storage")
     monkeypatch.setattr(gcs_storage, "_determine_storage_path", missing)
     mfid = pathless_file(engine)
@@ -1161,7 +1159,7 @@ def test_backfill_listing_is_bounded(monkeypatch):
     blob.name = "ds/legacy.bin"
     client.bucket.return_value.list_blobs.return_value = [blob]
     monkeypatch.setattr(gcs_storage, "store_client", lambda store: client)
-    assert gcs_storage._determine_storage_path("ds", "legacy.bin").endswith("/ds/legacy.bin")
+    assert gcs_storage._determine_storage_path("ds", "legacy.bin", "mf-storage-prod").endswith("/ds/legacy.bin")
     client.bucket.return_value.list_blobs.assert_called_once_with(prefix="ds/", timeout=30)
 
 

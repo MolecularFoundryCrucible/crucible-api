@@ -64,7 +64,7 @@ class SerialStorage:
 
 def test_parallel_initiation_with_one_key_returns_one_session(pg_upload_engine):
     engine = pg_upload_engine
-    config = MultipartStorageConfig(enabled=True, bucket="dedicated", project="test", signer_service_account="signer")
+    config = MultipartStorageConfig(enabled=True)
     storage = SerialStorage()
     with Session(engine) as session:
         principal = load_principal(session, internal_id(session, "owner"))
@@ -86,7 +86,7 @@ def test_parallel_initiation_with_one_key_returns_one_session(pg_upload_engine):
 def test_parallel_filename_reservation_and_owner_quota(pg_upload_engine):
     from fastapi import HTTPException
     engine = pg_upload_engine
-    config = replace(MultipartStorageConfig(), enabled=True, bucket="dedicated", owner_sessions=1)
+    config = replace(MultipartStorageConfig(), enabled=True, owner_sessions=1)
     with Session(engine) as session:
         principal = load_principal(session, internal_id(session, "owner"))
     barrier = Barrier(2)

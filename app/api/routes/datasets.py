@@ -16,6 +16,7 @@ from app.services.related_records import dataset_responses
 from app.services.resource_access import record_roles
 from app.services.instrument_members import grant_dataset as grant_instrument_members, revoke_dataset as revoke_instrument_members
 from app.api.dependencies import get_engine, get_trgm_search_threshold
+from app.config import get_settings
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
 from app.general_utils import get_utc_datetime
@@ -1321,6 +1322,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         af_obj = AssociatedFile(
             **associated_file.model_dump(),
             dataset_id=dataset_pk,
+            store_id=get_settings().storage.default_store_id if associated_file.storage_backend == "gcs" else None,
         )
         session.add(af_obj)
         try:

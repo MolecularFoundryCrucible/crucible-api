@@ -8,7 +8,7 @@ from app.tables import AssociatedFile, FileVersion, UploadSession
 from app.services import multipart
 from app.services.file_versions import waiting
 from app.services.storage_downloads import owned_object
-from app.storage import StorageFailure, StoreUnavailable, store_config, stored_in
+from app.storage import StorageFailure, StoreUnavailable, store_config
 
 logger = logging.getLogger(__name__)
 ABANDONED = ("aborted", "expired", "failed")
@@ -66,7 +66,7 @@ def clean_uploads(engine, stores, now, dry_run, batch, report):
             session.expunge(upload)
         handled += 1
         try:
-            multipart.cleanup(engine, stores(stored_in(upload.store_id)), upload)
+            multipart.cleanup(engine, stores(upload.store_id), upload)
             report.aborted_uploads += 1
         except StorageFailure as error:
             report.failures.append(f"upload {upload.upload_id}: {error or 'storage_failure'}")

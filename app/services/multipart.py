@@ -13,7 +13,7 @@ from app.general_utils import if_match_satisfied
 from app.tables import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead, file_etag
 from app.models.multipart import EMPTY_SHA256, MultipartStatus
-from app.storage import StorageFailure, UploadMissing, store_config, stored_in
+from app.storage import StorageFailure, UploadMissing, store_config
 from app.storage.crc32c import combine_parts
 from app.services.file_versions import keep_version
 from app.services.store_choice import choose_store
@@ -215,8 +215,8 @@ def start(engine, storage, upload):
     provider_id = None
     if upload.size:
         try:
-            identifiers = sorted(storage(stored_in(upload.store_id)).open_uploads(upload.bucket, upload.object_key))
-            provider_id = identifiers[0] if identifiers else storage(stored_in(upload.store_id)).start_upload(upload.bucket, upload.object_key)
+            identifiers = sorted(storage(upload.store_id).open_uploads(upload.bucket, upload.object_key))
+            provider_id = identifiers[0] if identifiers else storage(upload.store_id).start_upload(upload.bucket, upload.object_key)
         except StorageFailure:
             raise unavailable("Storage is temporarily unavailable; retry with the same Idempotency-Key") from None
     with Session(engine) as session:
@@ -224,7 +224,7 @@ def start(engine, storage, upload):
         if current is None:
             try:
                 if provider_id:
-                    storage(stored_in(upload.store_id)).abort_upload(upload.bucket, upload.object_key, provider_id)
+                    storage(upload.store_id).abort_upload(upload.bucket, upload.object_key, provider_id)
             except StorageFailure:
                 logger.warning("multipart_leftover_abort_deferred upload_id=%s", upload.upload_id)
             raise HTTPException(409, "Upload could not be started: dataset_deleted")
@@ -417,9 +417,9 @@ def complete(engine, storage, principal, dsid, body):
         session.refresh(upload)
         session.expunge(upload)
     try:
-        metadata = assemble(storage(stored_in(upload.store_id)), upload)
+        metadata = assemble(storage(upload.store_id), upload)
     except InvalidUpload as error:
-        if fail(engine, storage(stored_in(upload.store_id)), upload, str(error)) == "aborted":
+        if fail(engine, storage(upload.store_id), upload, str(error)) == "aborted":
             raise HTTPException(409, "Upload was aborted during completion") from None
         raise HTTPException(422, f"Upload failed verification: {error}") from None
     except StorageFailure:
@@ -467,10 +467,10 @@ def complete(engine, storage, principal, dsid, body):
                         file.sha256_hash = current.claimed_sha256
                         file.storage_crc32c = current.claimed_crc32c
                         file.sha256_verified_at = None
-                        file.store_id = stored_in(current.store_id)
+                        file.store_id = current.store_id
                         session.add(file)
                     else:
-                        file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.object_key}", size=current.size, sha256_hash=current.claimed_sha256, storage_generation=metadata.version, storage_crc32c=current.claimed_crc32c, store_id=stored_in(current.store_id))
+                        file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.object_key}", size=current.size, sha256_hash=current.claimed_sha256, storage_generation=metadata.version, storage_crc32c=current.claimed_crc32c, store_id=current.store_id)
                         session.add(file)
                     current.result_file_mfid = file.mfid
                     current.storage_generation = metadata.version
@@ -481,16 +481,16 @@ def complete(engine, storage, principal, dsid, body):
                     result = file_read(session, current)
     if aborted:
         try:
-            cleanup(engine, storage(stored_in(upload.store_id)), upload)
+            cleanup(engine, storage(upload.store_id), upload)
         except StorageFailure:
             logger.warning("multipart_cleanup_deferred upload_id=%s", upload.upload_id)
         raise HTTPException(409, "Upload was aborted during completion")
     if code is not None:
-        fail(engine, storage(stored_in(upload.store_id)), upload, code)
+        fail(engine, storage(upload.store_id), upload, code)
         raise HTTPException(403 if code == "permission_revoked" else 409, f"Upload could not be published: {code}")
     try:
-        for provider_id in storage(stored_in(upload.store_id)).open_uploads(upload.bucket, upload.object_key):
-            storage(stored_in(upload.store_id)).abort_upload(upload.bucket, upload.object_key, provider_id)
+        for provider_id in storage(upload.store_id).open_uploads(upload.bucket, upload.object_key):
+            storage(upload.store_id).abort_upload(upload.bucket, upload.object_key, provider_id)
     except StorageFailure:
         logger.warning("multipart_leftover_abort_deferred upload_id=%s", upload.upload_id)
     if previous is not None:
@@ -512,6 +512,6 @@ def abort(engine, storage, principal, dsid, upload_id):
         session.refresh(upload)
         session.expunge(upload)
     try:
-        cleanup(engine, storage(stored_in(upload.store_id)), upload)
+        cleanup(engine, storage(upload.store_id), upload)
     except StorageFailure:
         raise unavailable("Storage cleanup is temporarily unavailable; retry the abort") from None

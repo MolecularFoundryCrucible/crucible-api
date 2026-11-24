@@ -8,12 +8,9 @@ from sqlmodel import Session, select
 
 from app.services.storage_downloads import multipart_prefix
 from app.storage import store_config
-from app.storage.registry import COMPATIBILITY_STORE_ID
 from app.tables import AssociatedFile, Dataset
 
 logger = logging.getLogger(__name__)
-# Only these columns are read or written, so the command also runs against a database that has not
-# had the migrations of the release it ships in.
 COLUMNS = (AssociatedFile.id, AssociatedFile.mfid, AssociatedFile.filename, AssociatedFile.storage_path, AssociatedFile.storage_generation, Dataset.unique_id)
 
 
@@ -26,8 +23,8 @@ class BackfillReport:
     changed: list[str] = field(default_factory=list)
 
 
-def backfill_locations(engine, stores, commit: bool, generations: bool = False, batch: int = 500, workers: int = 8) -> BackfillReport:
-    """Record where files stored before multipart uploads are, in the store "default".
+def backfill_locations(engine, stores, store_id: str, commit: bool, generations: bool = False, batch: int = 500, workers: int = 8) -> BackfillReport:
+    """Record where the store's files from before multipart uploads are.
 
     Pass 1, files without a storage_path: the exact key {dataset}/{filename}, else the one object
     whose name ends in the file's basename (the rule downloads used), each dataset listed once; the
@@ -35,8 +32,8 @@ def backfill_locations(engine, stores, commit: bool, generations: bool = False, 
     the store's bucket but no generation: the object's generation is recorded, so cleanup may delete
     it once the file is replaced or deleted. Files where several objects or none match are reported
     and left. Writes only with commit, each row only if it has not changed since it was read."""
-    store = store_config(COMPATIBILITY_STORE_ID)
-    adapter = stores(COMPATIBILITY_STORE_ID)
+    store = store_config(store_id)
+    adapter = stores(store_id)
     report = BackfillReport()
     listings: dict[str, list[str]] = {}
 
@@ -83,7 +80,7 @@ def backfill_locations(engine, stores, commit: bool, generations: bool = False, 
             with Session(engine) as session:
                 rows = session.exec(
                     select(*COLUMNS).join(Dataset, Dataset.id == AssociatedFile.dataset_id)
-                    .where(AssociatedFile.storage_backend == "gcs", *where, AssociatedFile.id > last)
+                    .where(AssociatedFile.storage_backend == "gcs", AssociatedFile.store_id == store_id, *where, AssociatedFile.id > last)
                     .order_by(AssociatedFile.id).limit(batch)
                 ).all()
             if not rows:

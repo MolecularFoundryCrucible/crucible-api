@@ -3,12 +3,23 @@ from functools import lru_cache
 from app.storage.base import ObjectInfo, ObjectStore, Part, StorageFailure, StoreUnavailable, UploadMissing
 
 
-def get_store(store_id: str | None = None) -> ObjectStore:
-    """The adapter for a store; None asks for the default store. Raises StoreUnavailable for an id
-    this server does not configure."""
-    from app.config import get_settings
+def get_store(store_id: str | None) -> ObjectStore:
+    """The adapter for the store a row names. Raises StoreUnavailable for an id this server does not
+    configure, and for a row with no store recorded."""
+    if store_id is None:
+        raise StoreUnavailable(None)
+    return _store(store_id)
 
-    return _store(store_id or get_settings().storage.default_store_id)
+
+def get_default_store() -> ObjectStore:
+    """The adapter for STORAGE_DEFAULT_STORE (or the only store)."""
+    from app.config import get_settings
+    from app.services.storage_downloads import StorageNotConfigured
+
+    default = get_settings().storage.default_store_id
+    if default is None:
+        raise StorageNotConfigured("File storage is not configured on this server (STORAGE_STORES is not set)")
+    return _store(default)
 
 
 @lru_cache
@@ -31,21 +42,19 @@ def _store(store_id: str) -> ObjectStore:
 get_store.cache_clear = _store.cache_clear
 
 
-def stored_in(store_id: str | None) -> str:
-    """The store a row names: rows written before stores were recorded are in the store "default"."""
-    from app.storage.registry import COMPATIBILITY_STORE_ID
-
-    return store_id or COMPATIBILITY_STORE_ID
-
-
 def store_config(store_id: str | None):
-    """The configuration of the store a row names; StoreUnavailable when this server lacks it."""
+    """The configuration of the store a row names; StoreUnavailable when this server lacks it or the
+    row names none, StorageNotConfigured when it configures no store at all."""
     from app.config import get_settings
+    from app.services.storage_downloads import StorageNotConfigured
 
-    store = get_settings().storage.store(stored_in(store_id))
+    storage = get_settings().storage
+    if not storage.stores:
+        raise StorageNotConfigured("File storage is not configured on this server (STORAGE_STORES is not set)")
+    store = storage.store(store_id)
     if store is None:
-        raise StoreUnavailable(stored_in(store_id))
+        raise StoreUnavailable(store_id)
     return store
 
 
-__all__ = ["ObjectInfo", "ObjectStore", "Part", "StorageFailure", "StoreUnavailable", "UploadMissing", "get_store", "store_config", "stored_in"]
+__all__ = ["ObjectInfo", "ObjectStore", "Part", "StorageFailure", "StoreUnavailable", "UploadMissing", "get_default_store", "get_store", "store_config"]

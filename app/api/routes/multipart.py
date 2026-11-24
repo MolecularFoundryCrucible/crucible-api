@@ -13,7 +13,7 @@ from app.config import FeatureDisabled
 from app.models.datasets import AssociatedFileRead
 from app.models.multipart import MultipartComplete, MultipartInitiate, MultipartParts, MultipartReplace, MultipartStatus, SignedPart, SignedParts, UploadedPart
 from app.services import multipart as service
-from app.storage import StorageFailure, StoreUnavailable, UploadMissing, get_store, stored_in
+from app.storage import StorageFailure, StoreUnavailable, UploadMissing, get_store
 from app.utils.auth_utils import authorize_user
 from app.utils.multipart_config import MultipartStorageConfig
 from app.utils.permissions import Principal
@@ -73,7 +73,7 @@ def sign_parts(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
         return SignedPart(part_number=part.part_number, url=url, headers=headers, offset=(part.part_number - 1) * upload.part_size, size=size, expires_at=expires_at)
 
     try:
-        storage = get_store(stored_in(upload.store_id))
+        storage = get_store(upload.store_id)
         with ThreadPoolExecutor(max_workers=8) as pool:
             return SignedParts(parts=list(pool.map(sign, body.parts)))
     except StoreUnavailable:
@@ -90,7 +90,7 @@ def get_status(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
         session.expunge(upload)
     if upload.state == "uploading" and upload.provider_upload_id and not service.expired(upload):
         try:
-            parts, marker = get_store(stored_in(upload.store_id)).list_parts(upload.bucket, upload.object_key, upload.provider_upload_id, part_number_marker, limit)
+            parts, marker = get_store(upload.store_id).list_parts(upload.bucket, upload.object_key, upload.provider_upload_id, part_number_marker, limit)
             result.parts = [UploadedPart(part_number=part.part_number, size=part.size, etag=part.etag) for part in parts]
             result.next_part_number_marker = marker
         except UploadMissing:

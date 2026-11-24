@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Breaking changes
 
+- Storage is configured only with `STORAGE_STORES`: `STORAGE_BACKEND`, `UPLOAD_BUCKET`, `STORAGE_READ_BUCKETS`, `GCS_PROJECT`, `S3_ENDPOINT_URL`, `S3_PUBLIC_URL`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `MULTIPART_UPLOAD_BUCKET`, `MULTIPART_UPLOAD_SIGNER` and `MULTIPART_UPLOAD_PROJECT` are retired, and the server refuses to start while one is set. Files stored earlier answer 503 `store_unavailable` until `files assign-store` records their store ([Moving from the single-store settings](docs/uploads.md#moving-from-the-single-store-settings)).
 - Needs migration `afcc2eef5a87`, which adds `store_id` to files, file versions and upload sessions, and the `resource_settings` table.
 - Needs migration `10316c999378`, which adds `filename` and `ingestion_requests` to `file_versions`.
 - On Google Cloud Storage, replaced content is kept in `file_versions` and removed by `storage cleanup`, as on S3, instead of being marked with `customTime` for a bucket lifecycle rule; `files restore` now works there. Schedule `python -m app.cli storage cleanup` with `STORAGE_CLEANUP_ENABLED=true`, or replaced and deleted content is kept indefinitely. The bucket's `daysSinceCustomTime` rule can be dropped once objects marked before the upgrade are gone.
@@ -26,7 +27,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
-- Several stores in one deployment: `STORAGE_STORES` and `STORAGE_DEFAULT_STORE`, per-store credentials, `GET /storage/stores`, a `store_id` field on file responses and upload requests, project and instrument settings (`GET` and `PATCH /projects/{project_ref}/settings` and `/instruments/{instrument_ref}/settings`) with a `default_store_id`, and `python -m app.cli storage stores`. Without `STORAGE_STORES` nothing changes: today's settings describe the store `default`.
+- Several stores in one deployment: `STORAGE_STORES` and `STORAGE_DEFAULT_STORE`, per-store credentials, `GET /storage/stores`, a `store_id` field on file responses and upload requests, project and instrument settings (`GET` and `PATCH /projects/{project_ref}/settings` and `/instruments/{instrument_ref}/settings`) with a `default_store_id`, `python -m app.cli storage stores` and `python -m app.cli files assign-store`. `docs/stores.example.json` shows a configuration.
 - `python -m app.cli files backfill-locations` records the path and generation of files stored before multipart uploads (with `--generations`, also the generation of files that have a path), so the basename lookup can be retired.
 - Release images are published to `ghcr.io/molecularfoundrycrucible/crucible-api` for amd64 and arm64.
 - Deleting a file or hard-deleting a dataset keeps the stored content, with the file's ingestion requests, for `FILE_VERSION_RETENTION_DAYS` before `storage cleanup` removes it. Dataset admins list, restore and purge deleted files with `GET /datasets/{dataset_mfid}/deleted_files`, `POST /datasets/{dataset_mfid}/deleted_files/{file_mfid}/restore` and `DELETE /datasets/{dataset_mfid}/deleted_files/{file_mfid}`.

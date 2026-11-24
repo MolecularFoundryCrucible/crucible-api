@@ -144,11 +144,12 @@ def test_store_without_an_endpoint_is_not_configured():
 def test_get_store_chooses_the_backend(monkeypatch):
     from app import storage
 
-    monkeypatch.setenv("STORAGE_BACKEND", "s3")
-    monkeypatch.setenv("S3_ENDPOINT_URL", "http://seaweedfs:8333")
+    monkeypatch.setenv("STORAGE_STORES", '[{"id": "files", "display_name": "Files", "type": "s3", "bucket": "b", "endpoint_url": "http://seaweedfs:8333"}]')
     monkeypatch.setattr(s3, "get_secret", lambda name: "x")
+    from app.config import get_settings
+    get_settings.cache_clear()
     storage.get_store.cache_clear()
     try:
-        assert isinstance(storage.get_store(), s3.S3Store)
+        assert isinstance(storage.get_store("files"), s3.S3Store)
     finally:
         storage.get_store.cache_clear()

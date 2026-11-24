@@ -1,0 +1,21 @@
+[
+  {
+    "id": "mf-storage-prod",
+    "display_name": "Molecular Foundry storage",
+    "description": "Google Cloud Storage",
+    "type": "gcs",
+    "bucket": "mf-storage-prod",
+    "project": "my-gcp-project",
+    "service_account": "crucible-storage@my-gcp-project.iam.gserviceaccount.com"
+  },
+  {
+    "id": "lab-nas",
+    "display_name": "Lab NAS",
+    "description": "Versity S3 Gateway in front of the lab NAS",
+    "type": "s3",
+    "bucket": "crucible",
+    "endpoint_url": "http://s3.lab.internal:7070",
+    "public_url": "https://s3.lab.example.org",
+    "region": "us-east-1"
+  }
+]

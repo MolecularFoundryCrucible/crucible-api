@@ -15,7 +15,6 @@ from app.services.storage_cleanup import run_cleanup
 from app.storage import StoreUnavailable
 from app.tables import AssociatedFile, Dataset, FileVersion, Instrument, Project, ResourceSettings, UploadSession
 from app.models.multipart import MultipartInitiate
-from app.storage.registry import COMPATIBILITY_STORE_ID
 from tests.test_multipart_lifecycle import DATA, SHA, MemoryStorage, complete, put, publish, replace, start
 import tests.test_multipart_lifecycle as lifecycle
 
@@ -31,15 +30,13 @@ def stores(flow, monkeypatch):
     client, engine, default = flow
     known = {"default": default, "vm": MemoryStorage(name="vm.test")}
 
-    def lookup(store_id=None):
-        if (store_id or "default") not in known:
+    def lookup(store_id):
+        if store_id not in known:
             raise StoreUnavailable(store_id)
-        return known[store_id or "default"]
+        return known[store_id]
 
     for module in (multipart_routes, gcs_storage, deleted_files_routes):
         monkeypatch.setattr(module, "get_store", lookup)
-    monkeypatch.delenv("UPLOAD_BUCKET")
-    monkeypatch.delenv("MULTIPART_UPLOAD_BUCKET")
     monkeypatch.setenv("STORAGE_STORES", json.dumps(STORES))
     monkeypatch.setenv("STORAGE_DEFAULT_STORE", "default")
     monkeypatch.setenv("STORAGE_VM_ACCESS_KEY_ID", "vm-key")
@@ -109,19 +106,25 @@ def test_cleanup_deletes_versions_in_their_own_store_and_reports_an_unavailable_
         assert session.get(FileVersion, gone_id).deleted_at is None
 
 
-def test_a_session_started_before_the_upgrade_publishes_into_default(stores):
+def test_rows_from_before_stores_answer_503_until_a_store_is_assigned(stores, capsys):
+    from app.cli.__main__ import main
     client, engine, known, _ = stores
-    identifier = start((client, engine, known["default"]))
+    file = complete((client, engine, known["default"]), publish((client, engine, known["default"]))).json()
+    identifier = start((client, engine, known["default"]), "later.bin")
     with Session(engine) as session:
-        upload = session.exec(select(UploadSession).where(UploadSession.upload_id == identifier)).one()
-        upload.store_id = None
-        session.add(upload)
+        for model in (AssociatedFile, UploadSession):
+            for row in session.exec(select(model)).all():
+                row.store_id = None
+                session.add(row)
         session.commit()
+    assert client.get(f"/files/{file['mfid']}/download_link").status_code == 503
+    assert main(["files", "assign-store", "--store", "default"]) == 0
+    assert "would assign store default to 1 associatedfile, 0 file_versions, 2 upload_sessions" in capsys.readouterr().out
+    assert main(["files", "assign-store", "--store", "default", "--commit"]) == 0
+    assert client.get(f"/files/{file['mfid']}/download_link").status_code == 200
     put((client, engine, known["default"]), identifier)
-    response = complete((client, engine, known["default"]), identifier)
-    assert response.status_code == 200, response.text
-    with Session(engine) as session:
-        assert session.exec(select(AssociatedFile.store_id)).one() in (None, "default")
+    assert complete((client, engine, known["default"]), identifier).json()["store_id"] == "default"
+    assert main(["files", "assign-store", "--store", "gone"]) == 1
 
 
 def test_new_uploads_record_their_store(stores):
@@ -170,7 +173,7 @@ def test_file_responses_name_their_store(stores):
         session.add(AssociatedFile(dataset_id=dataset_id, filename="remote.h5", storage_backend="nersc-perlmutter", storage_path="/global/cfs/x", size=1, sha256_hash="b" * 64))
         session.commit()
     by_name = {item["filename"]: item["store_id"] for item in client.get("/datasets/ds/files").json()}
-    assert by_name == {"data.bin": "default", "remote.h5": None}
+    assert by_name == {"data.bin": None, "remote.h5": None}
 
 
 BASE = "/datasets/ds/upload/multipart"
@@ -251,7 +254,6 @@ def test_the_request_fingerprint_without_store_is_unchanged():
     before = json.dumps({"filename": "a", "size": 1, "sha256_hash": None}, sort_keys=True, separators=(",", ":"))
     assert service.request_fingerprint(body) == hashlib.sha256(before.encode()).hexdigest()
     assert service.request_fingerprint(MultipartInitiate(filename="a", size=1, store_id="vm")) != service.request_fingerprint(body)
-    assert COMPATIBILITY_STORE_ID == "default"
 
 
 def test_storage_check_runs_against_each_store(stores, monkeypatch, capsys):
@@ -292,32 +294,10 @@ def test_the_store_listing_reports_files_in_unconfigured_stores(stores, capsys):
     capsys.readouterr()
     assert main(["storage", "stores"]) == 1
     output = capsys.readouterr().out
-    assert "default  configured, default  1 files" in output
+    assert "default  configured, default  0 files" in output
+    assert "(no store)  run files assign-store  1 files" in output
     assert "vm  configured  0 files" in output
     assert "gone  NOT CONFIGURED  1 files" in output
-
-
-def test_read_buckets_belong_to_the_store_default_even_when_another_is_the_deployment_default(monkeypatch):
-    from app.services.storage_downloads import StorageLocationError, resolve_storage_object
-    monkeypatch.delenv("UPLOAD_BUCKET")
-    monkeypatch.setenv("STORAGE_STORES", json.dumps([{**STORES[0], "bucket": "legacy"}, {**STORES[1], "id": "main", "bucket": "new"}]))
-    monkeypatch.setenv("STORAGE_DEFAULT_STORE", "main")
-    monkeypatch.setenv("STORAGE_READ_BUCKETS", "old")
-    get_settings.cache_clear()
-    storage = get_settings().storage
-    assert resolve_storage_object(storage.store("default"), "old/ds/a.txt", None, "ds").bucket == "old"
-    with pytest.raises(StorageLocationError):
-        resolve_storage_object(storage.store("main"), "old/ds/a.txt", None, "ds")
-
-
-def test_a_named_multipart_bucket_stays_readable_while_uploads_are_off(monkeypatch):
-    from app.services.storage_downloads import resolve_storage_object
-    from app.utils.multipart_config import MultipartStorageConfig
-    monkeypatch.setenv("MULTIPART_UPLOAD_ENABLED", "false")
-    monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", "other")
-    get_settings.cache_clear()
-    assert MultipartStorageConfig.from_env().enabled is False
-    assert resolve_storage_object(get_settings().storage.store(None), "other/ds/_files/x", "7", "ds").bucket == "other"
 
 
 def test_deleting_a_file_in_an_unconfigured_store_still_keeps_it(stores):
@@ -330,7 +310,7 @@ def test_deleting_a_file_in_an_unconfigured_store_still_keeps_it(stores):
     assert (version.reason, version.store_id, version.storage_path) == ("deleted", "gone", file["storage_path"])
 
 
-def test_a_legacy_file_without_the_store_default_does_not_break_the_dataset_links(stores, monkeypatch):
+def test_a_file_without_a_store_does_not_break_the_dataset_links(stores, monkeypatch):
     client, engine, known, _ = stores
     monkeypatch.setenv("STORAGE_STORES", json.dumps([STORES[1]]))
     monkeypatch.setenv("STORAGE_DEFAULT_STORE", "vm")
@@ -347,4 +327,4 @@ def test_a_legacy_file_without_the_store_default_does_not_break_the_dataset_link
     assert links.status_code == 200, links.text
     assert links.json()[legacy_mfid] is None and links.json()[current_mfid].startswith("https://vm.test/")
     single = client.get(f"/files/{legacy_mfid}/download_link")
-    assert (single.status_code, single.json()["detail"]["store_id"]) == (503, "default")
+    assert (single.status_code, single.json()["detail"]["store_id"]) == (503, None)

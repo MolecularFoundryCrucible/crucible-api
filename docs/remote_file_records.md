@@ -6,7 +6,7 @@ This page specifies how a dataset's file records catalog files that are not stor
 
 | Field | Type | Notes |
 |---|---|---|
-| `storage_backend` | Free text, default `"gcs"` | `"gcs"` means stored by the API, in whichever store `STORAGE_BACKEND` configures (Google Cloud Storage or S3-compatible); the value is kept for compatibility with existing records and clients. Any other value (`"globus"`, `"nersc-perlmutter"`, `"lawrencium"`) marks a catalog-only record. Values are not validated, so external systems can be distinguished without a schema change. |
+| `storage_backend` | Free text, default `"gcs"` | `"gcs"` means stored by the API, in the store named by the record's `store_id` (Google Cloud Storage or S3-compatible); the value is kept for compatibility with existing records and clients. Any other value (`"globus"`, `"nersc-perlmutter"`, `"lawrencium"`) marks a catalog-only record. Values are not validated, so external systems can be distinguished without a schema change. |
 | `storage_path` | Nullable text | For a stored record, `{bucket}/{key}`, assigned by the API ([Storage locations and downloads](storage_downloads.md)). For a catalog-only record, a location string such as a Globus URI or a file system path, not interpreted by the API. |
 | `access_note` | Nullable text | How to obtain the file when there is no self-service path, for example "request via NERSC allocation X" or "contact the PI for a Globus share". |
 | `sha256_hash`, `size` | Required | Required for every backend; supplied by the client. |

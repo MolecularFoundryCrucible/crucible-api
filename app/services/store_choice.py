@@ -34,7 +34,7 @@ def choose_store(session, dataset, requested: str | None):
         if wanted not in _reported:
             _reported.add(wanted)
             logger.warning("default_store_unavailable store=%s record=%s", wanted, mfid)
-    store = storage.store(None)
-    if store is None or not store.bucket:
-        raise StorageNotConfigured("File storage is not configured on this server (no default store)")
+    store = storage.store(storage.default_store_id)
+    if store is None:
+        raise StorageNotConfigured("File storage is not configured on this server (STORAGE_STORES is not set)")
     return store

@@ -13,6 +13,7 @@ from app.services.storage_downloads import (
     resolve_storage_object,
 )
 import app.storage.gcs as google
+from tests.stores import gcs, use_stores
 
 DS = "0t3qajrnzhtn7000x6s0x427hg"
 MULTIPART = "mf-crucible-multipart-staging"
@@ -20,14 +21,13 @@ MULTIPART = "mf-crucible-multipart-staging"
 
 @pytest.fixture(autouse=True)
 def multipart_bucket(monkeypatch):
-    monkeypatch.setenv("UPLOAD_BUCKET", MULTIPART)
-    monkeypatch.setenv("STORAGE_READ_BUCKETS", "mf-storage-prod")
+    use_stores(monkeypatch, gcs("staging", bucket=MULTIPART, read_buckets=["mf-storage-prod"]))
 
 
 def default_store():
     from app.config import get_settings
 
-    return get_settings().storage.store(None)
+    return get_settings().storage.store("staging")
 
 
 @pytest.mark.parametrize("path, generation, expected", [
@@ -206,7 +206,7 @@ def test_signing_errors_stay_server_side(monkeypatch):
         raise RuntimeError("https://iamcredentials.googleapis.com signer@mf-crucible.iam.gserviceaccount.com")
     monkeypatch.setattr(gcs_storage, "get_store", lambda *_: SimpleNamespace(signed_download=fail))
     with pytest.raises(HTTPException) as raised:
-        gcs_storage._signed_download("file", DS, f"mf-storage-prod/{DS}/scan.tif", None, "scan.tif")
+        gcs_storage._signed_download("file", DS, f"mf-storage-prod/{DS}/scan.tif", None, "scan.tif", store_id="staging")
     assert raised.value.status_code == 503
     assert "googleapis" not in raised.value.detail and "iam" not in raised.value.detail
 

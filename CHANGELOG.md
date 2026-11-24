@@ -27,7 +27,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 
 - Several stores in one deployment: `STORAGE_STORES` and `STORAGE_DEFAULT_STORE`, per-store credentials, `GET /storage/stores`, a `store` field on file responses and upload requests, project and instrument settings (`GET` and `PATCH /projects/{project_ref}/settings` and `/instruments/{instrument_ref}/settings`) with a `default_store`, and `python -m app.cli storage stores`. Without `STORAGE_STORES` nothing changes: today's settings describe the store `default`.
-- `python -m app.cli files backfill-locations` records the store, path and generation of files stored before stores were recorded.
+- `python -m app.cli files backfill-locations` records the path and generation of files stored before multipart uploads (with `--generations`, also the generation of files that have a path), so the basename lookup can be retired.
 - Release images are published to `ghcr.io/molecularfoundrycrucible/crucible-api` for amd64 and arm64.
 - Deleting a file or hard-deleting a dataset keeps the stored content, with the file's ingestion requests, for `FILE_VERSION_RETENTION_DAYS` before `storage cleanup` removes it. Dataset admins list, restore and purge deleted files with `GET /datasets/{dataset_mfid}/deleted_files`, `POST /datasets/{dataset_mfid}/deleted_files/{file_mfid}/restore` and `DELETE /datasets/{dataset_mfid}/deleted_files/{file_mfid}`.
 

@@ -30,6 +30,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Every commit on `main` is published to `ghcr.io/molecularfoundrycrucible/crucible-api` as `:sha-<commit>` and `:main`; a release tag adds `X.Y.Z` and `X.Y` to that image instead of building a new one, so a release has the digest staging ran.
 - `DELETE /files/{file_id}` returns 409 `replace_in_progress` with the `upload_id` while a replacement of the file is in progress.
 - New MFIDs follow the final UUIDv7 standard (mfid 2.0), so they sort before MFIDs created earlier; MFIDs are tie-breakers only, never a creation order.
 - The sign-in code page names the program the code is for and has a Copy button.

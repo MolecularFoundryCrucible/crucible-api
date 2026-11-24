@@ -159,7 +159,7 @@ def fresh_settings(monkeypatch):
     from app.auth import providers
     from app.storage import gcs
 
-    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.server_credentials, gcs.server_client)
+    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.server_credentials, gcs.server_client, gcs.store_credentials, gcs.store_client)
     monkeypatch.setattr(config, "_fetched_secrets", {})
     monkeypatch.setattr(config, "_loaded_env_files", set())
     for cached in caches:

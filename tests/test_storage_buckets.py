@@ -58,7 +58,7 @@ def test_multipart_needs_no_signer():
     plain = {"MULTIPART_UPLOAD_ENABLED": "true", "MULTIPART_UPLOAD_BUCKET": "crucible-files", "UPLOAD_BUCKET": "crucible-files"}
     assert MultipartStorageConfig.from_env(plain).signer_service_account is None
     assert MultipartStorageConfig.from_env(plain | {"STORAGE_BACKEND": "s3"}).enabled
-    with pytest.raises(ValueError, match="explicit bucket"):
+    with pytest.raises(ValueError, match="a store with a bucket"):
         MultipartStorageConfig.from_env({"MULTIPART_UPLOAD_ENABLED": "true", "STORAGE_BACKEND": "s3"})
 
 

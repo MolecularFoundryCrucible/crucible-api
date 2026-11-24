@@ -184,11 +184,11 @@ def check_store(public: bool):
     from app.config import get_settings
     from app.storage import get_store
 
-    settings = get_settings().storage
-    if settings.backend == "s3" and not public:
+    store = get_settings().storage.store(None)
+    if store is not None and store.type == "s3" and not public:
         from app.storage.s3 import S3Store
 
-        return S3Store(settings.model_copy(update={"s3_public_url": None}))
+        return S3Store(store.model_copy(update={"public_url": None}))
     return get_store()
 
 

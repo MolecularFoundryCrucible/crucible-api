@@ -10,12 +10,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, SettingsError
 
+from app.storage.registry import COMPATIBILITY_STORE_ID, StoreConfig
 from app.utils.multipart_config import MultipartStorageConfig
 
 logger = logging.getLogger(__name__)
 DEFAULT_SECRETS_DIR = "/run/secrets"
 _SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
-_KEYED_SECRET = re.compile(r"(?:OIDC|OAUTH)_[A-Z][A-Z0-9]*_CLIENT_SECRET|CRUCIBLE_AUTH_PREVIOUS_PEPPER_[A-Z0-9]+")
+_KEYED_SECRET = re.compile(r"(?:OIDC|OAUTH)_[A-Z][A-Z0-9]*_CLIENT_SECRET|CRUCIBLE_AUTH_PREVIOUS_PEPPER_[A-Z0-9]+|STORAGE_[A-Z][A-Z0-9]*_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|CREDENTIALS)")
 MIN_CLIENT_SECRET_LENGTH = 32
 # OWASP Password Storage Cheat Sheet: Argon2id configurations of equal strength, as (memory KiB, iterations).
 ARGON2_FLOOR = ((47104, 1), (19456, 2), (12288, 3), (9216, 4), (7168, 5))
@@ -445,6 +446,69 @@ class StorageSettings(SettingsGroup):
     s3_secret_access_key: SecretStr | None = Field(None, validation_alias="S3_SECRET_ACCESS_KEY")
     file_version_retention_days: int = Field(14, ge=1, validation_alias="FILE_VERSION_RETENTION_DAYS")
     cleanup_enabled: bool = Field(False, validation_alias="STORAGE_CLEANUP_ENABLED")
+    configured_stores: list[StoreConfig] = Field(default_factory=list, validation_alias="STORAGE_STORES")
+    default_store: str | None = Field(None, validation_alias="STORAGE_DEFAULT_STORE")
+
+    @field_validator("configured_stores", mode="before")
+    @classmethod
+    def parse_stores(cls, value):
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except ValueError:
+            raise ValueError("is not valid JSON") from None
+
+    @model_validator(mode="after")
+    def one_way_to_name_stores(self) -> "StorageSettings":
+        if not self.configured_stores:
+            if self.default_store not in (None, COMPATIBILITY_STORE_ID):
+                raise ValueError(f"STORAGE_DEFAULT_STORE names {self.default_store}, but STORAGE_STORES is not set")
+            return self
+        ids = [store.id for store in self.configured_stores]
+        if len(ids) != len(set(ids)):
+            raise ValueError("STORAGE_STORES lists the same id twice")
+        older = sorted({"backend": "STORAGE_BACKEND", "upload_bucket": "UPLOAD_BUCKET", "s3_endpoint_url": "S3_ENDPOINT_URL"}[name] for name in self.model_fields_set & {"backend", "upload_bucket", "s3_endpoint_url"})
+        if older:
+            raise ValueError(f"STORAGE_STORES replaces {', '.join(older)}; set one or the other")
+        if self.default_store is None and len(ids) > 1:
+            raise ValueError("STORAGE_DEFAULT_STORE must name one of the STORAGE_STORES")
+        if self.default_store is not None and self.default_store not in ids:
+            raise ValueError(f"STORAGE_DEFAULT_STORE names {self.default_store}, which STORAGE_STORES does not list")
+        return self
+
+    def _old_settings_store(self) -> StoreConfig:
+        google = self.backend == "gcs"
+        return StoreConfig.from_old_settings(
+            type=self.backend, bucket=self.upload_bucket or "", endpoint_url=self.s3_endpoint_url, public_url=self.s3_public_url, region=self.s3_region,
+            project=(self.gcs_project or optional_env("MULTIPART_UPLOAD_PROJECT")) if google else None,
+            service_account=optional_env("MULTIPART_UPLOAD_SIGNER") if google else None,
+        )
+
+    @property
+    def stores(self) -> list[StoreConfig]:
+        """The stores files can be in: STORAGE_STORES, else the one store the older settings describe."""
+        if self.configured_stores:
+            return list(self.configured_stores)
+        return [self._old_settings_store()] if self.upload_bucket else []
+
+    @property
+    def default_store_id(self) -> str:
+        if self.configured_stores:
+            return self.default_store or self.configured_stores[0].id
+        return COMPATIBILITY_STORE_ID
+
+    def store(self, store_id: str | None) -> StoreConfig | None:
+        """The store with this id; None asks for the default. A server with no storage settings still
+        has the older settings' store, so callers keep failing as storage_not_configured."""
+        wanted = store_id or self.default_store_id
+        if not self.configured_stores:
+            return self._old_settings_store() if wanted == COMPATIBILITY_STORE_ID else None
+        return next((store for store in self.configured_stores if store.id == wanted), None)
+
+    @property
+    def store_secret_names(self) -> list[str]:
+        return [name for store in self.configured_stores for name in store.secret_names]
 
     @field_validator("s3_endpoint_url")
     @classmethod
@@ -460,7 +524,7 @@ class StorageSettings(SettingsGroup):
 
     def serves_files(self) -> bool:
         multipart = (optional_env("MULTIPART_UPLOAD_ENABLED") or "").lower() == "true"
-        return bool(self.read_buckets or multipart or self.upload_bucket)
+        return bool(self.read_buckets or multipart or self.upload_bucket or self.configured_stores)
 
     def in_use(self) -> bool:
         return self.serves_files() or bool(self.record_bucket)
@@ -468,6 +532,8 @@ class StorageSettings(SettingsGroup):
     def problems(self, settings: "Settings") -> list[str]:
         if not self.in_use():
             return []
+        if self.configured_stores:
+            return [store.access_key_name for store in self.configured_stores if store.type == "s3" and not _secret_given(store.access_key_name)] + [store.secret_key_name for store in self.configured_stores if store.type == "s3" and not _secret_given(store.secret_key_name)]
         credentials = ("s3_endpoint_url", "s3_access_key_id", "s3_secret_access_key") if self.backend == "s3" else ()
         return self.missing("upload_bucket", *credentials) if self.serves_files() else self.missing(*credentials)
 
@@ -597,8 +663,14 @@ def get_settings() -> Settings:
 
 
 def _keyed_secret_names() -> list[str]:
-    auth = get_settings().auth
-    return [provider.secret_name for provider in auth.providers] + [client.secret_name for client in auth.clients if client.type == "confidential"] + auth.previous_pepper_names
+    settings = get_settings()
+    auth = settings.auth
+    return [provider.secret_name for provider in auth.providers] + [client.secret_name for client in auth.clients if client.type == "confidential"] + auth.previous_pepper_names + settings.storage.store_secret_names
+
+
+def _secret_given(name: str) -> bool:
+    version = optional_env(f"{name}_VERSION")
+    return (version is not None and _SECRET_VERSION.fullmatch(version) is not None) or configured_secret(name) is not None
 
 
 def configured_secret(name: str) -> str | None:
@@ -648,7 +720,7 @@ def get_secret(name: str) -> str:
                 raise ConfigurationError(f"{name}_VERSION names an empty secret")
             _fetched_secrets[version] = fetched
         value = _fetched_secrets[version]
-    if (name in _SINGLE_LINE_SECRETS or _KEYED_SECRET.fullmatch(name)) and not (value.isascii() and value.isprintable()):
+    if (name in _SINGLE_LINE_SECRETS or (_KEYED_SECRET.fullmatch(name) and not name.endswith("_CREDENTIALS"))) and not (value.isascii() and value.isprintable()):
         raise ConfigurationError(f"{name} must be one line of printable ASCII")
     if (name in _LONG_SECRETS or name.startswith(("OAUTH_", "CRUCIBLE_AUTH_PEPPER", "CRUCIBLE_AUTH_PREVIOUS_PEPPER_"))) and len(value) < MIN_CLIENT_SECRET_LENGTH:
         raise ConfigurationError(f"{name} must be at least {MIN_CLIENT_SECRET_LENGTH} characters")

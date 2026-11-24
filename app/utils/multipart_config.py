@@ -23,7 +23,8 @@ class MultipartStorageConfig:
             from app.config import get_settings
 
             env = os.environ
-            upload_bucket = get_settings().storage.upload_bucket
+            default = get_settings().storage.store(None)
+            upload_bucket = (default.bucket or None) if default is not None else None
         else:
             upload_bucket = env.get("UPLOAD_BUCKET", "").strip() or None
         flag = env.get("MULTIPART_UPLOAD_ENABLED", "false").strip().lower()
@@ -37,14 +38,15 @@ class MultipartStorageConfig:
                 "owner_bytes": 1024 ** 4, "dataset_bytes": 4 * 1024 ** 4,
                 "signing_interval_seconds": 5,
             }.items()},
-            bucket=env.get("MULTIPART_UPLOAD_BUCKET", "").strip() or None,
+            bucket=upload_bucket,
             signer_service_account=env.get("MULTIPART_UPLOAD_SIGNER", "").strip() or None,
             project=env.get("MULTIPART_UPLOAD_PROJECT", "").strip() or None,
         )
         if min(config.max_upload_bytes, config.owner_sessions, config.dataset_sessions, config.owner_bytes, config.dataset_bytes, config.signing_interval_seconds) < 1:
             raise ValueError("Multipart limits must be positive")
+        named = env.get("MULTIPART_UPLOAD_BUCKET", "").strip() or None
+        if named is not None and named != upload_bucket:
+            raise ValueError("MULTIPART_UPLOAD_BUCKET must be the default store's bucket; uploads go to the store chosen for them")
         if config.enabled and not config.bucket:
-            raise ValueError("Multipart uploads require an explicit bucket")
-        if config.enabled and config.bucket != upload_bucket:
-            raise ValueError("Multipart uploads must use UPLOAD_BUCKET, the environment's single upload bucket")
+            raise ValueError("Multipart uploads require a store with a bucket")
         return config

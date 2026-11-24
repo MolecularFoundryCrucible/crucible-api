@@ -17,6 +17,7 @@ from app.services.multipart import now
 def adapter():
     storage = GoogleStore.__new__(GoogleStore)
     storage.config = SimpleNamespace(bucket="dedicated")
+    storage.store, storage.bucket = None, "dedicated"
     storage.credentials = MagicMock(spec=Signing)
     storage.client = MagicMock()
     storage.http = MagicMock()

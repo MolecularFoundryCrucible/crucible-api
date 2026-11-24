@@ -250,11 +250,11 @@ def _run_cleanup(args: argparse.Namespace) -> int:
         if not get_settings().storage.cleanup_enabled and not args.dry_run:
             print("storage cleanup is disabled (STORAGE_CLEANUP_ENABLED=false); nothing done")
             return 0
-        store = get_store()
+        get_store()
     except Exception as error:
         print(f"Storage is not usable: {error}", file=sys.stderr)
         return 1
-    report = run_cleanup(get_engine(), store, now(), dry_run=args.dry_run, batch=args.batch)
+    report = run_cleanup(get_engine(), get_store, now(), dry_run=args.dry_run, batch=args.batch)
     verb = "would " if args.dry_run else ""
     print(f"{verb}abort {report.aborted_uploads} uploads, {verb}delete {report.deleted_versions} file versions; {report.kept_in_use} still in use, {len(report.failures)} failures")
     for failure in report.failures:

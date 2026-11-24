@@ -38,7 +38,7 @@ def signer(monkeypatch):
     blob.content_type = "application/octet-stream"
     blob.generate_signed_url.return_value = "https://signed.example/x"
     monkeypatch.setattr(google, "server_client", lambda: client)
-    monkeypatch.setattr(gcs_storage, "get_store", lambda: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
+    monkeypatch.setattr(gcs_storage, "get_store", lambda *_: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
     return client
 
 
@@ -147,14 +147,14 @@ def test_backfill_skips_multipart_objects(db_engine, monkeypatch):
     listed = [SimpleNamespace(name=f"{DS}/_files/abc-scan.pdf"), SimpleNamespace(name=f"{DS}/raw/scan.pdf")]
     client = MagicMock()
     client.bucket.return_value.list_blobs.return_value = listed
-    monkeypatch.setattr(gcs_storage, "server_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "store_client", lambda store: client)
     assert gcs_storage._determine_storage_path(DS, "scan.pdf") == f"mf-storage-prod/{DS}/raw/scan.pdf"
 
 
 def _listing(monkeypatch, *names):
     client = MagicMock()
     client.bucket.return_value.list_blobs.return_value = [SimpleNamespace(name=f"{DS}/{name}") for name in names]
-    monkeypatch.setattr(gcs_storage, "server_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "store_client", lambda store: client)
 
 
 def test_backfill_needs_a_whole_name_match(monkeypatch):
@@ -364,9 +364,9 @@ def test_download_without_storage_is_not_configured(client, db_engine, signer, a
 
 
 def test_a_file_without_a_location_is_not_found_on_s3(client, db_engine, admin, monkeypatch):
-    def refuse():
+    def refuse(store):
         raise AssertionError("Google storage was asked")
-    monkeypatch.setattr(gcs_storage, "server_client", refuse)
+    monkeypatch.setattr(gcs_storage, "store_client", refuse)
     _switch(monkeypatch, "STORAGE_BACKEND", "s3")
     file_mfid = _file(db_engine, None)
     assert client.get(f"/files/{file_mfid}/download_link").status_code == 404

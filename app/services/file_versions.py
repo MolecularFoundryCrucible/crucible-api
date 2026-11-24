@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 from app.config import get_settings
 from app.tables import AssociatedFile, Dataset, FileVersion, IngestionRequest
 from app.services.storage_downloads import owned_object
+from app.storage import StoreUnavailable, store_config, stored_in
 from app.utils.sql_utils import file_named, get_active_deletion_request, touch_resource_modification_time
 
 
@@ -37,7 +38,11 @@ def trash_file(session: Session, file: AssociatedFile, dataset_mfid: str, when) 
 
 
 def _keep(session, file, dataset_mfid, when, reason):
-    if not file.storage_path or file.storage_generation is None or not owned_object(file.storage_path, file.storage_generation, dataset_mfid):
+    try:
+        store = store_config(file.store_id)
+    except StoreUnavailable:
+        return None
+    if not file.storage_path or file.storage_generation is None or not owned_object(store, file.storage_path, file.storage_generation, dataset_mfid):
         return None
     deadline = when + timedelta(days=get_settings().storage.file_version_retention_days)
     existing = session.exec(select(FileVersion).where(FileVersion.storage_path == file.storage_path, *waiting())).first()
@@ -49,7 +54,7 @@ def _keep(session, file, dataset_mfid, when, reason):
     version = FileVersion(
         file_mfid=file.mfid, dataset_mfid=dataset_mfid, storage_path=file.storage_path, storage_generation=file.storage_generation,
         size=file.size, sha256_hash=file.sha256_hash, storage_crc32c=file.storage_crc32c, reason=reason,
-        created_at=when, delete_after=deadline,
+        store_id=store.id, created_at=when, delete_after=deadline,
     )
     if reason == "deleted":
         version.filename = file.filename
@@ -67,7 +72,7 @@ class Restored:
     replaced_version_id: int | None
 
 
-def restore_latest(engine, store, file_mfid: str, when) -> Restored:
+def restore_latest(engine, stores, file_mfid: str, when) -> Restored:
     """Make the file's newest kept version current again; the content it replaces becomes a version
     in turn, so a restore can itself be undone."""
     from app.services.multipart import replace_in_progress
@@ -86,7 +91,7 @@ def restore_latest(engine, store, file_mfid: str, when) -> Restored:
         ).first()
         if version is None:
             raise RestoreRefused("no_kept_version")
-        _check_restorable(store, version, when)
+        _check_restorable(stores, version, when)
         replaced = keep_version(session, file, dataset_mfid, when)
         file.storage_path = version.storage_path
         file.storage_generation = version.storage_generation
@@ -94,6 +99,7 @@ def restore_latest(engine, store, file_mfid: str, when) -> Restored:
         file.sha256_hash = version.sha256_hash
         file.storage_crc32c = version.storage_crc32c
         file.sha256_verified_at = None
+        file.store_id = stored_in(version.store_id)
         version.restored_at = when
         session.add_all([file, version])
         touch_resource_modification_time(session, dataset_mfid)
@@ -103,13 +109,13 @@ def restore_latest(engine, store, file_mfid: str, when) -> Restored:
         return result
 
 
-def _check_restorable(store, version, when) -> None:
+def _check_restorable(stores, version, when) -> None:
     """Refuse a version past its grace period, which cleanup may delete at any moment (an older one is
     never used instead), or one whose stored object is gone or changed."""
     if utc(version.delete_after) <= when:
         raise RestoreRefused("version_expired")
     bucket, _, key = version.storage_path.partition("/")
-    stored = store.head(bucket, key)
+    stored = stores(stored_in(version.store_id)).head(bucket, key)
     if stored is None:
         raise RestoreRefused("version_missing_in_storage")
     if stored.size != version.size:
@@ -128,13 +134,13 @@ def _deleted_version(session, dataset_mfid, file_mfid):
     return version
 
 
-def restore_deleted(engine, store, dataset_mfid: str, file_mfid: str, when) -> AssociatedFile:
+def restore_deleted(engine, stores, dataset_mfid: str, file_mfid: str, when) -> AssociatedFile:
     """Bring a deleted file back with its MFID, content and ingestion requests while its content is kept."""
     from app.services.multipart import filename_reserved
 
     with Session(engine) as session:
         version = _deleted_version(session, dataset_mfid, file_mfid)
-        _check_restorable(store, version, when)
+        _check_restorable(stores, version, when)
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == dataset_mfid).with_for_update()).one_or_none()
         if dataset is None:
             raise RestoreRefused("not_in_trash")
@@ -147,6 +153,7 @@ def restore_deleted(engine, store, dataset_mfid: str, file_mfid: str, when) -> A
         file = AssociatedFile(
             mfid=version.file_mfid, dataset_id=dataset.id, filename=version.filename, storage_path=version.storage_path,
             storage_generation=version.storage_generation, size=version.size, sha256_hash=version.sha256_hash, storage_crc32c=version.storage_crc32c,
+            store_id=stored_in(version.store_id),
         )
         session.add(file)
         session.flush()

@@ -8,7 +8,7 @@ from app.tables import AssociatedFile, FileVersion, UploadSession
 from app.services import multipart
 from app.services.file_versions import waiting
 from app.services.storage_downloads import owned_object
-from app.storage import StorageFailure
+from app.storage import StorageFailure, StoreUnavailable, store_config, stored_in
 
 logger = logging.getLogger(__name__)
 ABANDONED = ("aborted", "expired", "failed")
@@ -24,14 +24,15 @@ class CleanupReport:
     failures: list[str] = field(default_factory=list)
 
 
-def run_cleanup(engine, store, now, dry_run: bool = False, batch: int = 500) -> CleanupReport:
+def run_cleanup(engine, stores, now, dry_run: bool = False, batch: int = 500) -> CleanupReport:
     """Abort uploads that expired or were left uncleaned, and delete file versions whose grace period
     has passed and that no file uses. Each item is claimed under a row lock and committed on its own,
     so concurrent runs skip each other's work; items are visited in id order once per run, so one
-    that fails or is kept never holds back the others. `batch` caps the uploads and versions handled."""
+    that fails or is kept never holds back the others. `batch` caps the uploads and versions handled.
+    `stores` returns the adapter for a store id; items in a store this server lacks are reported and left."""
     report = CleanupReport()
-    clean_uploads(engine, store, now, dry_run, batch, report)
-    delete_versions(engine, store, now, dry_run, batch, report)
+    clean_uploads(engine, stores, now, dry_run, batch, report)
+    delete_versions(engine, stores, now, dry_run, batch, report)
     return report
 
 
@@ -43,7 +44,7 @@ def due_uploads(now):
     )
 
 
-def clean_uploads(engine, store, now, dry_run, batch, report):
+def clean_uploads(engine, stores, now, dry_run, batch, report):
     if dry_run:
         with Session(engine) as session:
             report.aborted_uploads = len(session.exec(select(UploadSession.id).where(*due_uploads(now)).limit(batch)).all())
@@ -65,13 +66,13 @@ def clean_uploads(engine, store, now, dry_run, batch, report):
             session.expunge(upload)
         handled += 1
         try:
-            multipart.cleanup(engine, store, upload)
+            multipart.cleanup(engine, stores(stored_in(upload.store_id)), upload)
             report.aborted_uploads += 1
         except StorageFailure as error:
             report.failures.append(f"upload {upload.upload_id}: {error or 'storage_failure'}")
 
 
-def delete_versions(engine, store, now, dry_run, batch, report):
+def delete_versions(engine, stores, now, dry_run, batch, report):
     due = (*waiting(), FileVersion.delete_after <= now)
     last = 0
     while report.deleted_versions < batch:
@@ -86,7 +87,12 @@ def delete_versions(engine, store, now, dry_run, batch, report):
             if session.exec(select(AssociatedFile.id).where(AssociatedFile.storage_path == version.storage_path)).first() is not None:
                 report.kept_in_use += 1
                 continue
-            if not owned_object(version.storage_path, version.storage_generation, version.dataset_mfid):
+            try:
+                store = store_config(version.store_id)
+            except StoreUnavailable:
+                report.failures.append(f"version {version.id}: store_unavailable")
+                continue
+            if not owned_object(store, version.storage_path, version.storage_generation, version.dataset_mfid):
                 report.failures.append(f"version {version.id}: not_owned")
                 if not dry_run:
                     version.failure_code = "not_owned"
@@ -98,7 +104,7 @@ def delete_versions(engine, store, now, dry_run, batch, report):
                 continue
             bucket, _, key = version.storage_path.partition("/")
             try:
-                store.delete(bucket, key, version.storage_generation)
+                stores(store.id).delete(bucket, key, version.storage_generation)
             except StorageFailure as error:
                 version.attempts += 1
                 version.failure_code = str(error) or "storage_failure"

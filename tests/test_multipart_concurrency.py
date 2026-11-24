@@ -72,7 +72,7 @@ def test_parallel_initiation_with_one_key_returns_one_session(pg_upload_engine):
 
     def begin():
         barrier.wait(timeout=5)
-        return initiate(engine, lambda: storage, principal, "ds", MultipartInitiate(filename="data", size=1), "same-key", config)
+        return initiate(engine, lambda store_id: storage, principal, "ds", MultipartInitiate(filename="data", size=1), "same-key", config)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: begin(), range(2)))

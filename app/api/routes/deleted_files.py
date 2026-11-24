@@ -65,7 +65,7 @@ def restore_deleted_file(auth_res: Annotated[Principal, Depends(authorize_user)]
         _require_dataset_admin(session, auth_res, dsid)
         assert_not_pending_deletion(session, dsid)
     try:
-        file = restore_deleted(get_engine(), get_store(), dsid, file_mfid, now())
+        file = restore_deleted(get_engine(), get_store, dsid, file_mfid, now())
     except RestoreRefused as error:
         raise _refused(error) from None
     return AssociatedFileRead.model_validate(file, update={"dataset_mfid": dsid})

@@ -290,7 +290,7 @@ def test_cleanup_command_runs_only_when_enabled_or_dry(monkeypatch, capsys, enab
     from app.cli.__main__ import main
     calls = []
     monkeypatch.setattr("app.config.check_settings", lambda: None)
-    monkeypatch.setattr("app.storage.get_store", lambda: object())
+    monkeypatch.setattr("app.storage.get_store", lambda *_: object())
     monkeypatch.setattr("app.api.dependencies.get_engine", lambda: object())
     monkeypatch.setattr("app.services.storage_cleanup.run_cleanup", lambda engine, store, now, dry_run, batch: calls.append(dry_run) or lifecycle_report())
     if enabled is None:

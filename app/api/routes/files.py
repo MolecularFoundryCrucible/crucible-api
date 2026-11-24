@@ -28,6 +28,7 @@ from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
 from app.services.file_versions import trash_file
 from app.services.multipart import now, replace_in_progress
 from app.services.storage_downloads import StorageLocationError, resolve_storage_object
+from app.storage import store_config
 
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
@@ -100,11 +101,12 @@ def get_file_download_link(
         generation = af.storage_generation
         filename = af.filename
         file_mfid = af.mfid
+        store_id = af.store_id
         dataset_mfid = ds.unique_id
         storage_path = _ensure_storage_path(af, dataset_mfid, session)
         session.commit()
 
-    url, expires_in = _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename, disposition)
+    url, expires_in = _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename, disposition, store_id)
     return {"url": url, "expires_in": expires_in}
 
 
@@ -224,7 +226,7 @@ def create_file_ingestion_request(
 
         _ensure_storage_path(af, ds.unique_id, session)
         try:
-            resolve_storage_object(af.storage_path, af.storage_generation, ds.unique_id)
+            resolve_storage_object(store_config(af.store_id), af.storage_path, af.storage_generation, ds.unique_id)
         except StorageLocationError as error:
             logger.warning("file_location_rejected file=%s dataset=%s reason=%s", af.mfid, ds.unique_id, error.reason)
             raise HTTPException(status_code=409, detail=error.detail()) from None

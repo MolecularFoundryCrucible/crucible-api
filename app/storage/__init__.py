@@ -31,4 +31,21 @@ def _store(store_id: str) -> ObjectStore:
 get_store.cache_clear = _store.cache_clear
 
 
-__all__ = ["ObjectInfo", "ObjectStore", "Part", "StorageFailure", "StoreUnavailable", "UploadMissing", "get_store"]
+def stored_in(store_id: str | None) -> str:
+    """The store a row names: rows written before stores were recorded are in the store "default"."""
+    from app.storage.registry import COMPATIBILITY_STORE_ID
+
+    return store_id or COMPATIBILITY_STORE_ID
+
+
+def store_config(store_id: str | None):
+    """The configuration of the store a row names; StoreUnavailable when this server lacks it."""
+    from app.config import get_settings
+
+    store = get_settings().storage.store(stored_in(store_id))
+    if store is None:
+        raise StoreUnavailable(store_id)
+    return store
+
+
+__all__ = ["ObjectInfo", "ObjectStore", "Part", "StorageFailure", "StoreUnavailable", "UploadMissing", "get_store", "store_config", "stored_in"]

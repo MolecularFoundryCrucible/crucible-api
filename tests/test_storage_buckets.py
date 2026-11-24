@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from app.services.storage_downloads import StorageLocationError, StorageNotConfigured, allowed_buckets, resolve_storage_object, upload_bucket
+from app.config import get_settings
+from app.services.storage_downloads import StorageLocationError, StorageNotConfigured, resolve_storage_object, store_buckets
 from app.utils.multipart_config import MultipartStorageConfig
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,33 +17,36 @@ def clean_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+def default_store():
+    return get_settings().storage.store(None)
+
+
 def test_upload_bucket_has_no_default(monkeypatch):
     with pytest.raises(StorageNotConfigured):
-        upload_bucket()
-    with pytest.raises(StorageNotConfigured):
-        resolve_storage_object(f"mf-storage-prod/{DS}/a.txt", None, DS)
-    assert allowed_buckets() == set()
+        resolve_storage_object(default_store(), f"mf-storage-prod/{DS}/a.txt", None, DS)
+    assert store_buckets(default_store()) == set()
 
 
 def test_upload_bucket_is_trimmed(monkeypatch):
     monkeypatch.setenv("UPLOAD_BUCKET", " mf-storage-staging ")
-    assert upload_bucket() == "mf-storage-staging"
+    assert default_store().bucket == "mf-storage-staging"
 
 
-def test_allowed_buckets_combine_upload_multipart_and_extra_read_buckets(monkeypatch):
+def test_the_default_store_reads_its_bucket_and_the_extra_read_buckets(monkeypatch):
     monkeypatch.setenv("UPLOAD_BUCKET", "mf-storage-staging")
     monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", "mf-storage-staging")
     monkeypatch.setenv("STORAGE_READ_BUCKETS", " mf-storage-prod , ,old-bucket")
-    assert allowed_buckets() == {"mf-storage-staging", "mf-storage-prod", "old-bucket"}
+    assert store_buckets(default_store()) == {"mf-storage-staging", "mf-storage-prod", "old-bucket"}
 
 
 def test_staging_reads_old_production_records_and_new_staging_objects(monkeypatch):
     monkeypatch.setenv("UPLOAD_BUCKET", "mf-storage-staging")
     monkeypatch.setenv("STORAGE_READ_BUCKETS", "mf-storage-prod")
-    assert resolve_storage_object(f"mf-storage-prod/{DS}/a.txt", None, DS).bucket == "mf-storage-prod"
-    assert resolve_storage_object(f"mf-storage-staging/{DS}/_files/abc", "3", DS).bucket == "mf-storage-staging"
+    store = default_store()
+    assert resolve_storage_object(store, f"mf-storage-prod/{DS}/a.txt", None, DS).bucket == "mf-storage-prod"
+    assert resolve_storage_object(store, f"mf-storage-staging/{DS}/_files/abc", "3", DS).bucket == "mf-storage-staging"
     with pytest.raises(StorageLocationError):
-        resolve_storage_object(f"mf-crucible-multipart-staging/{DS}/_files/abc", "3", DS)
+        resolve_storage_object(store, f"mf-crucible-multipart-staging/{DS}/_files/abc", "3", DS)
 
 
 def test_multipart_bucket_must_be_the_upload_bucket():

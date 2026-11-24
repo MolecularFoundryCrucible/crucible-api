@@ -28,7 +28,11 @@ pytestmark = pytest.mark.usefixtures("hub_client_registered")
 
 
 class MemoryStorage:
-    def __init__(self, reports_crc32c=True):
+    """An in-memory store; calling it with a store id returns itself, so it also serves as the
+    store lookup services take."""
+
+    def __init__(self, reports_crc32c=True, name="storage.example"):
+        self.name = name
         self.reports_crc32c = reports_crc32c
         self.reports_part_crc32c = not reports_crc32c
         self.pending = {}
@@ -96,6 +100,12 @@ class MemoryStorage:
         self.deleted.append((key, version))
         self.objects.pop(key)
 
+    def signed_download(self, bucket, key, version, filename, disposition, expires_in):
+        return f"https://{self.name}/{bucket}/{key}?generation={version}"
+
+    def __call__(self, store_id=None):
+        return self
+
 
 @pytest.fixture(params=["store_crc32c", "combined_crc32c"])
 def flow(request, db_engine, client, auth_as, monkeypatch):
@@ -115,7 +125,7 @@ def flow(request, db_engine, client, auth_as, monkeypatch):
     monkeypatch.setenv("MULTIPART_UPLOAD_SIGNER", "signer@example.iam.gserviceaccount.com")
     monkeypatch.setenv("MULTIPART_UPLOAD_PROJECT", "test-project")
     storage = MemoryStorage(reports_crc32c=request.param == "store_crc32c")
-    monkeypatch.setattr(routes, "get_store", lambda: storage)
+    monkeypatch.setattr(routes, "get_store", storage)
     return client, db_engine, storage
 
 
@@ -195,7 +205,7 @@ def test_upload_resume_publish_retry_download_ingestion_and_delete(flow, monkeyp
     signed_blob.content_type = "application/octet-stream"
     signed_blob.generate_signed_url.return_value = "https://download.example/pinned-generation-7"
     monkeypatch.setattr(google, "server_client", lambda: signer)
-    monkeypatch.setattr(gcs_storage, "get_store", lambda: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
+    monkeypatch.setattr(gcs_storage, "get_store", lambda *_: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
     assert client.get(f"/files/{file_id}/download_link").json()["url"].endswith("pinned-generation-7")
     assert signer.bucket.return_value.blob.call_args.kwargs["generation"] == 7
     assert "filename*=UTF-8''data.bin" in signed_blob.generate_signed_url.call_args.kwargs["response_disposition"]
@@ -1147,7 +1157,7 @@ def test_backfill_listing_is_bounded(monkeypatch):
     blob = MagicMock()
     blob.name = "ds/legacy.bin"
     client.bucket.return_value.list_blobs.return_value = [blob]
-    monkeypatch.setattr(gcs_storage, "server_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "store_client", lambda store: client)
     assert gcs_storage._determine_storage_path("ds", "legacy.bin").endswith("/ds/legacy.bin")
     client.bucket.return_value.list_blobs.assert_called_once_with(prefix="ds/", timeout=30)
 

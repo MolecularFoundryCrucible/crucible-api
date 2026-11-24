@@ -23,7 +23,7 @@ def _run_restore(args: argparse.Namespace) -> int:
 
     try:
         check_settings()
-        restored = restore_latest(get_engine(), get_store(), args.file_mfid, now())
+        restored = restore_latest(get_engine(), get_store, args.file_mfid, now())
     except RestoreRefused as error:
         print(f"Not restored: {error.code}", file=sys.stderr)
         return 1

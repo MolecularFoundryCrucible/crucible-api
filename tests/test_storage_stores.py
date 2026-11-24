@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import timedelta
 
@@ -12,7 +13,9 @@ from app.services import multipart as service
 from app.services.file_versions import restore_latest
 from app.services.storage_cleanup import run_cleanup
 from app.storage import StoreUnavailable
-from app.tables import AssociatedFile, Dataset, FileVersion, UploadSession
+from app.tables import AssociatedFile, Dataset, FileVersion, Instrument, Project, ResourceSettings, UploadSession
+from app.models.multipart import MultipartInitiate
+from app.storage.registry import COMPATIBILITY_STORE_ID
 from tests.test_multipart_lifecycle import DATA, SHA, MemoryStorage, complete, put, publish, replace, start
 import tests.test_multipart_lifecycle as lifecycle
 
@@ -171,3 +174,84 @@ def test_file_responses_name_their_store(stores):
         session.commit()
     by_name = {item["filename"]: item["store"] for item in client.get("/datasets/ds/files").json()}
     assert by_name == {"data.bin": "default", "remote.h5": None}
+
+
+BASE = "/datasets/ds/upload/multipart"
+STORES_WITH_LAB = STORES + [{"id": "lab", "display_name": "Lab NAS", "type": "s3", "bucket": "dedicated", "endpoint_url": "http://nas.test:7070"}]
+
+
+def defaults(engine, project=None, instrument=None):
+    """Give dataset ds a project and an instrument, each with the given default store (None: no setting)."""
+    with Session(engine) as session:
+        session.add_all([Project(unique_id="pj", project_id="pj", organization="x", project_lead_orcid="owner"), Instrument(unique_id="in1", instrument_name="TEM", owner="owner", location="x")])
+        for mfid, store in (("pj", project), ("in1", instrument)):
+            if store is not None:
+                session.add(ResourceSettings(mfid=mfid, settings={"default_store": store}, updated_at=service.now()))
+        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
+        dataset.project_mfid, dataset.instrument_mfid = "pj", "in1"
+        session.add(dataset)
+        session.commit()
+
+
+def initiate(client, store=None, filename="data.bin"):
+    body = {"filename": filename, "size": len(DATA), "sha256_hash": SHA} | ({"store": store} if store else {})
+    return client.post(BASE + "/initiate", json=body, headers={"Idempotency-Key": filename})
+
+
+def session_store(engine, upload_id):
+    with Session(engine) as session:
+        return session.exec(select(UploadSession.store_id).where(UploadSession.upload_id == upload_id)).one()
+
+
+@pytest.mark.parametrize("requested, project, instrument, expected", [
+    ("lab", "vm", "default", "lab"),
+    (None, "vm", "lab", "vm"),
+    (None, None, "lab", "lab"),
+    (None, None, None, "default"),
+])
+def test_the_store_follows_upload_then_project_then_instrument_then_deployment(stores, monkeypatch, requested, project, instrument, expected):
+    client, engine, known, _ = stores
+    known["lab"] = MemoryStorage(name="nas.test")
+    monkeypatch.setenv("STORAGE_STORES", json.dumps(STORES_WITH_LAB))
+    monkeypatch.setenv("STORAGE_LAB_ACCESS_KEY_ID", "lab-key")
+    monkeypatch.setenv("STORAGE_LAB_SECRET_ACCESS_KEY", "lab-secret")
+    get_settings.cache_clear()
+    defaults(engine, project, instrument)
+    response = initiate(client, requested)
+    assert response.status_code == 200, response.text
+    assert session_store(engine, response.json()["upload_id"]) == expected
+
+
+def test_a_default_naming_a_removed_store_falls_through(stores):
+    client, engine, _, _ = stores
+    defaults(engine, project="gone", instrument="vm")
+    response = initiate(client)
+    assert response.status_code == 200, response.text
+    assert session_store(engine, response.json()["upload_id"]) == "vm"
+
+
+def test_an_upload_naming_an_unknown_store_is_refused(stores):
+    response = initiate(stores[0], "gone")
+    assert response.status_code == 422
+    assert {key: response.json()["detail"][key] for key in ("code", "store")} == {"code": "unknown_store", "store": "gone"}
+
+
+def test_a_replace_keeps_the_files_store_unless_another_is_named(stores):
+    client, engine, known, _ = stores
+    file = complete((client, engine, known["default"]), publish((client, engine, known["default"]))).json()
+    move_to(engine, file["mfid"], "vm", known["vm"], known["default"])
+    kept = client.post(f"/files/{file['mfid']}/upload/multipart/initiate", json={"size": len(DATA)})
+    assert kept.status_code == 200, kept.text
+    assert session_store(engine, kept.json()["upload_id"]) == "vm"
+    assert client.delete(BASE + f"/{kept.json()['upload_id']}").status_code == 204
+    moved = client.post(f"/files/{file['mfid']}/upload/multipart/initiate", json={"size": len(DATA), "store": "default"})
+    assert moved.status_code == 200, moved.text
+    assert session_store(engine, moved.json()["upload_id"]) == "default"
+
+
+def test_the_request_fingerprint_without_store_is_unchanged():
+    body = MultipartInitiate(filename="a", size=1)
+    before = json.dumps({"filename": "a", "size": 1, "sha256_hash": None}, sort_keys=True, separators=(",", ":"))
+    assert service.request_fingerprint(body) == hashlib.sha256(before.encode()).hexdigest()
+    assert service.request_fingerprint(MultipartInitiate(filename="a", size=1, store="vm")) != service.request_fingerprint(body)
+    assert COMPATIBILITY_STORE_ID == "default"

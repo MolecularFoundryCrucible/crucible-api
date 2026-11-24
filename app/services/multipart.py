@@ -13,11 +13,11 @@ from app.general_utils import if_match_satisfied
 from app.tables import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead, file_etag
 from app.models.multipart import EMPTY_SHA256, MultipartStatus
-from app.config import get_settings
 from app.storage import StorageFailure, UploadMissing, store_config, stored_in
 from app.storage.crc32c import combine_parts
 from app.services.file_versions import keep_version
-from app.services.storage_downloads import StorageNotConfigured, multipart_prefix
+from app.services.store_choice import choose_store
+from app.services.storage_downloads import multipart_prefix
 from app.utils.auth_utils import caller_row, is_caller, load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
 from app.utils.sql_utils import assert_not_pending_deletion, file_named, get_active_deletion_request, touch_resource_modification_time
@@ -39,14 +39,6 @@ class InvalidUpload(Exception):
 
 def now():
     return datetime.now(timezone.utc)
-
-
-def default_store():
-    """The store new uploads go to when nothing chooses another."""
-    store = get_settings().storage.store(None)
-    if store is None or not store.bucket:
-        raise StorageNotConfigured("File storage is not configured on this server (no default store)")
-    return store
 
 
 def utc(value):
@@ -157,16 +149,22 @@ def idempotent(session, principal, dsid, key, fingerprint):
     return status(session, previous)
 
 
+def request_fingerprint(body, **extra):
+    """The idempotency fingerprint of a request; a body that names no store hashes as it did before
+    stores could be named, so retries spanning an upgrade still match."""
+    values = body.model_dump(exclude={"store"} if body.store is None else None) | extra
+    return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def choose_part_size(size):
     return min(PART_SIZE, max(MIN_PART_SIZE, -(-size // (PARALLEL_PARTS * MIB)) * MIB))
 
 
-def new_session(session, principal, dsid, size, key, fingerprint, claimed_sha256, config, filename, replace_file_mfid=None, replace_base_etag=None, store=None):
+def new_session(session, principal, dsid, size, key, fingerprint, claimed_sha256, config, filename, store, replace_file_mfid=None, replace_base_etag=None):
     for scope, count_limit, byte_limit in ((is_caller(UploadSession.user_id, principal), config.owner_sessions, config.owner_bytes), (UploadSession.dataset_mfid == dsid, config.dataset_sessions, config.dataset_bytes)):
         count, reserved = session.exec(select(func.count(UploadSession.id), func.coalesce(func.sum(UploadSession.size), 0)).where(scope, *live())).one()
         if count >= count_limit or reserved + size > byte_limit:
             raise HTTPException(429, "Upload reservation quota exceeded", headers={"Retry-After": "60"})
-    store = store or default_store()
     identifier = uuid4().hex
     part_size = choose_part_size(size) if size else None
     upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, user_id=principal.internal_user_id, object_key=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=filename, expires_at=now() + INITIATION_WINDOW, size=size, protocol=PROTOCOL, bucket=store.bucket, store_id=store.id, state="initiating", part_size=part_size, part_count=(size + part_size - 1) // part_size if size else None, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=claimed_sha256, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0, replace_file_mfid=replace_file_mfid, replace_base_etag=replace_base_etag)
@@ -180,7 +178,7 @@ def new_session(session, principal, dsid, size, key, fingerprint, claimed_sha256
 def reserve(engine, principal, dsid, body, key, config):
     if body.size > config.max_upload_bytes:
         raise HTTPException(413, "File exceeds the configured upload limit")
-    fingerprint = hashlib.sha256(json.dumps(body.model_dump(), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    fingerprint = request_fingerprint(body)
     with Session(engine) as session:
         user = caller_row(session, principal, for_update=True)
         if user is None:
@@ -202,7 +200,8 @@ def reserve(engine, principal, dsid, body, key, config):
             raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing_name.mfid, "etag": file_etag(existing_name.storage_path, existing_name.storage_generation, existing_name.sha256_hash, existing_name.size), "message": "Filename already exists"})
         if filename_reserved(session, dsid, body.filename):
             raise HTTPException(409, "Filename is reserved by another upload")
-        return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, body.filename)
+        store = choose_store(session, dataset, body.store)
+        return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, body.filename, store=store)
 
 
 def initiate(engine, storage, principal, dsid, body, key, config):
@@ -241,7 +240,7 @@ def start(engine, storage, upload):
 def reserve_replace(engine, principal, file_mfid, body, key, if_match, config, backfill=None):
     if body.size > config.max_upload_bytes:
         raise HTTPException(413, "File exceeds the configured upload limit")
-    fingerprint = hashlib.sha256(json.dumps(body.model_dump() | {"replace_file_mfid": file_mfid}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    fingerprint = request_fingerprint(body, replace_file_mfid=file_mfid)
     with Session(engine) as session:
         user = caller_row(session, principal, for_update=True)
         if user is None:
@@ -287,7 +286,7 @@ def reserve_replace(engine, principal, file_mfid, body, key, if_match, config, b
             if backfilled:
                 session.commit()
             return MultipartStatus(state="completed", existing_file=AssociatedFileRead.model_validate(file, update={"dataset_mfid": dsid}))
-        return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, file.filename, replace_file_mfid=file_mfid, replace_base_etag=base_etag, store=store_config(file.store_id))
+        return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, file.filename, replace_file_mfid=file_mfid, replace_base_etag=base_etag, store=choose_store(session, dataset, body.store) if body.store else store_config(file.store_id))
 
 
 def initiate_replace(engine, storage, principal, file_mfid, body, key, if_match, config, backfill=None):

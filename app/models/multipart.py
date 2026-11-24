@@ -45,6 +45,7 @@ class MultipartInitiate(BaseModel):
     filename: str = Field(min_length=1, max_length=1024)
     size: int = Field(ge=0, le=500 * 1024 ** 3, strict=True)
     sha256_hash: SHA256 | None = None
+    store: str | None = Field(default=None, max_length=32, description="The store to upload to (see GET /storage/stores); by default the project's, then the instrument's, then the server's default store.")
     check_empty_hash = model_validator(mode="after")(empty_hash)
 
     @field_validator("filename")
@@ -57,6 +58,7 @@ class MultipartReplace(BaseModel):
     model_config = ConfigDict(extra="forbid")
     size: int = Field(ge=0, le=500 * 1024 ** 3, strict=True)
     sha256_hash: SHA256 | None = None
+    store: str | None = Field(default=None, max_length=32, description="The store to upload the new content to; by default the file's current store.")
     check_empty_hash = model_validator(mode="after")(empty_hash)
 
 

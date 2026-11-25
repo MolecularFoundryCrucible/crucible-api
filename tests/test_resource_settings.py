@@ -48,6 +48,16 @@ def instrument(client, db_engine, auth_as):
     return group_id
 
 
+def test_a_default_store_no_longer_configured_is_flagged(client, project, monkeypatch):
+    url = "/projects/proj_x/settings"
+    assert patch(client, url, {"default_store_id": "vm"}).json()["warnings"] == []
+    monkeypatch.setenv("STORAGE_STORES", json.dumps(STORES[:1]))
+    get_settings.cache_clear()
+    flagged = client.get(url).json()
+    assert flagged["settings"] == {"default_store_id": "vm"}
+    assert [(w["code"], w["store_id"]) for w in flagged["warnings"]] == [("default_store_unavailable", "vm")]
+
+
 def test_a_project_admin_sets_and_clears_the_default_store(client, project):
     url = "/projects/proj_x/settings"
     first = client.get(url)

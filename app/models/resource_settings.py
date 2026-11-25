@@ -1,6 +1,6 @@
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.timestamps import UtcDatetime
 
@@ -32,8 +32,25 @@ class InstrumentSettings(ResourceSettingsDocument):
     '''An instrument's settings. default_store_id: where uploads to the instrument's datasets go when neither the upload nor the project names a store.'''
 
 
+class StoreWarning(BaseModel):
+    code: Literal["default_store_unavailable"]
+    store_id: str
+    record_mfid: Optional[str] = None
+    message: str
+
+
+def unavailable_default(store_id: Optional[str], record_mfid: str) -> Optional[StoreWarning]:
+    """A warning when a record's default store is not configured on this server any more; uploads then skip it."""
+    from app.config import get_settings
+
+    if store_id is None or get_settings().storage.store(store_id) is not None:
+        return None
+    return StoreWarning(code="default_store_unavailable", store_id=store_id, record_mfid=record_mfid, message=f"Default store {store_id} of {record_mfid} is not configured on this server; uploads use the next default")
+
+
 class ResourceSettingsRead(BaseModel):
     schema_version: int
     revision: int
     updated_at: Optional[UtcDatetime] = None
     settings: dict[str, Any]
+    warnings: list[StoreWarning] = Field(default_factory=list, description="Settings this server cannot honour, such as a default_store_id no longer configured (default_store_unavailable)")

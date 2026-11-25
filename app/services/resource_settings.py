@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 from app.general_utils import get_utc_datetime, if_match_satisfied, merge_patch
 from app.models.preferences import serialized_size
-from app.models.resource_settings import MAX_SETTINGS_BYTES, RESOURCE_SETTINGS_SCHEMA_VERSION, ResourceSettingsRead
+from app.models.resource_settings import MAX_SETTINGS_BYTES, RESOURCE_SETTINGS_SCHEMA_VERSION, ResourceSettingsRead, unavailable_default
 from app.tables import ResourceSettings
 
 
@@ -26,7 +26,8 @@ def settings_response(row: ResourceSettings | None, response: Response) -> Resou
     response.headers["ETag"] = settings_etag(row.revision if row else 0)
     if row is None:
         return ResourceSettingsRead(schema_version=RESOURCE_SETTINGS_SCHEMA_VERSION, revision=0, settings={})
-    return ResourceSettingsRead(schema_version=row.schema_version, revision=row.revision, updated_at=row.updated_at, settings=row.settings)
+    warning = unavailable_default(row.settings.get("default_store_id"), row.mfid)
+    return ResourceSettingsRead(schema_version=row.schema_version, revision=row.revision, updated_at=row.updated_at, settings=row.settings, warnings=[warning] if warning else [])
 
 
 def update_settings(engine, mfid: str, model: type[BaseModel], patch: Any, if_match: str | None) -> ResourceSettings:

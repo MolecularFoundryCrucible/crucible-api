@@ -3,6 +3,7 @@ import logging
 from fastapi import HTTPException
 
 from app.config import get_settings
+from app.models.resource_settings import StoreWarning, unavailable_default
 from app.services.resource_settings import read_settings
 from app.services.storage_downloads import StorageNotConfigured
 
@@ -14,10 +15,10 @@ def unknown_store(store_id: str) -> HTTPException:
     return HTTPException(422, {"code": "unknown_store", "store_id": store_id, "message": f"{store_id} is not a store on this server (see GET /storage/stores)"})
 
 
-def choose_store(session, dataset, requested: str | None):
+def choose_store(session, dataset, requested: str | None, warnings: list[StoreWarning] | None = None):
     """The store a new upload into the dataset goes to: the one requested, else the project's default,
     else the instrument's, else the deployment's. A default naming a store this server no longer has
-    is skipped; a request naming one is refused."""
+    is skipped, with a warning added to warnings; a request naming one is refused."""
     storage = get_settings().storage
     if requested is not None:
         store = storage.store(requested)
@@ -31,6 +32,8 @@ def choose_store(session, dataset, requested: str | None):
         store = storage.store(wanted)
         if store is not None:
             return store
+        if warnings is not None:
+            warnings.append(unavailable_default(wanted, mfid))
         if wanted not in _reported:
             _reported.add(wanted)
             logger.warning("default_store_unavailable store=%s record=%s", wanted, mfid)

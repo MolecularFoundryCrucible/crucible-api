@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 ## [Unreleased]
 
+### Added
+
+- A project or instrument default store that is no longer configured is reported as a `default_store_unavailable` warning in `warnings` on the upload initiation response (the upload goes to the next default) and on `GET` and `PATCH` of the record's settings.
+
 ## [4.1.0] - 2026-11-24
 
 ### Upgrade notes

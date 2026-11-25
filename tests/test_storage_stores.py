@@ -230,6 +230,7 @@ def test_a_default_naming_a_removed_store_falls_through(stores):
     response = initiate(client)
     assert response.status_code == 200, response.text
     assert session_store(engine, response.json()["upload_id"]) == "vm"
+    assert [(w["code"], w["store_id"], w["record_mfid"]) for w in response.json()["warnings"]] == [("default_store_unavailable", "gone", "pj")]
 
 
 def test_an_upload_naming_an_unknown_store_is_refused(stores):

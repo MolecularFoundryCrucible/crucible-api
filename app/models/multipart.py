@@ -7,6 +7,7 @@ from app.storage.registry import STORE_ID_PATTERN
 from pydantic import BaseModel, ConfigDict, Field, AfterValidator, field_validator, model_validator
 
 from app.models.datasets import AssociatedFileRead
+from app.models.resource_settings import StoreWarning
 from app.models.timestamps import UtcDatetime
 
 
@@ -106,6 +107,7 @@ class MultipartStatus(BaseModel):
     next_part_number_marker: int | None = None
     existing_file: AssociatedFileRead | None = None
     failure_code: str | None = None
+    warnings: list[StoreWarning] = Field(default_factory=list, description="On initiation: a project or instrument default store that is not configured any more and was skipped (default_store_unavailable)")
 
 
 class SignedPart(BaseModel):

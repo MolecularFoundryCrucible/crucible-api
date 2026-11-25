@@ -175,7 +175,7 @@ def new_session(session, principal, dsid, size, key, fingerprint, claimed_sha256
     return upload
 
 
-def reserve(engine, principal, dsid, body, key, config):
+def reserve(engine, principal, dsid, body, key, config, warnings=None):
     if body.size > config.max_upload_bytes:
         raise HTTPException(413, "File exceeds the configured upload limit")
     fingerprint = request_fingerprint(body)
@@ -200,15 +200,16 @@ def reserve(engine, principal, dsid, body, key, config):
             raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing_name.mfid, "etag": file_etag(existing_name.storage_path, existing_name.storage_generation, existing_name.sha256_hash, existing_name.size), "message": "Filename already exists"})
         if filename_reserved(session, dsid, body.filename):
             raise HTTPException(409, "Filename is reserved by another upload")
-        store = choose_store(session, dataset, body.store_id)
+        store = choose_store(session, dataset, body.store_id, warnings)
         return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, body.filename, store=store)
 
 
 def initiate(engine, storage, principal, dsid, body, key, config):
-    upload = reserve(engine, principal, dsid, body, key, config)
+    warnings = []
+    upload = reserve(engine, principal, dsid, body, key, config, warnings)
     if isinstance(upload, MultipartStatus):
         return upload
-    return start(engine, storage, upload)
+    return start(engine, storage, upload).model_copy(update={"warnings": warnings})
 
 
 def start(engine, storage, upload):

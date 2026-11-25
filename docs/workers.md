@@ -10,13 +10,13 @@ A worker sends `PUT /workers/{worker_id}` at startup and then every `heartbeat_s
 {"kind": "ingestion", "capabilities": ["H5Ingestor", "TifIngestor"], "buckets": ["mf-storage-prod"], "worker_version": "0.4.1", "package_version": "0.2.1"}
 ```
 
-- `worker_id`: chosen by the worker and stable for one running instance, such as its pod name; 1 to 128 letters, digits, `_`, `.`, `:` or `-`, starting with a letter or digit. A live registration belongs to the account that made it: another account gets 409 `worker_id_taken` until it expires.
+- `worker_id`: chosen by the worker and stable for one running instance, such as its hostname (the pod name in Kubernetes); 1 to 128 letters, digits, `_`, `.`, `:` or `-`, starting with a letter or digit. A live registration belongs to the account that made it: another account gets 409 `worker_id_taken` until it expires.
 - `kind`: `ingestion` today; other kinds, such as postprocessing, are added when their workers register.
 - `capabilities`: for `ingestion`, the ingestor names the worker runs (crucible-ingestion's selectable ingestors), at most 500.
 - `buckets`: the buckets the worker can read, at most 50. The API maps them to its stores (`store_ids` in the listings).
 - `worker_version` and `package_version`: the worker's version and, for `ingestion`, crucible-ingestion's.
 
-Registration needs a platform administrator: for now, the API key a worker uses must belong to a service account with the `admin` platform role, or its registrations are refused with 403 and `GET /ingestors` stays empty. See [Later](#later) for the narrower design. It is accepted while ingestion is disabled, so turning ingestion off does not need the workers changed. Registrations not renewed for a day are removed when a worker next registers.
+Registration needs a service account, of any platform role; a person's key is refused with 403. The ingestion worker's key still needs the `admin` platform role for the ingestion itself (see [Later](#later) for the narrower design). It is accepted while ingestion is disabled, so turning ingestion off does not need the workers changed. Registrations not renewed for a day are removed when a worker next registers.
 
 ## What the API does with it
 

@@ -56,9 +56,14 @@ def test_a_worker_id_belongs_to_the_account_that_registered_it_while_live(client
     assert register(client, "worker-a", ["TifIngestor"]).status_code == 200
 
 
-@pytest.mark.parametrize("role, can_register, can_list", [(PlatformRole.ADMIN, True, True), (PlatformRole.SUPPORT, False, True), (PlatformRole.CONTRIBUTOR, False, False)])
-def test_only_admins_register_and_admins_or_support_list(client, auth_as, role, can_register, can_list):
-    auth_as(ADMIN, platform_role=role, is_service_account=True)
+@pytest.mark.parametrize("role, service_account, can_register, can_list", [
+    (PlatformRole.NONE, True, True, False),
+    (PlatformRole.ADMIN, False, False, True),
+    (PlatformRole.SUPPORT, False, False, True),
+    (PlatformRole.CONTRIBUTOR, False, False, False),
+])
+def test_only_service_accounts_register_and_admins_or_support_list(client, auth_as, role, service_account, can_register, can_list):
+    auth_as(ADMIN, platform_role=role, is_service_account=service_account)
     assert register(client, "worker-a", ["H5Ingestor"]).status_code == (200 if can_register else 403)
     assert client.delete("/workers/worker-a").status_code == (204 if can_register else 403)
     assert client.get("/workers").status_code == (200 if can_list else 403)

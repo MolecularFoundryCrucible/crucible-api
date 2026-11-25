@@ -20,7 +20,8 @@ from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, file_named, offset_page, select_readable_file, touch_resource_modification_time
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.multipart import checked_filename
-from app.models.ingestion import INGESTION_CLASS_PATTERN, IngestionRequestRead
+from app.services.workers import ingest_warnings
+from app.models.ingestion import INGESTION_CLASS_PATTERN, IngestionRequestCreated
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import DownloadLinkRead, MessageResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
@@ -193,7 +194,7 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
 
 
 # ingestion
-@router.post("/files/{file_id}/ingest", response_model=IngestionRequestRead, responses={501: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`) or file storage is not configured (`storage_not_configured`)"}, 503: {"description": "The request could not be queued (`ingestion_unavailable`, recorded as failed), or the file's store is not available (`store_unavailable`, with `store_id`)"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.post("/files/{file_id}/ingest", response_model=IngestionRequestCreated, responses={501: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`) or file storage is not configured (`storage_not_configured`)"}, 503: {"description": "The request could not be queued (`ingestion_unavailable`, recorded as failed), or the file's store is not available (`store_unavailable`, with `store_id`)"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def create_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
@@ -243,6 +244,7 @@ def create_file_ingestion_request(
         session.refresh(ingestion_request)
 
         ir_id = ingestion_request.id
+        warnings = ingest_warnings(session, ingestion_class, af.storage_path.partition("/")[0]) if status == "requested" else []
         af_size = af.size
         af_storage_path = af.storage_path
         af_generation = af.storage_generation
@@ -278,4 +280,5 @@ def create_file_ingestion_request(
             raise HTTPException(status_code=503, detail={"code": "ingestion_unavailable", "message": "Could not queue the ingestion request; try again later", "request_id": ir_id}) from None
 
     with Session(get_engine()) as session:
-        return session.exec(select(IngestionRequest).where(IngestionRequest.id == ir_id)).one()
+        created = session.exec(select(IngestionRequest).where(IngestionRequest.id == ir_id)).one()
+        return IngestionRequestCreated.model_validate(created, update={"warnings": warnings})

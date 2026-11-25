@@ -24,7 +24,7 @@ from app.utils.auth_utils import PRIVILEGE_MODE_HEADER
 from app.utils.permissions import PrivilegeMode, PrivilegeModeSource
 from app.api.routes import (account, api_keys, auth, identities, files, deleted_files, datasets, storage, gcs_storage, resources,
                             samples, instruments, users, projects,
-                            entities, misc, deletion,
+                            entities, misc, workers, deletion,
                             ingestion_requests, join_requests, pipelines, service_accounts,
                             resource_graph, browser_sign_in, oauth, device, passwords, sessions, print as print_routes)
 
@@ -361,6 +361,7 @@ app.include_router(projects.router)
 app.include_router(join_requests.router)
 app.include_router(entities.router)
 app.include_router(misc.router)
+app.include_router(workers.router)
 app.include_router(deletion.router)
 app.include_router(service_accounts.router)
 app.include_router(print_routes.router)

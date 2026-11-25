@@ -433,6 +433,22 @@ class ResourceSettings(SQLModel, table=True):
     updated_at: datetime = Field(sa_type=DateTime(timezone=True))
 
 
+class Worker(SQLModel, table=True):
+    """A worker's registration, renewed by its heartbeat; live until last_seen_at plus the TTL in app.services.workers."""
+    __tablename__ = "workers"
+    __table_args__ = (Index("ix_workers_kind_last_seen", "kind", "last_seen_at"),)
+
+    worker_id: str = Field(sa_column=Column(String, primary_key=True))
+    kind: str
+    capabilities: list[str] = Field(default_factory=list, sa_column=Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False))
+    buckets: list[str] = Field(default_factory=list, sa_column=Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False))
+    worker_version: Optional[str] = None
+    package_version: Optional[str] = None
+    registered_by: str
+    registered_at: datetime = Field(sa_type=DateTime(timezone=True))
+    last_seen_at: datetime = Field(sa_type=DateTime(timezone=True))
+
+
 class UserRecentResource(SQLModel, table=True):
     __table_args__ = (Index("ix_userrecentresource_user_viewed", "user_id", "viewed_at"),)
 

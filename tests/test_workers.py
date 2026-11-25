@@ -74,7 +74,7 @@ def test_only_service_accounts_register_and_admins_or_support_list(client, auth_
 
 def test_ingest_warns_when_no_live_worker_can_take_the_request(client, db_engine, admin, clock):
     file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
-    with patch("app.api.routes.files.send_pika_message") as send:
+    with patch("app.services.outbox.send_pika_message") as send:
         nobody = client.post(f"/files/{file_mfid}/ingest")
         register(client, "worker-a", ["H5Ingestor"], buckets=["other-bucket"])
         wrong = client.post(f"/files/{file_mfid}/ingest", params={"ingestion_class": "TifIngestor"})

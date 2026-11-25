@@ -211,7 +211,7 @@ def test_upload_resume_publish_retry_download_ingestion_and_delete(flow, monkeyp
     assert signer.bucket.return_value.blob.call_args.kwargs["generation"] == 7
     assert "filename*=UTF-8''data.bin" in signed_blob.generate_signed_url.call_args.kwargs["response_disposition"]
     assert client.get("/datasets/ds/download_links").json()[file_id].endswith("pinned-generation-7")
-    with patch("app.api.routes.files.send_pika_message") as send:
+    with patch("app.services.outbox.send_pika_message") as send:
         response = client.post(f"/files/{file_id}/ingest")
         assert response.status_code == 200, response.text
         assert "dedicated/ds/_files/" in send.call_args.kwargs["message"]

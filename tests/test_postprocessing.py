@@ -28,7 +28,7 @@ def datasets(db_engine):
 
 @pytest.fixture
 def queue():
-    with patch("app.api.routes.pipelines.send_pika_message") as send, patch("app.api.routes.pipelines.get_secret", return_value="pw"):
+    with patch("app.services.outbox.send_pika_message") as send, patch("app.services.outbox.get_secret", return_value="pw"):
         yield send
 
 
@@ -53,9 +53,10 @@ def test_contributor_queues_a_run(client, datasets, auth_as, queue):
     response = client.post("/datasets/ds1/postprocess", json={"pipeline": "carrier_segmentation"})
     assert response.status_code == 202, response.text
     body = response.json()
-    assert body | {"requested_at": None, "run_id": None} == {
+    assert body["published_at"] is not None
+    assert body | {"requested_at": None, "run_id": None, "published_at": None} == {
         "run_id": None, "dataset_mfid": "ds1", "pipeline": "carrier_segmentation", "parameters": {}, "status": "requested",
-        "error": None, "requested_by": ME, "requested_at": None, "started_at": None, "finished_at": None,
+        "error": None, "requested_by": ME, "requested_at": None, "started_at": None, "finished_at": None, "published_at": None,
     }
     queue.assert_called_once()
     assert queue.call_args.kwargs["routing_key"] == "carrier-segmentation"
@@ -98,15 +99,6 @@ def test_bad_requests_are_422(client, datasets, auth_as, queue, body, code):
     assert response.json()["detail"]["code"] == code
     queue.assert_not_called()
 
-
-def test_publish_failure_records_failed_run(client, datasets, auth_as, queue):
-    queue.side_effect = ConnectionError("broker down")
-    as_member(auth_as, Role.CONTRIBUTOR)
-    response = client.post("/datasets/ds1/postprocess", json={"pipeline": "carrier_segmentation"})
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "pipeline_unavailable"
-    [run] = runs(datasets)
-    assert (run.status, run.error, run.finished_at is not None) == ("failed", "Could not queue the run", True)
 
 
 def test_list_and_read_runs_follow_dataset_access(client, datasets, auth_as, queue):
@@ -180,16 +172,16 @@ def test_keys_are_scoped_to_caller_and_dataset(client, datasets, auth_as, queue)
     assert len(runs(datasets)) == 5
 
 
-def test_a_retry_after_a_queue_failure_queues_the_same_run(client, datasets, auth_as, queue):
+def test_a_retry_after_a_queue_failure_sends_the_same_run(client, datasets, auth_as, queue):
     as_member(auth_as, Role.CONTRIBUTOR)
     queue.side_effect = ConnectionError("broker down")
-    failed = postprocess(client, "flow-1")
-    assert failed.status_code == 503
+    deferred = postprocess(client, "flow-1")
+    assert (deferred.status_code, deferred.json()["published_at"]) == (202, None)
     queue.side_effect = None
     retried = postprocess(client, "flow-1")
     assert retried.status_code == 202
     body = retried.json()
-    assert (body["run_id"], body["status"], body["error"], body["finished_at"]) == (failed.json()["detail"]["run_id"], "requested", None, None)
+    assert (body["run_id"], body["status"], body["published_at"] is not None) == (deferred.json()["run_id"], "requested", True)
     assert len(runs(datasets)) == 1
 
 

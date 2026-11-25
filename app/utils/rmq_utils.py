@@ -17,7 +17,7 @@ PUBLISH_TIMEOUT = 10
 
 
 def send_pika_message(message, exchange, routing_key, rmq_pw):
-    """Publish one message and return once the broker has taken it. Raises when the broker cannot
+    """Publish one persistent message and return once the broker has taken it. Raises when the broker cannot
     route it to a queue (pika.exceptions.UnroutableError: mandatory), refuses it (NackError: publisher
     confirms), or holds the connection blocked, for example under a memory alarm, for PUBLISH_TIMEOUT
     seconds; the callers then mark the request failed."""
@@ -30,7 +30,7 @@ def send_pika_message(message, exchange, routing_key, rmq_pw):
     try:
         channel = connection.channel()
         channel.confirm_delivery()
-        channel.basic_publish(exchange=exchange, routing_key=routing_key, body=message, mandatory=True)
+        channel.basic_publish(exchange=exchange, routing_key=routing_key, body=message, mandatory=True, properties=pika.BasicProperties(delivery_mode=pika.DeliveryMode.Persistent))
     finally:
         connection.close()
 

@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- Needs migration `c4d1e7a9b203`, which adds the `workers` table.
+- `GET /ingestors` lists only what live ingestion workers register, and is empty until they send `PUT /workers/{worker_id}` ([Workers](docs/workers.md)); deploy workers that register before this release.
+
+### Added
+
+- Workers register what they can do with `PUT /workers/{worker_id}` (renewed by heartbeat, removed with `DELETE`), and administrators and support list them with `GET /workers`.
+- `POST /files/{file_id}/ingest` returns `warnings` (`no_live_worker`, `store_not_read`) when no live worker can take the request; it is queued either way.
+
 ## [4.1.0] - 2026-11-24
 
 ### Upgrade notes

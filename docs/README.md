@@ -35,3 +35,4 @@ The [OpenAPI document](https://crucible.lbl.gov/api/v4/docs) served by each depl
 | [Storage locations and downloads](storage_downloads.md) | Permitted storage locations and signed download links |
 | [File replacement](file_replacement.md) | Replacing the content of a stored file and restoring a previous version |
 | [Remote file records](remote_file_records.md) | Cataloging files held outside the API's storage |
+| [Workers](workers.md) | Worker registration, the advertised ingestors and ingestion warnings |

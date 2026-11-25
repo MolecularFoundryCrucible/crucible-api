@@ -17,6 +17,7 @@ from app.tables import Keyword
 from app.models.datasets import KeywordRead
 from app.models.health import LivenessResponse, ReadinessResponse
 from app.models.response_schemas import FeaturesRead
+from app.services.workers import capabilities
 from app.utils.auth_utils import authorize_user
 from app.utils.multipart_config import MultipartStorageConfig
 from app.utils.permissions import Principal
@@ -177,48 +178,13 @@ def read_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], keywor
         K = session.exec(cmd).all()
     return(K)
 
-# TODO: We can find a way to pull this more dynamically, but for now make the list API available
 @router.get("/ingestors", response_model=List[str])
 def list_ingestors():
     '''
-    Returns a list of all ingestor options to use when making an ingestion request.
+    The ingestors live ingestion workers offer (see PUT /workers/{worker_id}), for an ingestion request.
+    Empty when ingestion is not enabled or no worker is live.
     '''
-    ingestors =['AFMIngestor',
-                'PtychographyH5Ingestor',
-                'SimpleTiledImageScopeFoundryH5Ingestor',
-                'BioGlowIngestor',
-                'QSpleemSVRampIngestor',
-                'QSpleemSVRampSpinIngestor',
-                'QSpleemImageIngestor',
-                'QSpleemSPLEEMImageIngestor',
-                'QSpleemDepositionMonitorIngestor',
-                'QSpleemARRESEKIngestor',
-                'QSpleemARRESMMIngestor',
-                'RgaTeyBatchIngestor',
-                'CanonCaptureScopeFoundryH5Ingestor', 
-                'SingleSpecScopeFoundryH5Ingestor',
-                'HyperspecScopeFoundryH5Ingestor',
-                'HyperspecSweepScopeFoundryH5Ingestor',
-                'ToupcamLiveScopeFoundryH5Ingestor',
-                'CLSyncRasterScanIngestor',
-                'CLHyperspecIngestor',
-                'SpinbotSpecLineIngestor',
-                'SpinbotCameraCaptureIngestor',
-                'SpinbotPhotoRunIngestor', 
-                'InSituPlIngestor',
-                'InorganicXRDIngestor',
-                'CziIngestor',
-                'DigitalMicrographIngestor',
-                'EmiIngestor',
-                'SerIngestor',
-                'BcfIngestor',
-                'BerkeleyEmdIngestor',
-                'VeloxEmdIngestor',
-                'SpinbotSpecRunIngestor',
-                'ImageIngestor',
-                'NirvanaMultiPosLineScanIngestor',
-                'NirvanaMultiPosSpecRunIngestor',
-                'ScopeFoundryH5Ingestor',
-                'H5Ingestor']
-    
-    return ingestors
+    if not get_settings().ingestion.enabled:
+        return []
+    with Session(get_engine()) as session:
+        return capabilities(session, "ingestion")

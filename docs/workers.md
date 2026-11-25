@@ -1,0 +1,49 @@
+# Workers
+
+Workers are the processes that take work from the message broker, such as the ingestion workers. Each one tells the API what it can do, so the API can advertise it and warn when a request has no worker to take it. Dispatch itself is unchanged: the API publishes to RabbitMQ and any worker consuming the queue may take the message.
+
+## Registration
+
+A worker sends `PUT /workers/{worker_id}` at startup and then every `heartbeat_seconds` from the response (150 s today). Its registration is live until `expires_at`, 10 minutes after the last call, so a worker that stops without deregistering drops out on its own. On a clean shutdown it sends `DELETE /workers/{worker_id}`, which succeeds whether or not the registration exists. A worker should keep running, and keep sending its heartbeat, when the API answers an error.
+
+```json
+{"kind": "ingestion", "capabilities": ["H5Ingestor", "TifIngestor"], "buckets": ["mf-storage-prod"], "worker_version": "0.4.1", "package_version": "0.2.1"}
+```
+
+- `worker_id`: chosen by the worker and stable for one running instance, such as its pod name; 1 to 128 letters, digits, `_`, `.`, `:` or `-`, starting with a letter or digit. A live registration belongs to the account that made it: another account gets 409 `worker_id_taken` until it expires.
+- `kind`: `ingestion` today; other kinds, such as postprocessing, are added when their workers register.
+- `capabilities`: for `ingestion`, the ingestor names the worker runs (crucible-ingestion's selectable ingestors), at most 500.
+- `buckets`: the buckets the worker can read, at most 50. The API maps them to its stores (`store_ids` in the listings).
+- `worker_version` and `package_version`: the worker's version and, for `ingestion`, crucible-ingestion's.
+
+Registration needs a platform administrator, as the ingestion worker's key is today. It is accepted while ingestion is disabled, so turning ingestion off does not need the workers changed. Registrations not renewed for a day are removed when a worker next registers.
+
+## What the API does with it
+
+- `GET /ingestors` lists the ingestors of live ingestion workers, sorted. It is empty when ingestion is disabled or no worker is live.
+- `GET /workers` (`?kind=ingestion` to filter) lists the registrations kept, live or not, with their versions and stores. Administrators and support may read it.
+- `POST /files/{file_id}/ingest` with `status=requested` still queues the request, and returns `warnings`: `no_live_worker` when no live worker offers the named ingestor (or none is live, when no ingestor is named), and `store_not_read` when no live worker reads the file's bucket. Nothing is recorded on the request.
+
+Worker health is not part of the API's `/health`: alert on an empty `GET /workers?kind=ingestion` in the deployment's monitoring instead.
+
+## Rollouts
+
+The broker hands a message to any worker on its queue, so during a rollout an old worker may receive a request for an ingestor only the new one has. Such a worker waits about 30 s and requeues the message, and takes the not-supported path when no live registration lists the ingestor.
+
+## Later
+
+These are recorded designs, not implemented.
+
+### Request-scoped tokens instead of an administrator key
+
+The ingestion worker uses an administrator key because an ingestion writes beyond the request's dataset: it creates samples and child datasets on behalf of the uploader, links samples to existing parents, and reads samples in other projects. The least-privilege design follows OAuth token exchange (RFC 8693):
+
+- A service account with an "ingestion worker" capability, set by an administrator, may only register and update ingestion requests.
+- When it marks a request `started`, the API issues a short-lived access token for that request that acts as the person who requested the ingestion, records the service account as the actor, and expires when the request ends or after about an hour.
+- The worker runs the ingestion with that token, so every call has exactly the uploader's permissions, new records are owned by the uploader, and audit events name both. The worker's key drops its administrator role.
+
+Ingestions the uploader could not do by hand would then fail, such as reading samples in a project they are not in; test those ingestors on staging before removing the administrator role.
+
+### Routing by store
+
+All ingestion workers consume the same three queues (`ingestion-<suffix>-small`, `-medium`, `-large`), which is enough while every worker runs the same image and reads the same buckets. When workers differ, for example one on a lab machine that only reads the `lab-nas` store, the API publishes to a topic exchange with a routing key that names the store, such as `ingestion.<suffix>.<tier>.<store_id>`, and each worker binds its queue only to the patterns it can serve. Registration keeps advertising what the workers offer.

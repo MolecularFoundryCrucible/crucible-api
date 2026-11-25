@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-11-25
+
 ### Upgrade notes
 
 - Needs migration `c4d1e7a9b203`, which adds the `workers` table.

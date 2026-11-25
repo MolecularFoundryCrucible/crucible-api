@@ -7,12 +7,15 @@ Workers are the processes that take work from the message broker, such as the in
 A worker sends `PUT /workers/{worker_id}` at startup and then every `heartbeat_seconds` from the response (150 s today). Its registration is live until `expires_at`, 10 minutes after the last call, so a worker that stops without deregistering drops out on its own. On a clean shutdown it sends `DELETE /workers/{worker_id}`, which succeeds whether or not the registration exists. A worker should keep running, and keep sending its heartbeat, when the API answers an error.
 
 ```json
-{"kind": "ingestion", "capabilities": ["H5Ingestor", "TifIngestor"], "buckets": ["mf-storage-prod"], "worker_version": "0.4.1", "package_version": "0.2.1"}
+{"kind": "ingestion",
+ "capabilities": [{"name": "MrcIngestor", "description": "MRC electron microscopy maps", "file_extensions": [".mrc"]},
+                  {"name": "H5Ingestor"}],
+ "buckets": ["mf-storage-prod"], "worker_version": "0.4.1", "package_version": "0.2.1"}
 ```
 
 - `worker_id`: chosen by the worker and stable for one running instance, such as its hostname (the pod name in Kubernetes); 1 to 128 letters, digits, `_`, `.`, `:` or `-`, starting with a letter or digit. A live registration belongs to the account that made it: another account gets 409 `worker_id_taken` until it expires.
 - `kind`: `ingestion` today; other kinds, such as postprocessing, are added when their workers register.
-- `capabilities`: for `ingestion`, the ingestor names the worker runs (crucible-ingestion's selectable ingestors), at most 500.
+- `capabilities`: for `ingestion`, the ingestors the worker runs (crucible-ingestion's selectable ingestors), at most 500, each with a unique `name`. `description` (up to 2000 characters) and `file_extensions` (file name endings with the leading dot, such as `.mrc` or `.tar.gz`, compared without case) are optional and filled in as ingestors declare them.
 - `buckets`: the buckets the worker can read, at most 50. The API maps them to its stores (`store_ids` in the listings).
 - `worker_version` and `package_version`: the worker's version and, for `ingestion`, crucible-ingestion's.
 
@@ -20,7 +23,7 @@ Registration needs a service account, of any platform role; a person's key is re
 
 ## What the API does with it
 
-- `GET /ingestors` lists the ingestors of live ingestion workers, sorted. It is empty when ingestion is disabled or no worker is live.
+- `GET /ingestors` lists the names of live ingestion workers' ingestors, sorted. `GET /ingestors/details` adds each one's description and file extensions; with `?file_name=scan.mrc` it returns only the ingestors whose extensions match, as suggestions for that file. When workers describe the same ingestor differently, as in a rollout, the most recently seen one wins. Both are empty when ingestion is disabled or no worker is live.
 - `GET /workers` lists the registrations kept, live or not, sorted by `worker_id` (filter with `?kind=ingestion` and `?live=true` or `false`), with their versions and stores. Administrators and support may read it.
 - `POST /files/{file_id}/ingest` with `status=requested` still queues the request, and returns `warnings`: `no_live_worker` when no live worker offers the named ingestor (or none is live, when no ingestor is named), and `store_not_read` when no live worker reads the file's bucket. Nothing is recorded on the request.
 

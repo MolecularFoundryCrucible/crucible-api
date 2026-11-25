@@ -2,9 +2,9 @@ import logging
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from alembic.script import ScriptDirectory
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -17,7 +17,8 @@ from app.tables import Keyword
 from app.models.datasets import KeywordRead
 from app.models.health import LivenessResponse, ReadinessResponse
 from app.models.response_schemas import FeaturesRead
-from app.services.workers import capabilities
+from app.models.workers import IngestorDetail
+from app.services.workers import capabilities, capability_details
 from app.utils.auth_utils import authorize_user
 from app.utils.multipart_config import MultipartStorageConfig
 from app.utils.permissions import Principal
@@ -188,3 +189,15 @@ def list_ingestors():
         return []
     with Session(get_engine()) as session:
         return capabilities(session, "ingestion")
+
+
+@router.get("/ingestors/details", response_model=List[IngestorDetail])
+def list_ingestor_details(file_name: Optional[str] = Query(None, max_length=1024, description="Only the ingestors whose file_extensions match the end of this file name, without case: suggestions for a file")):
+    '''
+    The ingestors live ingestion workers offer, with their description and the file extensions they handle, sorted by name.
+    Empty when ingestion is not enabled or no worker is live.
+    '''
+    if not get_settings().ingestion.enabled:
+        return []
+    with Session(get_engine()) as session:
+        return capability_details(session, "ingestion", file_name)

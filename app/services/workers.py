@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.models.ingestion import IngestWarning
-from app.models.workers import WorkerRead, WorkerRegister, WorkerRegistered
+from app.models.workers import IngestorDetail, WorkerRead, WorkerRegister, WorkerRegistered
 from app.tables import Worker
 
 TTL = timedelta(minutes=10)
@@ -48,7 +48,7 @@ def register(engine, principal, worker_id: str, body: WorkerRegister) -> WorkerR
                 row = None
             if row is None:
                 row = Worker(worker_id=worker_id, kind=body.kind, registered_by=principal.user_id, registered_at=current, last_seen_at=current)
-            row.kind, row.capabilities, row.buckets = body.kind, list(body.capabilities), list(body.buckets)
+            row.kind, row.capabilities, row.buckets = body.kind, [capability.model_dump() for capability in body.capabilities], list(body.buckets)
             row.worker_version, row.package_version, row.last_seen_at = body.worker_version, body.package_version, current
             session.add(row)
             try:
@@ -68,12 +68,30 @@ def deregister(engine, worker_id: str) -> None:
 
 
 def _live_rows(session: Session, kind: str) -> list[Worker]:
-    return list(session.exec(select(Worker).where(Worker.kind == kind, Worker.last_seen_at > now() - TTL)).all())
+    return list(session.exec(select(Worker).where(Worker.kind == kind, Worker.last_seen_at > now() - TTL).order_by(Worker.last_seen_at)).all())
+
+
+def _names(row: Worker) -> set[str]:
+    return {capability["name"] for capability in row.capabilities}
 
 
 def capabilities(session: Session, kind: str) -> list[str]:
     """The sorted union of what live workers of this kind can do."""
-    return sorted({name for row in _live_rows(session, kind) for name in row.capabilities})
+    return sorted(set().union(*(_names(row) for row in _live_rows(session, kind))))
+
+
+def capability_details(session: Session, kind: str, file_name: str | None = None) -> list[IngestorDetail]:
+    """What live workers of this kind can do, sorted by name; when several describe the same capability,
+    the most recently seen wins. With file_name, only those whose file_extensions match its ending."""
+    merged = {}
+    for row in _live_rows(session, kind):
+        for capability in row.capabilities:
+            merged[capability["name"]] = IngestorDetail(**capability)
+    details = [merged[name] for name in sorted(merged)]
+    if file_name is not None:
+        base = file_name.rsplit("/", 1)[-1].lower()
+        details = [detail for detail in details if any(base.endswith(extension) for extension in detail.file_extensions)]
+    return details
 
 
 def list_workers(session: Session, kind: str | None = None, live: bool | None = None) -> list[WorkerRead]:
@@ -92,7 +110,7 @@ def ingest_warnings(session: Session, ingestion_class: str | None, bucket: str |
     warnings = []
     if ingestion_class is None and not rows:
         warnings.append(IngestWarning(code="no_live_worker", message="No ingestion worker is live; the request waits in the queue until one is"))
-    elif ingestion_class is not None and not any(ingestion_class in row.capabilities for row in rows):
+    elif ingestion_class is not None and not any(ingestion_class in _names(row) for row in rows):
         warnings.append(IngestWarning(code="no_live_worker", ingestion_class=ingestion_class, message=f"No live ingestion worker offers {ingestion_class} (see GET /ingestors)"))
     if rows and bucket and not any(bucket in row.buckets for row in rows):
         warnings.append(IngestWarning(code="store_not_read", bucket=bucket, message=f"No live ingestion worker reads bucket {bucket}"))

@@ -11,7 +11,8 @@ ADMIN, OTHER_ADMIN = "0000-0000-0000-00a1", "0000-0000-0000-00a2"
 
 
 def register(client, worker_id, capabilities, buckets=("mf-storage-prod",)):
-    return client.put(f"/workers/{worker_id}", json={"kind": "ingestion", "capabilities": list(capabilities), "buckets": list(buckets), "worker_version": "0.4.1", "package_version": "0.2.1"})
+    entries = [entry if isinstance(entry, dict) else {"name": entry} for entry in capabilities]
+    return client.put(f"/workers/{worker_id}", json={"kind": "ingestion", "capabilities": entries, "buckets": list(buckets), "worker_version": "0.4.1", "package_version": "0.2.1"})
 
 
 @pytest.fixture
@@ -84,3 +85,15 @@ def test_ingest_warns_when_no_live_worker_can_take_the_request(client, db_engine
     assert [w["code"] for w in nobody.json()["warnings"]] == ["no_live_worker"]
     assert [(w["code"], w.get("ingestion_class"), w.get("bucket")) for w in wrong.json()["warnings"]] == [("no_live_worker", "TifIngestor", None), ("store_not_read", None, "mf-storage-prod")]
     assert fine.json()["warnings"] == []
+
+
+def test_ingestor_details_describe_and_suggest_by_file_name(client, admin, clock):
+    assert register(client, "worker-a", [{"name": "MrcIngestor", "description": "old", "file_extensions": [".MRC"]}, "H5Ingestor"]).status_code == 200
+    clock["value"] = timedelta(minutes=1)
+    assert register(client, "worker-b", [{"name": "MrcIngestor", "description": "MRC maps", "file_extensions": [".mrc", ".map"]}, {"name": "TarIngestor", "file_extensions": [".tar.gz"]}]).status_code == 200
+    details = {entry["name"]: (entry["description"], entry["file_extensions"]) for entry in client.get("/ingestors/details").json()}
+    assert details == {"H5Ingestor": (None, []), "MrcIngestor": ("MRC maps", [".map", ".mrc"]), "TarIngestor": (None, [".tar.gz"])}
+    assert [entry["name"] for entry in client.get("/ingestors/details", params={"file_name": "run/Scan.MRC"}).json()] == ["MrcIngestor"]
+    assert [entry["name"] for entry in client.get("/ingestors/details", params={"file_name": "data.tar.gz"}).json()] == ["TarIngestor"]
+    assert client.get("/ingestors").json() == ["H5Ingestor", "MrcIngestor", "TarIngestor"]
+    assert register(client, "worker-c", [{"name": "X", "file_extensions": ["mrc"]}]).status_code == 422

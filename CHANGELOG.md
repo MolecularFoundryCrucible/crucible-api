@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 ### Added
 
 - Workers register what they can do with `PUT /workers/{worker_id}` using a service account key (renewed by heartbeat, removed with `DELETE`), and administrators and support list them with `GET /workers`.
+- `GET /ingestors/details` describes each ingestor of the live workers with its description and file extensions, and with `file_name` suggests the ingestors for a file.
 - `POST /files/{file_id}/ingest` returns `warnings` (`no_live_worker`, `store_not_read`) when no live worker can take the request; it is queued either way.
 
 ## [4.1.0] - 2026-11-24

@@ -10,15 +10,15 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import DatasetMfid
-from app.config import get_secret, require_feature
+from app.config import require_feature
 from app.general_utils import get_utc_datetime
 from app.tables import Dataset, PostprocessingRun
 from app.models.pagination import PaginatedResponse
 from app.models.pipelines import PipelineRead, PostprocessingRunRead, PostprocessingRunStatus, PostprocessingRunUpdate, PostprocessRequest
+from app.services import outbox
 from app.services.pipelines import PIPELINES
 from app.utils.auth_utils import authorize_user, is_caller, permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
-from app.utils.rmq_utils import send_pika_message
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, offset_page, select_active, select_readable
 
 logger = logging.getLogger(__name__)
@@ -36,49 +36,29 @@ def list_pipelines(auth_res: Annotated[Principal, Depends(authorize_user)]):
     ]
 
 
-def _publish(run: PostprocessingRun, routing_key: str):
-    send_pika_message(
-        message=json.dumps({
-            "run_id": run.id,
-            "dataset_mfid": run.dataset_mfid,
-            "dsid": run.dataset_mfid,
-            "pipeline": run.pipeline,
-            "parameters": run.parameters,
-            "requested_by": run.requested_by,
-        }),
-        exchange="",
-        routing_key=routing_key,
-        rmq_pw=get_secret("RABBITMQ_DEFAULT_PW"),
-    )
-
-
+# Runs recorded as failed when the broker refused them, before runs were sent again automatically.
 QUEUE_FAILURE = "Could not queue the run"
 
 
-def _queue(session, run: PostprocessingRun, routing_key: str) -> PostprocessingRun:
-    try:
-        _publish(run, routing_key)
-    except Exception:
-        logger.exception("pipeline_publish_failed run=%s pipeline=%s dataset=%s", run.id, run.pipeline, run.dataset_mfid)
-        run.status = "failed"
-        run.error = QUEUE_FAILURE
-        run.finished_at = get_utc_datetime()
-        session.add(run)
-        session.commit()
-        raise HTTPException(status_code=503, detail={"code": "pipeline_unavailable", "message": "Could not queue the run; try again later", "run_id": run.id}) from None
-    logger.info("postprocessing_run_requested run=%s pipeline=%s dataset=%s", run.id, run.pipeline, run.dataset_mfid)
+def _queue(session, run: PostprocessingRun) -> PostprocessingRun:
+    """Send the run now; if the broker does not take it, it stays requested and unsent, and
+    messaging publish-pending sends it later."""
+    if outbox.publish(get_engine(), PostprocessingRun, run.id):
+        logger.info("postprocessing_run_requested run=%s pipeline=%s dataset=%s", run.id, run.pipeline, run.dataset_mfid)
+    session.refresh(run)
     return run
 
 
-def _replay(session, run: PostprocessingRun, fingerprint: str, routing_key: str) -> PostprocessingRun:
+def _replay(session, run: PostprocessingRun, fingerprint: str) -> PostprocessingRun:
     if run.request_fingerprint != fingerprint:
         raise HTTPException(status_code=409, detail={"code": "idempotency_key_reused", "message": "Idempotency key was already used for a different request", "run_id": run.id})
     if run.status == "failed" and run.error == QUEUE_FAILURE:
-        run.status, run.error, run.finished_at = "requested", None, None
+        run.status, run.error, run.finished_at, run.published_at = "requested", None, None, None
         session.add(run)
         session.commit()
         session.refresh(run)
-        return _queue(session, run, routing_key)
+    if run.status == "requested" and run.published_at is None:
+        return _queue(session, run)
     return run
 
 
@@ -108,7 +88,7 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
             )).one_or_none()
 
         if idempotency_key is not None and (existing := previous()) is not None:
-            return _replay(session, existing, fingerprint, pipeline.routing_key)
+            return _replay(session, existing, fingerprint)
         run = PostprocessingRun(dataset_mfid=dataset.unique_id, pipeline=pipeline.name, parameters=parameters, requested_by=principal.user_id,
                                 requested_by_user_id=principal.internal_user_id, requested_at=get_utc_datetime(), idempotency_key=idempotency_key, request_fingerprint=fingerprint)
         session.add(run)
@@ -119,9 +99,9 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
             existing = previous() if idempotency_key is not None else None
             if existing is None:
                 raise
-            return _replay(session, existing, fingerprint, pipeline.routing_key)
+            return _replay(session, existing, fingerprint)
         session.refresh(run)
-        return _queue(session, run, pipeline.routing_key)
+        return _queue(session, run)
 
 
 @router.post("/datasets/{dataset_mfid}/postprocess", response_model=PostprocessingRunRead, status_code=202,
@@ -129,11 +109,10 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
                         403: {"description": "Caller is below contributor on the dataset"},
                         409: {"description": "The dataset has an active deletion request (`pending_deletion`), or the Idempotency-Key was already used for a different pipeline or parameters (`idempotency_key_reused`)"},
                         422: {"description": "Unknown pipeline (`unknown_pipeline`) or invalid parameters (`invalid_parameters`)"},
-                        501: {"description": "Postprocessing is not enabled on this server (`feature_disabled`)"},
-                        503: {"description": "The run could not be queued (`pipeline_unavailable`); it is recorded as failed"}})
+                        501: {"description": "Postprocessing is not enabled on this server (`feature_disabled`)"}})
 def postprocess_dataset(dataset_mfid: DatasetMfid, body: PostprocessRequest, auth_res: Annotated[Principal, Depends(authorize_user)],
                         idempotency_key: Annotated[Optional[str], Header(min_length=1, max_length=128, description="Retries with the same key return the original run instead of starting another.")] = None):
-    '''Queue a postprocessing run on a dataset. Requires contributor access. Each request starts a new run unless it repeats an Idempotency-Key.'''
+    '''Queue a postprocessing run on a dataset. Requires contributor access. Each request starts a new run unless it repeats an Idempotency-Key. When the message queue does not take the run at once, it is returned with `published_at` null and sent again automatically.'''
     return start_postprocessing_run(auth_res, dataset_mfid, body.pipeline, body.parameters, idempotency_key)
 
 

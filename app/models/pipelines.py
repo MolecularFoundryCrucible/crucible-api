@@ -32,6 +32,7 @@ class PostprocessingRunRead(BaseModel):
     requested_at: UtcDatetime
     started_at: Optional[UtcDatetime] = None
     finished_at: Optional[UtcDatetime] = None
+    published_at: Optional[UtcDatetime] = Field(default=None, description="When the message queue took the run; null until then, while it is sent again automatically")
 
 
 class PostprocessingRunUpdate(BaseModel):

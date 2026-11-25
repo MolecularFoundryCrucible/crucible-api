@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, select
 
@@ -62,7 +62,7 @@ def _keep(session, file, dataset_mfid, when, reason):
     if reason == "deleted":
         version.filename = file.filename
         requests = session.exec(select(IngestionRequest).where(IngestionRequest.file_mfid == file.mfid).order_by(IngestionRequest.id)).all()
-        version.ingestion_requests = [request.model_dump() for request in requests]
+        version.ingestion_requests = [request.model_dump(mode="json") for request in requests]
     session.add(version)
     return version
 
@@ -163,7 +163,10 @@ def restore_deleted(engine, stores, dataset_mfid: str, file_mfid: str, when) -> 
         for values in version.ingestion_requests or []:
             # PostgreSQL never hands an id out twice, but a database that reuses ids may have; then a new one keeps the request.
             reused = session.get(IngestionRequest, values["id"]) is not None
-            session.add(IngestionRequest(**{**values, "id": None} if reused else values))
+            # Versions saved before published_at existed hold requests that were sent or failed; they are not sent again.
+            published = (datetime.fromisoformat(values["published_at"]) if values["published_at"] else None) if "published_at" in values else when
+            values = {**values, "published_at": published, **({"id": None} if reused else {})}
+            session.add(IngestionRequest(**values))
         version.restored_at = when
         session.add(version)
         touch_resource_modification_time(session, dataset_mfid)

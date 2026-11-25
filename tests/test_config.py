@@ -299,7 +299,7 @@ def test_a_message_the_broker_cannot_route_raises_and_closes_the_connection(empt
             calls.append("confirm")
 
         def basic_publish(self, **kwargs):
-            calls.append(("publish", kwargs.get("mandatory")))
+            calls.append(("publish", kwargs.get("mandatory"), kwargs["properties"].delivery_mode))
             raise rmq_utils.pika.exceptions.UnroutableError([])
 
     class Connection:
@@ -315,7 +315,7 @@ def test_a_message_the_broker_cannot_route_raises_and_closes_the_connection(empt
     monkeypatch.setattr(rmq_utils.pika, "BlockingConnection", Connection)
     with pytest.raises(rmq_utils.pika.exceptions.UnroutableError):
         rmq_utils.send_pika_message("{}", "", "ingestion-typo-small", "pw")
-    assert calls == [("blocked_timeout", rmq_utils.PUBLISH_TIMEOUT), "confirm", ("publish", True), "close"]
+    assert calls == [("blocked_timeout", rmq_utils.PUBLISH_TIMEOUT), "confirm", ("publish", True, 2), "close"]
 
 
 KEY_VERSION = "projects/1/secrets/crucible-key/versions/1"

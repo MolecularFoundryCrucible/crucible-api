@@ -184,7 +184,7 @@ def _ingestion_requests(db_engine):
 
 def test_ingest_refuses_a_file_outside_its_dataset(client, db_engine, admin):
     file_mfid = _file(db_engine, f"mf-storage-prod/{OTHER}/secret.pdf")
-    with patch("app.api.routes.files.send_pika_message") as send, patch("app.api.routes.files.get_secret", return_value="pw"):
+    with patch("app.services.outbox.send_pika_message") as send, patch("app.services.outbox.get_secret", return_value="pw"):
         response = client.post(f"/files/{file_mfid}/ingest")
     assert response.status_code == 409
     assert response.json()["detail"] == {"code": "storage_location_invalid", "reason": "outside_dataset", "message": "File storage location is not valid: outside_dataset"}
@@ -195,7 +195,7 @@ def test_ingest_refuses_a_file_outside_its_dataset(client, db_engine, admin):
 def test_ingest_backfills_missing_storage_path(client, db_engine, admin, monkeypatch):
     file_mfid = _file(db_engine, None)
     monkeypatch.setattr(gcs_storage, "_determine_storage_path", lambda dsid, filename, store_id: f"mf-storage-prod/{dsid}/{filename}")
-    with patch("app.api.routes.files.send_pika_message") as send, patch("app.api.routes.files.get_secret", return_value="pw"):
+    with patch("app.services.outbox.send_pika_message") as send, patch("app.services.outbox.get_secret", return_value="pw"):
         response = client.post(f"/files/{file_mfid}/ingest")
     assert response.status_code == 200, response.text
     assert response.json()["file_to_upload"] == f"mf-storage-prod/{DS}/scan.pdf"
@@ -315,7 +315,7 @@ def test_ingest_disabled_creates_no_request(client, db_engine, admin, monkeypatc
     file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
     _switch(monkeypatch, "INGESTION_ENABLED", None)
     no_stores(monkeypatch)
-    with patch("app.api.routes.files.send_pika_message") as send:
+    with patch("app.services.outbox.send_pika_message") as send:
         response = client.post(f"/files/{file_mfid}/ingest")
     assert response.status_code == 501
     assert response.json()["detail"]["code"] == "feature_disabled"
@@ -327,29 +327,18 @@ def test_ingest_disabled_creates_no_request(client, db_engine, admin, monkeypatc
 def test_ingest_not_requested_records_without_ingestion(client, db_engine, admin, monkeypatch):
     file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
     _switch(monkeypatch, "INGESTION_ENABLED", "false")
-    with patch("app.api.routes.files.send_pika_message") as send:
+    with patch("app.services.outbox.send_pika_message") as send:
         response = client.post(f"/files/{file_mfid}/ingest", params={"status": "not_requested"})
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "not_requested"
     send.assert_not_called()
 
 
-def test_ingest_broker_failure_marks_request_failed(client, db_engine, admin):
-    import pika
-
-    file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
-    with patch("app.api.routes.files.send_pika_message", side_effect=pika.exceptions.AMQPConnectionError("down")):
-        response = client.post(f"/files/{file_mfid}/ingest")
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "ingestion_unavailable"
-    with Session(db_engine) as session:
-        assert [request.status for request in session.exec(select(IngestionRequest)).all()] == ["failed"]
-
 
 def test_ingest_publishes_with_configured_routing(client, db_engine, admin, monkeypatch):
     file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
     _switch(monkeypatch, "RMQ_ROUTING_SUFFIX", "lab")
-    with patch("app.api.routes.files.send_pika_message") as send:
+    with patch("app.services.outbox.send_pika_message") as send:
         response = client.post(f"/files/{file_mfid}/ingest")
     assert response.status_code == 200, response.text
     assert send.call_args.kwargs["routing_key"] == "ingestion-lab-small"

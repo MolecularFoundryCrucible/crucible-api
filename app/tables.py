@@ -761,6 +761,8 @@ class Instrument(SQLModel, table=True):
 
 # --- Task tracking ---
 class IngestionRequest(SQLModel, table=True):
+    __table_args__ = (Index("ix_ingestionrequest_unpublished", "id", postgresql_where=text("published_at IS NULL AND status = 'requested'")),)
+
     id: Optional[int] = Field(default=None, primary_key=True)
     dataset_mfid: Optional[str] = Field(default=None, foreign_key="dataset.unique_id", index=True)
     file_mfid: Optional[str] = Field(default=None, foreign_key="associatedfile.mfid", index=True)
@@ -770,6 +772,7 @@ class IngestionRequest(SQLModel, table=True):
     time_created: Optional[str] = None
     time_completed: Optional[str] = None
     status: Optional[str] = None
+    published_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     associated_file: Optional["AssociatedFile"] = Relationship(back_populates="ingestion_requests")
 
 
@@ -779,6 +782,7 @@ class PostprocessingRun(SQLModel, table=True):
         Index("uq_postprocessingrun_idempotency", "requested_by", "dataset_mfid", "idempotency_key", unique=True,
               postgresql_where=text("idempotency_key IS NOT NULL"), sqlite_where=text("idempotency_key IS NOT NULL")),
         CheckConstraint("status IN ('requested', 'running', 'completed', 'failed')", name="ck_postprocessingrun_status"),
+        Index("ix_postprocessingrun_unpublished", "id", postgresql_where=text("published_at IS NULL AND status = 'requested'")),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -794,6 +798,7 @@ class PostprocessingRun(SQLModel, table=True):
     finished_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     idempotency_key: Optional[str] = Field(default=None, max_length=128)
     request_fingerprint: Optional[str] = Field(default=None, max_length=64)
+    published_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
 
 
 FILE_VERSION_REASONS = ("replaced", "deleted")

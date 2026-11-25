@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- Needs migration `e5b2c8f1a604`, which adds `published_at` to ingestion requests and postprocessing runs and marks every existing one as sent.
+- Schedule `python -m app.cli messaging publish-pending` every minute wherever ingestion is enabled (one at a time, like `storage cleanup`); without it, work RabbitMQ did not take at once is never sent, and fails only when this command next runs a day later.
+
 ### Added
 
 - Platform administrators create API keys for any account, person or service account, with `POST /users/{user_ref}/apikeys` (a Hub session with a recent sign-in); the account keeps its other keys, so a service account's key can be replaced without downtime.
@@ -13,7 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 ### Fixed
 
-- An ingestion request or postprocessing run that RabbitMQ cannot route to a queue (a missing queue, a wrong routing suffix), refuses, or does not accept within 10 s is marked failed with 503 (`ingestion_unavailable`, `pipeline_unavailable`) instead of staying `requested`: the API now publishes with publisher confirms and the mandatory flag.
+- Ingestion requests and postprocessing runs are no longer lost when RabbitMQ is down, cannot route the message (a missing queue, a wrong routing suffix) or blocks it: the API publishes persistent messages with publisher confirms and the mandatory flag, records `published_at` once RabbitMQ takes a message, and `messaging publish-pending` sends what is still unsent. `POST /files/{file_id}/ingest` and `POST /datasets/{dataset_mfid}/postprocess` no longer answer 503 `ingestion_unavailable` or `pipeline_unavailable`; the request is kept with `published_at` null, and ingest adds a `queue_deferred` warning.
 
 ## [4.1.1] - 2026-11-25
 

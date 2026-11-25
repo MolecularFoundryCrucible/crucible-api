@@ -29,6 +29,10 @@ Registration needs a service account, of any platform role; a person's key is re
 
 Worker health is not part of the API's `/health`: alert on an empty `GET /workers?kind=ingestion` in the deployment's monitoring instead.
 
+## Sending work
+
+An ingestion request or postprocessing run is saved first and then published to RabbitMQ as a persistent message, with publisher confirms and the mandatory flag, so the API knows whether RabbitMQ took it. `published_at` records when it did. When RabbitMQ is down, blocks the connection for 10 s, or has no queue for the routing key, the request is still accepted: it stays `requested` with `published_at` null (ingest adds a `queue_deferred` warning), and `python -m app.cli messaging publish-pending`, scheduled every minute, sends it once RabbitMQ takes it. Work still unsent a day after it was made is marked failed. A message may reach a worker twice (for example when a publish succeeds but recording it does not); workers skip a request that is already complete.
+
 ## Rollouts
 
 The broker hands a message to any worker on its queue, so during a rollout an old worker may receive a request for an ingestor only the new one has. Such a worker waits about 30 s and requeues the message, and takes the not-supported path when no live registration lists the ingestor.

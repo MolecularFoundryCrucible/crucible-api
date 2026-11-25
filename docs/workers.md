@@ -16,7 +16,7 @@ A worker sends `PUT /workers/{worker_id}` at startup and then every `heartbeat_s
 - `buckets`: the buckets the worker can read, at most 50. The API maps them to its stores (`store_ids` in the listings).
 - `worker_version` and `package_version`: the worker's version and, for `ingestion`, crucible-ingestion's.
 
-Registration needs a platform administrator, as the ingestion worker's key is today. It is accepted while ingestion is disabled, so turning ingestion off does not need the workers changed. Registrations not renewed for a day are removed when a worker next registers.
+Registration needs a platform administrator: for now, the API key a worker uses must belong to a service account with the `admin` platform role, or its registrations are refused with 403 and `GET /ingestors` stays empty. See [Later](#later) for the narrower design. It is accepted while ingestion is disabled, so turning ingestion off does not need the workers changed. Registrations not renewed for a day are removed when a worker next registers.
 
 ## What the API does with it
 

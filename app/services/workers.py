@@ -76,10 +76,13 @@ def capabilities(session: Session, kind: str) -> list[str]:
     return sorted({name for row in _live_rows(session, kind) for name in row.capabilities})
 
 
-def list_workers(session: Session, kind: str | None = None) -> list[WorkerRead]:
+def list_workers(session: Session, kind: str | None = None, live: bool | None = None) -> list[WorkerRead]:
     query = select(Worker).order_by(Worker.worker_id)
     if kind is not None:
         query = query.where(Worker.kind == kind)
+    if live is not None:
+        cutoff = now() - TTL
+        query = query.where(Worker.last_seen_at > cutoff if live else Worker.last_seen_at <= cutoff)
     return [_read(row) for row in session.exec(query).all()]
 
 

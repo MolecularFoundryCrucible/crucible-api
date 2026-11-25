@@ -21,7 +21,7 @@ Registration needs a service account, of any platform role; a person's key is re
 ## What the API does with it
 
 - `GET /ingestors` lists the ingestors of live ingestion workers, sorted. It is empty when ingestion is disabled or no worker is live.
-- `GET /workers` (`?kind=ingestion` to filter) lists the registrations kept, live or not, with their versions and stores. Administrators and support may read it.
+- `GET /workers` lists the registrations kept, live or not, sorted by `worker_id` (filter with `?kind=ingestion` and `?live=true` or `false`), with their versions and stores. Administrators and support may read it.
 - `POST /files/{file_id}/ingest` with `status=requested` still queues the request, and returns `warnings`: `no_live_worker` when no live worker offers the named ingestor (or none is live, when no ingestor is named), and `store_not_read` when no live worker reads the file's bucket. Nothing is recorded on the request.
 
 Worker health is not part of the API's `/health`: alert on an empty `GET /workers?kind=ingestion` in the deployment's monitoring instead.

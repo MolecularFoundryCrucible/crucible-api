@@ -39,6 +39,8 @@ def test_live_workers_advertise_their_ingestors(client, admin, clock, monkeypatc
     assert client.get("/ingestors").json() == ["H5Ingestor", "MrcIngestor"]
     listed = {w["worker_id"]: (w["live"], w["store_ids"]) for w in client.get("/workers", params={"kind": "ingestion"}).json()}
     assert listed == {"worker-a": (False, ["mf-storage-prod"]), "worker-b": (True, ["mf-storage-prod"])}
+    assert [w["worker_id"] for w in client.get("/workers", params={"live": "true"}).json()] == ["worker-b"]
+    assert [w["worker_id"] for w in client.get("/workers", params={"live": "false"}).json()] == ["worker-a"]
     assert client.delete("/workers/worker-b").status_code == 204
     assert client.delete("/workers/worker-b").status_code == 204
     assert client.get("/ingestors").json() == []

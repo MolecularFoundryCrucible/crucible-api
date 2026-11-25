@@ -1,6 +1,6 @@
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from sqlmodel import Session
 
 from app.api.dependencies import get_engine
@@ -34,9 +34,9 @@ def deregister_worker(worker_id: WorkerId, auth_res: Annotated[Principal, Depend
 
 
 @router.get("/workers", response_model=list[WorkerRead])
-def list_workers(auth_res: Annotated[Principal, Depends(authorize_user)], kind: Optional[WorkerKind] = None):
-    '''Registered workers, live or seen in the last day, with what they can do and their versions. Requires a platform administrator or support.'''
+def list_workers(auth_res: Annotated[Principal, Depends(authorize_user)], kind: Optional[WorkerKind] = None, live: Annotated[Optional[bool], Query(description="Only live workers (true), or only expired ones still kept (false)")] = None):
+    '''Registered workers, live or seen in the last day, sorted by worker_id, with what they can do and their versions. Requires a platform administrator or support.'''
     if not (auth_res.is_platform_admin or auth_res.platform_role is PlatformRole.SUPPORT):
         raise HTTPException(status_code=403, detail="Not authorized")
     with Session(get_engine()) as session:
-        return workers.list_workers(session, kind)
+        return workers.list_workers(session, kind, live)

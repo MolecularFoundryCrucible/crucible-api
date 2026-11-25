@@ -83,9 +83,9 @@ An administrator's session acts with ordinary privileges unless a request carrie
 
 ## API keys
 
-- `POST /account/apikeys` creates a named key and returns it once. Keys start with `crucible_`, expire after one year unless a shorter expiry is given, and a user may hold up to ten.
+- `POST /account/apikeys` creates a named key and returns it once. Keys start with `crucible_`, expire after one year unless a shorter `expires_at` is given or `never_expires` is true (the key then works until revoked), and an account may hold up to ten active keys.
 - `GET /account/apikeys` lists keys by name and last four characters; `PATCH` renames one; `DELETE` revokes one.
-- Administrators list and revoke a user's keys at `/users/{user_ref}/apikeys`. A key cannot be retrieved after creation.
+- Administrators list, create and revoke the keys of any account, person or service account, at `/users/{user_ref}/apikeys`. Creating one takes the same body and needs a Hub session with a recent sign-in; the sign-in history records the administrator as the actor. The account keeps its other keys, so a service account's key is replaced without downtime: create the new key, deploy it, then revoke the old one. A key cannot be retrieved after creation.
 - A revoked key may remain valid for up to a minute on other server processes.
 
 ## Other account routes

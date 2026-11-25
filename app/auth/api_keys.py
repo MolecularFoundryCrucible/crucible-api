@@ -23,10 +23,11 @@ def key_hash(presented: str) -> str:
     return hashlib.sha256(presented.encode("utf-8")).hexdigest()
 
 
-def store_key(session: Session, user_id: int, key: str, *, created_at: datetime | None = None, name: str | None = None, expires_at: datetime | None = None) -> ApiKey:
-    """Record a key in the caller's transaction, as its hash and last four characters."""
+def store_key(session: Session, user_id: int, key: str, *, created_at: datetime | None = None, name: str | None = None, expires_at: datetime | None = None, never_expires: bool = False) -> ApiKey:
+    """Record a key in the caller's transaction, as its hash and last four characters. Without
+    expires_at it expires after KEY_LIFETIME, unless never_expires."""
     created = now_or(created_at)
-    row = ApiKey(user_id=user_id, key_hash=key_hash(key), key_last4=key[-4:], name=name, created_at=created, expires_at=expires_at or created + KEY_LIFETIME)
+    row = ApiKey(user_id=user_id, key_hash=key_hash(key), key_last4=key[-4:], name=name, created_at=created, expires_at=None if never_expires else expires_at or created + KEY_LIFETIME)
     session.add(row)
     return row
 
@@ -70,7 +71,7 @@ def newest_key(session: Session, user_id: int, now: datetime | None = None) -> A
     return newest_keys(session, [user_id], now).get(user_id)
 
 
-def create_key(session: Session, user: User, *, name: str | None = None, expires_at: datetime | None = None, now: datetime | None = None) -> tuple[ApiKey, str]:
+def create_key(session: Session, user: User, *, name: str | None = None, expires_at: datetime | None = None, never_expires: bool = False, actor: User | None = None, now: datetime | None = None) -> tuple[ApiKey, str]:
     """A new key, returned once, in the caller's transaction. At most MAX_ACTIVE_KEYS active keys."""
     from app.auth.events import AuthEventType, record_event
 
@@ -80,13 +81,13 @@ def create_key(session: Session, user: User, *, name: str | None = None, expires
     if count >= MAX_ACTIVE_KEYS:
         raise TooManyKeys
     key = KEY_PREFIX + secrets.token_urlsafe(32)
-    row = store_key(session, locked.id, key, created_at=current, name=name, expires_at=expires_at)
-    record_event(session, AuthEventType.API_KEY_CREATED, user=locked)
+    row = store_key(session, locked.id, key, created_at=current, name=name, expires_at=expires_at, never_expires=never_expires)
+    record_event(session, AuthEventType.API_KEY_CREATED, user=locked, actor=actor)
     return row, key
 
 
 def revoke_key(session: Session, row: ApiKey, *, actor: User | None, now: datetime | None = None) -> None:
-    """Revoke one key in the caller's transaction, here and in the plain table. The row stays."""
+    """Revoke one key in the caller's transaction. The row stays."""
     from app.auth.events import AuthEventType, record_event
 
     if row.revoked_at is None:

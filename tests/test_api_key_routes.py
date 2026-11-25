@@ -240,3 +240,45 @@ def test_key_lists_come_in_pages_newest_first(client, auth_as, people):
     assert client.get("/account/apikeys", params={"state": "active", "cursor": first["next_cursor"]}).status_code == 422
     auth_as(BOB)
     assert client.get("/account/apikeys", params={"state": "inactive", "cursor": first["next_cursor"]}).status_code == 422
+
+
+def test_a_key_may_be_created_without_an_expiry(client, auth_as, people):
+    as_hub(auth_as, ADA)
+    forever = create(client, never_expires=True)
+    assert forever.status_code == 201, forever.text
+    assert (forever.json()["expires_at"], forever.json()["status"]) == (None, "active")
+    assert authorize(forever.json()["api_key"]).user_id == ADA
+    both = create(client, "both", never_expires=True, expires_at=(datetime.now(timezone.utc) + timedelta(days=30)).isoformat())
+    assert both.status_code == 422
+    assert create(client, "default").json()["expires_at"].startswith((datetime.now(timezone.utc) + timedelta(days=365)).date().isoformat())
+
+
+def test_administrators_create_keys_for_people_and_service_accounts_with_a_recent_sign_in(client, auth_as, people):
+    from app.tables import AuthEvent
+
+    with Session(people) as session:
+        robot = User(unique_id="0tmnyhfztdwc1000w2kspzsnh7", username="robot", first_name="", last_name="", email=None, platform_role="contributor", is_service_account=True)
+        session.add(robot)
+        session.flush()
+        old_key = "crucible_old-robot-key-0000000000000000000000000000000"
+        store_key(session, robot.id, old_key)
+        session.commit()
+    client.headers["Crucible-Privilege-Mode"] = "elevated"
+    auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
+    refused = client.post(f"/users/{ADA}/apikeys", json={"name": "from admin"})
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (403, "hub_session_required")
+    as_hub(auth_as, ADMIN, role=PlatformRole.ADMIN)
+    made = client.post(f"/users/{ADA}/apikeys", json={"name": "from admin"})
+    assert made.status_code == 201, made.text
+    assert "no-store" in made.headers["cache-control"]
+    assert authorize(made.json()["api_key"]).user_id == ADA
+    assert [item["id"] for item in client.get(f"/users/{ADA}/apikeys").json()["items"]] == [made.json()["id"]]
+    second = client.post("/users/0tmnyhfztdwc1000w2kspzsnh7/apikeys", json={"name": "next", "never_expires": True})
+    assert second.status_code == 201, second.text
+    assert authorize(old_key).user_id == authorize(second.json()["api_key"]).user_id == "0tmnyhfztdwc1000w2kspzsnh7"
+    with Session(people) as session:
+        events = session.exec(select(AuthEvent).where(AuthEvent.event == "api_key_created", AuthEvent.user_id == user_id(people, ADA))).all()
+        assert [event.actor_user_id for event in events] == [user_id(people, ADMIN)]
+    as_hub(auth_as, BOB)
+    client.headers.pop("Crucible-Privilege-Mode")
+    assert client.post(f"/users/{ADA}/apikeys", json={"name": "nope"}).status_code == 403

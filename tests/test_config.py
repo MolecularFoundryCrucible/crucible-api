@@ -276,12 +276,46 @@ def test_send_pika_message_uses_configured_broker(empty, monkeypatch):
             pass
 
     class MagicMockChannel:
+        def confirm_delivery(self):
+            pass
+
         def basic_publish(self, **kwargs):
             seen["routing_key"] = kwargs["routing_key"]
 
     monkeypatch.setattr(rmq_utils.pika, "BlockingConnection", Connection)
     rmq_utils.send_pika_message("{}", "", "ingestion-lab-small", "pw")
     assert seen == {"host": "broker.lab", "port": 5673, "user": "crucible", "routing_key": "ingestion-lab-small"}
+
+
+def test_a_message_the_broker_cannot_route_raises_and_closes_the_connection(empty, monkeypatch):
+    from app.utils import rmq_utils
+
+    empty.setenv("RMQ_HOST", "broker.lab")
+    empty.setenv("RMQ_USER", "crucible")
+    calls = []
+
+    class Channel:
+        def confirm_delivery(self):
+            calls.append("confirm")
+
+        def basic_publish(self, **kwargs):
+            calls.append(("publish", kwargs.get("mandatory")))
+            raise rmq_utils.pika.exceptions.UnroutableError([])
+
+    class Connection:
+        def __init__(self, parameters):
+            calls.append(("blocked_timeout", parameters.blocked_connection_timeout))
+
+        def channel(self):
+            return Channel()
+
+        def close(self):
+            calls.append("close")
+
+    monkeypatch.setattr(rmq_utils.pika, "BlockingConnection", Connection)
+    with pytest.raises(rmq_utils.pika.exceptions.UnroutableError):
+        rmq_utils.send_pika_message("{}", "", "ingestion-typo-small", "pw")
+    assert calls == [("blocked_timeout", rmq_utils.PUBLISH_TIMEOUT), "confirm", ("publish", True), "close"]
 
 
 KEY_VERSION = "projects/1/secrets/crucible-key/versions/1"

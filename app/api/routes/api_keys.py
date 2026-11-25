@@ -61,25 +61,44 @@ def _revoke(session: Session, user_id: int, key_id: int, actor) -> None:
     forget_cached_key_hash(key.key_hash)
 
 
-@router.post("/account/apikeys", response_model=ApiKeyCreated, status_code=201, responses={**_STEP_UP, 409: {"description": f"`too_many_keys`: at most {MAX_ACTIVE_KEYS} active keys"}, 422: {"description": "expires_at in the past or more than a year away"}})
-def create_account_apikey(body: ApiKeyCreate, response: Response, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    """Create another API key. The key is shown only in this response. Needs a Hub session with a recent sign-in."""
-    require_recent_session(auth_res, "Creating an API key needs a Hub session, not an API key")
+_CREATE_RESPONSES = {**_STEP_UP, 409: {"description": f"`too_many_keys`: at most {MAX_ACTIVE_KEYS} active keys"}, 422: {"description": "expires_at in the past or more than a year away, or given with never_expires"}}
+
+
+def _create(session: Session, user, body: ApiKeyCreate, response: Response, actor=None) -> ApiKeyCreated:
     now = datetime.now(timezone.utc)
     if body.expires_at is not None and not now < body.expires_at <= now + KEY_LIFETIME:
         raise HTTPException(status_code=422, detail="expires_at must be in the future and at most a year away")
+    try:
+        key, secret = create_key(session, user, name=body.name, expires_at=body.expires_at, never_expires=body.never_expires, actor=actor, now=now)
+    except TooManyKeys:
+        raise HTTPException(status_code=409, detail={"code": "too_many_keys", "message": f"At most {MAX_ACTIVE_KEYS} keys can be active; revoke one first"})
+    session.commit()
+    session.refresh(key)
+    response.headers["Cache-Control"] = "no-store"
+    return ApiKeyCreated(**list_item(key).model_dump(), api_key=secret)
+
+
+@router.post("/account/apikeys", response_model=ApiKeyCreated, status_code=201, responses=_CREATE_RESPONSES)
+def create_account_apikey(body: ApiKeyCreate, response: Response, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Create another API key. The key is shown only in this response. Needs a Hub session with a recent sign-in."""
+    require_recent_session(auth_res, "Creating an API key needs a Hub session, not an API key")
     with Session(get_engine()) as session:
         user = caller_row(session, auth_res)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        try:
-            key, secret = create_key(session, user, name=body.name, expires_at=body.expires_at, now=now)
-        except TooManyKeys:
-            raise HTTPException(status_code=409, detail={"code": "too_many_keys", "message": f"At most {MAX_ACTIVE_KEYS} keys can be active; revoke one first"})
-        session.commit()
-        session.refresh(key)
-        response.headers["Cache-Control"] = "no-store"
-        return ApiKeyCreated(**list_item(key).model_dump(), api_key=secret)
+        return _create(session, user, body, response)
+
+
+@router.post("/users/{user_ref}/apikeys", response_model=ApiKeyCreated, status_code=201, responses=_CREATE_RESPONSES)
+def create_user_apikey(user_ref: UserRef, body: ApiKeyCreate, response: Response, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Create an API key for a person or a service account, which keeps its other keys, so a key can be
+    replaced without downtime. The key is shown only in this response. Platform administrators only,
+    with a Hub session and a recent sign-in; the sign-in history records the administrator."""
+    require_platform_admin(auth_res)
+    require_recent_session(auth_res, "Creating an API key needs a Hub session, not an API key")
+    with Session(get_engine()) as session:
+        user = resolve_user_by_identifier(session, user_ref)
+        return _create(session, user, body, response, actor=caller_row(session, auth_res))
 
 
 @router.get("/account/apikeys", response_model=PaginatedResponse[ApiKeyListItem], responses={422: {"description": "Invalid cursor"}})

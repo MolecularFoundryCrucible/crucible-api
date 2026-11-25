@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 ## [Unreleased]
 
+### Added
+
+- Platform administrators create API keys for any account, person or service account, with `POST /users/{user_ref}/apikeys` (a Hub session with a recent sign-in); the account keeps its other keys, so a service account's key can be replaced without downtime.
+- `never_expires` on API key creation makes a key work until it is revoked.
+
 ## [4.1.1] - 2026-11-25
 
 ### Upgrade notes

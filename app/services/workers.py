@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.models.ingestion import IngestWarning
-from app.models.workers import IngestorDetail, WorkerRead, WorkerRegister, WorkerRegistered
+from app.models.workers import IngestorDetail, WorkerRead, WorkerRegister, WorkerRegistered, clean_capabilities
 from app.tables import Worker
 
 TTL = timedelta(minutes=10)
@@ -35,6 +35,7 @@ def _read(row: Worker) -> WorkerRead:
 def register(engine, principal, worker_id: str, body: WorkerRegister) -> WorkerRegistered:
     """Create or renew a registration. A live worker id belongs to the account that registered it;
     an expired one may be taken over. Registrations unseen for RETAIN are removed."""
+    kept, ignored = clean_capabilities(body.capabilities)
     for attempt in range(2):
         with Session(engine) as session:
             current = now()
@@ -48,7 +49,7 @@ def register(engine, principal, worker_id: str, body: WorkerRegister) -> WorkerR
                 row = None
             if row is None:
                 row = Worker(worker_id=worker_id, kind=body.kind, registered_by=principal.user_id, registered_at=current, last_seen_at=current)
-            row.kind, row.capabilities, row.buckets = body.kind, [capability.model_dump() for capability in body.capabilities], list(body.buckets)
+            row.kind, row.capabilities, row.buckets = body.kind, [capability.model_dump() for capability in kept], list(body.buckets)
             row.worker_version, row.package_version, row.last_seen_at = body.worker_version, body.package_version, current
             session.add(row)
             try:
@@ -58,7 +59,7 @@ def register(engine, principal, worker_id: str, body: WorkerRegister) -> WorkerR
                     raise
                 continue
             session.refresh(row)
-            return WorkerRegistered(**_read(row).model_dump(), heartbeat_seconds=int(HEARTBEAT.total_seconds()))
+            return WorkerRegistered(**_read(row).model_dump(), heartbeat_seconds=int(HEARTBEAT.total_seconds()), ignored=ignored)
 
 
 def deregister(engine, worker_id: str) -> None:

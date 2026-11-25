@@ -96,4 +96,23 @@ def test_ingestor_details_describe_and_suggest_by_file_name(client, admin, clock
     assert [entry["name"] for entry in client.get("/ingestors/details", params={"file_name": "run/Scan.MRC"}).json()] == ["MrcIngestor"]
     assert [entry["name"] for entry in client.get("/ingestors/details", params={"file_name": "data.tar.gz"}).json()] == ["TarIngestor"]
     assert client.get("/ingestors").json() == ["H5Ingestor", "MrcIngestor", "TarIngestor"]
-    assert register(client, "worker-c", [{"name": "X", "file_extensions": ["mrc"]}]).status_code == 422
+
+
+
+def test_bad_capability_metadata_is_dropped_and_reported_not_fatal(client, admin):
+    response = register(client, "worker-a", [
+        {"name": "MrcIngestor", "file_extensions": ["MRC", ".map", "bad ext"], "description": "x" * 2001},
+        {"name": "not a name"},
+        {"name": "MrcIngestor"},
+        {"name": "H5Ingestor", "colour": "red"},
+    ])
+    assert response.status_code == 200, response.text
+    assert [(c["name"], c["description"], c["file_extensions"]) for c in response.json()["capabilities"]] == [("MrcIngestor", None, [".map", ".mrc"]), ("H5Ingestor", None, [])]
+    assert [(i["name"], i["field"], i["reason"]) for i in response.json()["ignored"]] == [
+        ("MrcIngestor", "description", "longer than 2000 characters"),
+        ("MrcIngestor", "file_extensions", "not a file extension: 'bad ext'"),
+        ("not a name", "name", "not a valid ingestor name"),
+        ("MrcIngestor", "name", "listed more than once"),
+        ("H5Ingestor", "colour", "unknown field"),
+    ]
+    assert client.get("/ingestors").json() == ["H5Ingestor", "MrcIngestor"]

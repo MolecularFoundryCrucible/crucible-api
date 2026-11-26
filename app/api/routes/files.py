@@ -23,11 +23,10 @@ from app.services.workers import ingest_warnings
 from app.models.ingestion import INGESTION_CLASS_PATTERN, IngestionRequestCreated, IngestWarning
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import DownloadLinkRead, MessageResponse
-from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, STORE_UNAVAILABLE_RESPONSE
 from app.services.file_versions import trash_file
 from app.services.multipart import now, replace_in_progress
-from app.services.storage_downloads import StorageLocationError, resolve_storage_object
+from app.services.storage_downloads import StorageLocationError, resolve_storage_object, signed_download
 from app.storage import store_config
 
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
@@ -98,15 +97,15 @@ def get_file_download_link(
         if af.storage_backend != "gcs":
             return {"url": None, "expires_in": None}
 
-        generation = af.storage_generation
+        generation = af.storage_version
         filename = af.filename
         file_mfid = af.mfid
         store_id = af.store_id
         dataset_mfid = ds.unique_id
-        storage_path = _ensure_storage_path(af, dataset_mfid, session)
+        storage_path = af.storage_path
         session.commit()
 
-    url, expires_in = _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename, disposition, store_id)
+    url, expires_in = signed_download(file_mfid, dataset_mfid, storage_path, generation, filename, disposition, store_id)
     return {"url": url, "expires_in": expires_in}
 
 
@@ -136,7 +135,7 @@ def update_file(
             taken = file_named(session, af.dataset_id, changed["filename"])
             if taken is not None:
                 raise HTTPException(status_code=409, detail={"code": "filename_exists", "file_mfid": taken.mfid, "message": "Filename already exists"})
-        if af.storage_generation is not None:
+        if af.storage_version is not None:
             target_backend = changed.get("storage_backend", af.storage_backend)
             target_path = changed.get("storage_path", af.storage_path)
             if target_backend != "gcs" or target_path is None:
@@ -152,7 +151,7 @@ def update_file(
             af.sha256_verified_at = None
             af.storage_crc32c = None
         if any(name in changed and changed[name] != getattr(af, name) for name in ("storage_path", "storage_backend")):
-            af.storage_generation = None
+            af.storage_version = None
         for field, value in changed.items():
             setattr(af, field, value)
         session.add(af)
@@ -224,9 +223,10 @@ def create_file_ingestion_request(
                 detail=f"Ingestion is not supported for storage_backend='{af.storage_backend}' files.",
             )
 
-        _ensure_storage_path(af, ds.unique_id, session)
+        if not af.storage_path:
+            raise HTTPException(status_code=404, detail="File not found in storage")
         try:
-            resolve_storage_object(store_config(af.store_id), af.storage_path, af.storage_generation, ds.unique_id)
+            resolve_storage_object(store_config(af.store_id), af.storage_path, af.storage_version, ds.unique_id)
         except StorageLocationError as error:
             logger.warning("file_location_rejected file=%s dataset=%s reason=%s", af.mfid, ds.unique_id, error.reason)
             raise HTTPException(status_code=409, detail=error.detail()) from None

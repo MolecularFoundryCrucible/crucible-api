@@ -22,7 +22,7 @@ def _seed(db_engine):
             Instrument(unique_id="inst-unmatched", instrument_id="unmatched", instrument_name="Unmatched", owner="Foundry", location="B"),
             Resource(mfid="inst-owned", resource_type="instrument"),
             Resource(mfid="inst-unmatched", resource_type="instrument"),
-            UploadSession(upload_id="up-1", dataset_mfid="ds", object_key="k", associated_file_name="f", owner_user_id=OLD, user_id=user.id,
+            UploadSession(store_id="mf-storage-prod", upload_id="up-1", dataset_mfid="ds", object_key="k", associated_file_name="f", owner_user_id=OLD, user_id=user.id,
                           expires_at=datetime.now(timezone.utc) + timedelta(days=1), protocol=multipart.PROTOCOL, state="uploading"),
         ])
         session.commit()

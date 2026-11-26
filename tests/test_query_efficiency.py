@@ -162,7 +162,7 @@ def test_file_detail_uses_authorized_dataset_without_lazy_load(db_engine):
                 write=False,
                 permission=Role.VIEWER.db_value,
             ),
-            AssociatedFile(
+            AssociatedFile(store_id="mf-storage-prod", 
                 mfid="file-mfid",
                 filename="file.dat",
                 size=1,
@@ -260,11 +260,11 @@ def test_adding_a_file_does_not_load_the_datasets_other_files(client, db_engine,
         dataset = Dataset(unique_id="ds-many", dataset_name="d")
         session.add_all([dataset, Resource(mfid="ds-many", resource_type="dataset")])
         session.flush()
-        session.add_all([AssociatedFile(dataset_id=dataset.id, filename=f"f{i}", size=1, sha256_hash=str(i)) for i in range(3)])
+        session.add_all([AssociatedFile(store_id="mf-storage-prod", dataset_id=dataset.id, filename=f"f{i}", size=1, sha256_hash=str(i)) for i in range(3)])
         session.commit()
     auth_as("admin", platform_role=PlatformRole.ADMIN)
     with _statement_count(db_engine) as statements:
-        response = client.post("/datasets/ds-many/files", json={"filename": "new.h5", "size": 1, "sha256_hash": "n"})
+        response = client.post("/datasets/ds-many/files", json={"filename": "new.h5", "size": 1, "sha256_hash": "n", "storage_backend": "globus"})
     assert response.status_code == 200, response.text
     file_reads = [s for s in statements if s.lstrip().upper().startswith("SELECT") and "FROM associatedfile" in s]
     collection_loads = [s for s in file_reads if "dataset_id" in s.split("WHERE", 1)[-1] and "filename" not in s.split("WHERE", 1)[-1]]

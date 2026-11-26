@@ -205,7 +205,7 @@ def register(groups: argparse._SubParsersAction) -> None:
     listing = commands.add_parser(
         "stores",
         help="List the configured stores and the files in each",
-        description="Lists every store, configured or named by files, with its file count, and the stored files with no store recorded yet. Exits 1 when files are in a store this server does not configure or have no store; those files answer 503 store_unavailable until the store is configured again or files assign-store records one.",
+        description="Lists every store, configured or named by files, with its file count. Exits 1 when files are in a store this server does not configure; those files answer 503 store_unavailable until it is configured again.",
     )
     listing.set_defaults(handler=_run_stores)
     cleanup = commands.add_parser(
@@ -259,16 +259,13 @@ def _run_stores(args: argparse.Namespace) -> int:
     settings = get_settings().storage
     with Session(get_engine()) as session:
         counts = dict(session.exec(select(AssociatedFile.store_id, func.count()).where(AssociatedFile.storage_backend == "gcs").group_by(AssociatedFile.store_id)).all())
-    unassigned = counts.pop(None, 0)
     configured = [store.id for store in settings.stores]
     for store_id in configured + sorted(set(counts) - set(configured)):
         state = "configured" if store_id in configured else "NOT CONFIGURED"
         if store_id == settings.default_store_id and store_id in configured:
             state += ", default"
         print(f"{store_id}  {state}  {counts.get(store_id, 0)} files")
-    if unassigned:
-        print(f"(no store)  run files assign-store  {unassigned} files")
-    return 1 if set(counts) - set(configured) or unassigned else 0
+    return 1 if set(counts) - set(configured) else 0
 
 
 def _run_cleanup(args: argparse.Namespace) -> int:

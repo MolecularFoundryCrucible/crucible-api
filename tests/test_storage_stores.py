@@ -6,7 +6,6 @@ import pytest
 from sqlmodel import Session, select
 
 import app.api.routes.deleted_files as deleted_files_routes
-import app.api.routes.gcs_storage as gcs_storage
 import app.api.routes.multipart as multipart_routes
 from app.config import get_settings
 from app.services import multipart as service
@@ -35,8 +34,9 @@ def stores(flow, monkeypatch):
             raise StoreUnavailable(store_id)
         return known[store_id]
 
-    for module in (multipart_routes, gcs_storage, deleted_files_routes):
+    for module in (multipart_routes, deleted_files_routes):
         monkeypatch.setattr(module, "get_store", lookup)
+    monkeypatch.setattr("app.storage.get_store", lookup)
     monkeypatch.setenv("STORAGE_STORES", json.dumps(STORES))
     monkeypatch.setenv("STORAGE_DEFAULT_STORE", "default")
     monkeypatch.setenv("STORAGE_VM_ACCESS_KEY_ID", "vm-key")
@@ -106,27 +106,6 @@ def test_cleanup_deletes_versions_in_their_own_store_and_reports_an_unavailable_
         assert session.get(FileVersion, gone_id).deleted_at is None
 
 
-def test_rows_from_before_stores_answer_503_until_a_store_is_assigned(stores, capsys):
-    from app.cli.__main__ import main
-    client, engine, known, _ = stores
-    file = complete((client, engine, known["default"]), publish((client, engine, known["default"]))).json()
-    identifier = start((client, engine, known["default"]), "later.bin")
-    with Session(engine) as session:
-        for model in (AssociatedFile, UploadSession):
-            for row in session.exec(select(model)).all():
-                row.store_id = None
-                session.add(row)
-        session.commit()
-    assert client.get(f"/files/{file['mfid']}/download_link").status_code == 503
-    assert main(["files", "assign-store", "--store", "default"]) == 0
-    assert "would assign store default to 1 associatedfile, 0 file_versions, 2 upload_sessions" in capsys.readouterr().out
-    assert main(["files", "assign-store", "--store", "default", "--commit"]) == 0
-    assert client.get(f"/files/{file['mfid']}/download_link").status_code == 200
-    put((client, engine, known["default"]), identifier)
-    assert complete((client, engine, known["default"]), identifier).json()["store_id"] == "default"
-    assert main(["files", "assign-store", "--store", "gone"]) == 1
-
-
 def test_new_uploads_record_their_store(stores):
     client, engine, known, _ = stores
     identifier = publish((client, engine, known["default"]))
@@ -166,14 +145,11 @@ def test_file_responses_name_their_store(stores):
     move_to(engine, file["mfid"], "vm", known["vm"], known["default"])
     assert client.get(f"/files/{file['mfid']}").json()["store_id"] == "vm"
     with Session(engine) as session:
-        record = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file["mfid"])).one()
-        record.store_id = None
-        session.add(record)
-        dataset_id = record.dataset_id
+        dataset_id = session.exec(select(AssociatedFile.dataset_id).where(AssociatedFile.mfid == file["mfid"])).one()
         session.add(AssociatedFile(dataset_id=dataset_id, filename="remote.h5", storage_backend="nersc-perlmutter", storage_path="/global/cfs/x", size=1, sha256_hash="b" * 64))
         session.commit()
     by_name = {item["filename"]: item["store_id"] for item in client.get("/datasets/ds/files").json()}
-    assert by_name == {"data.bin": None, "remote.h5": None}
+    assert by_name == {"data.bin": "vm", "remote.h5": None}
 
 
 BASE = "/datasets/ds/upload/multipart"
@@ -289,16 +265,10 @@ def test_the_store_listing_reports_files_in_unconfigured_stores(stores, capsys):
     kept = complete((client, engine, known["default"]), publish((client, engine, known["default"]), "a.bin")).json()
     lost = complete((client, engine, known["default"]), publish((client, engine, known["default"]), "b.bin")).json()
     move_to(engine, lost["mfid"], "gone", None, None)
-    with Session(engine) as session:
-        record = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == kept["mfid"])).one()
-        record.store_id = None
-        session.add(record)
-        session.commit()
     capsys.readouterr()
     assert main(["storage", "stores"]) == 1
     output = capsys.readouterr().out
-    assert "default  configured, default  0 files" in output
-    assert "(no store)  run files assign-store  1 files" in output
+    assert "default  configured, default  1 files" in output and kept["mfid"]
     assert "vm  configured  0 files" in output
     assert "gone  NOT CONFIGURED  1 files" in output
 
@@ -313,7 +283,7 @@ def test_deleting_a_file_in_an_unconfigured_store_still_keeps_it(stores):
     assert (version.reason, version.store_id, version.storage_path) == ("deleted", "gone", file["storage_path"])
 
 
-def test_a_file_without_a_store_does_not_break_the_dataset_links(stores, monkeypatch):
+def test_a_file_in_an_unconfigured_store_does_not_break_the_dataset_links(stores, monkeypatch):
     client, engine, known, _ = stores
     monkeypatch.setenv("STORAGE_STORES", json.dumps([STORES[1]]))
     monkeypatch.setenv("STORAGE_DEFAULT_STORE", "vm")
@@ -321,8 +291,8 @@ def test_a_file_without_a_store_does_not_break_the_dataset_links(stores, monkeyp
     known["vm"].objects["ds/_files/new"] = {"generation": "7", "size": 1, "crc32c": None, "data": b"x"}
     with Session(engine) as session:
         dataset_id = session.exec(select(Dataset.id)).one()
-        current = AssociatedFile(dataset_id=dataset_id, filename="new.bin", size=1, sha256_hash=SHA, storage_path="dedicated/ds/_files/new", storage_generation="7", store_id="vm")
-        legacy = AssociatedFile(dataset_id=dataset_id, filename="old.bin", size=1, sha256_hash=SHA)
+        current = AssociatedFile(dataset_id=dataset_id, filename="new.bin", size=1, sha256_hash=SHA, storage_path="dedicated/ds/_files/new", storage_version="7", store_id="vm")
+        legacy = AssociatedFile(store_id="mf-storage-prod", dataset_id=dataset_id, filename="old.bin", size=1, sha256_hash=SHA, storage_path="mf-storage-prod/ds/old.bin")
         session.add_all([current, legacy])
         session.commit()
         current_mfid, legacy_mfid = current.mfid, legacy.mfid
@@ -330,7 +300,7 @@ def test_a_file_without_a_store_does_not_break_the_dataset_links(stores, monkeyp
     assert links.status_code == 200, links.text
     assert links.json()[legacy_mfid] is None and links.json()[current_mfid].startswith("https://vm.test/")
     single = client.get(f"/files/{legacy_mfid}/download_link")
-    assert (single.status_code, single.json()["detail"]["store_id"]) == (503, None)
+    assert (single.status_code, single.json()["detail"]["store_id"]) == (503, "mf-storage-prod")
 
 
 def test_a_file_in_another_store_with_the_same_path_does_not_keep_a_version(stores):
@@ -339,7 +309,7 @@ def test_a_file_in_another_store_with_the_same_path_does_not_keep_a_version(stor
     key = move_to(engine, file["mfid"], "vm", known["vm"], known["default"])
     known["default"].objects[key] = dict(known["vm"].objects[key])
     with Session(engine) as session:
-        session.add(FileVersion(file_mfid="old", dataset_mfid="ds", storage_path=file["storage_path"], storage_generation="7", size=1, sha256_hash=SHA, reason="deleted", store_id="default", created_at=service.now(), delete_after=service.now()))
+        session.add(FileVersion(file_mfid="old", dataset_mfid="ds", storage_path=file["storage_path"], storage_version="7", size=1, sha256_hash=SHA, reason="deleted", store_id="default", created_at=service.now(), delete_after=service.now()))
         session.commit()
     report = run_cleanup(engine, lookup, service.now() + timedelta(seconds=1))
     assert (report.deleted_versions, report.kept_in_use) == (1, 0)

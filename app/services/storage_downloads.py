@@ -82,3 +82,33 @@ def download_headers(filename, stored_type, disposition="attachment"):
     mode = "attachment" if effective in SCRIPT_CAPABLE_TYPES or effective.endswith("+xml") else "inline"
     return f"{mode}; filename=\"{fallback}\"; filename*=UTF-8''{encoded}", guessed
 
+
+
+def signed_download(file_mfid, dataset_mfid, storage_path, generation, filename, disposition="attachment", store_id=None):
+    """(signed_url, expires_in_seconds) for a stored file's object in its store, enforcing the storage
+    location rule. 404 when the file has no stored content."""
+    import logging
+
+    from fastapi import HTTPException
+
+    from app.storage import StoreUnavailable, get_store, store_config
+
+    logger = logging.getLogger(__name__)
+    if not storage_path:
+        raise HTTPException(status_code=404, detail="File not found in storage")
+    store = store_config(store_id)
+    try:
+        obj = resolve_storage_object(store, storage_path, generation, dataset_mfid)
+    except StorageLocationError as error:
+        logger.warning("file_location_rejected file=%s dataset=%s reason=%s", file_mfid, dataset_mfid, error.reason)
+        raise HTTPException(status_code=409, detail=error.detail()) from None
+    try:
+        url = get_store(store_id).signed_download(obj.bucket, obj.key, obj.version, filename, disposition, DOWNLOAD_LIFETIME)
+    except StoreUnavailable:
+        raise
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found in storage") from None
+    except Exception:
+        logger.exception("signed_download_failed file=%s dataset=%s", file_mfid, dataset_mfid)
+        raise HTTPException(status_code=503, detail="Could not generate a download link; try again later") from None
+    return url, int(DOWNLOAD_LIFETIME.total_seconds())

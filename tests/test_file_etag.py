@@ -18,10 +18,10 @@ def test_file_etag_formula():
 
 
 def test_read_model_exposes_etag_but_not_generation():
-    read = AssociatedFileRead.model_validate({"mfid": "m", "dataset_id": 1, "dataset_mfid": DS, "filename": "a.txt", "storage_path": f"b/{DS}/a.txt", "storage_backend": "gcs", "size": 10, "sha256_hash": "a" * 64, "storage_generation": "7"})
+    read = AssociatedFileRead.model_validate({"mfid": "m", "dataset_id": 1, "dataset_mfid": DS, "filename": "a.txt", "storage_path": f"b/{DS}/a.txt", "storage_backend": "gcs", "size": 10, "sha256_hash": "a" * 64, "storage_version": "7"})
     body = read.model_dump()
     assert body["etag"] == file_etag(f"b/{DS}/a.txt", "7", "a" * 64, 10)
-    assert "storage_generation" not in body
+    assert "storage_version" not in body
 
 
 def _file(db_engine, **values):
@@ -31,7 +31,7 @@ def _file(db_engine, **values):
         session.add(dataset)
         session.commit()
         session.refresh(dataset)
-        af = AssociatedFile(dataset_id=dataset.id, filename="a.txt", size=10, sha256_hash="a" * 64, storage_path=f"mf-storage-prod/{DS}/a.txt", **values)
+        af = AssociatedFile(dataset_id=dataset.id, filename="a.txt", size=10, sha256_hash="a" * 64, storage_path=f"mf-storage-prod/{DS}/a.txt", store_id="mf-storage-prod", **values)
         session.add(af)
         session.commit()
         session.refresh(af)
@@ -39,7 +39,7 @@ def _file(db_engine, **values):
 
 
 def test_get_file_returns_etag_header_and_field(client, db_engine, auth_as):
-    file_mfid = _file(db_engine, storage_generation="7")
+    file_mfid = _file(db_engine, storage_version="7")
     auth_as("0000-0000-0000-0009", platform_role=PlatformRole.ADMIN)
     response = client.get(f"/files/{file_mfid}")
     assert response.status_code == 200, response.text

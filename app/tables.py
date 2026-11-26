@@ -65,6 +65,7 @@ class AssociatedFile(SQLModel, table=True):
             "uq_associatedfile_non_gcs_dataset_filename", "dataset_id", "filename", unique=True,
             postgresql_where=text("storage_backend <> 'gcs'"), sqlite_where=text("storage_backend <> 'gcs'"),
         ),
+        CheckConstraint("storage_backend <> 'gcs' OR store_id IS NOT NULL", name="ck_associatedfile_stored_has_store"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -75,10 +76,10 @@ class AssociatedFile(SQLModel, table=True):
     access_note: Optional[str] = None    # how to access this file when there's no self-service path (non-gcs backends)
     size: int = Field(sa_column=Column(BigInteger()))
     sha256_hash: str
-    storage_generation: Optional[str] = None
+    storage_version: Optional[str] = Field(default=None, sa_column=Column("storage_generation", String))  # the column keeps its earlier name
     storage_crc32c: Optional[str] = None
     sha256_verified_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-    store_id: Optional[str] = None  # the store holding a stored file (STORAGE_STORES id); null until files assign-store records it
+    store_id: Optional[str] = None  # the STORAGE_STORES id holding a stored file; null for catalog-only records
     dataset_id: int = Field(foreign_key="dataset.id")
     dataset: "Dataset" = Relationship(back_populates='associated_files')
     ingestion_requests: List["IngestionRequest"] = Relationship(back_populates="associated_file")
@@ -820,7 +821,7 @@ class FileVersion(SQLModel, table=True):
     file_mfid: str = Field(index=True)
     dataset_mfid: str
     storage_path: str
-    storage_generation: Optional[str] = None
+    storage_version: Optional[str] = Field(default=None, sa_column=Column("storage_generation", String))  # the column keeps its earlier name
     size: int = Field(sa_column=Column(BigInteger(), nullable=False))
     sha256_hash: str
     storage_crc32c: Optional[str] = None
@@ -832,7 +833,7 @@ class FileVersion(SQLModel, table=True):
     attempts: int = Field(default=0, sa_column=Column(Integer(), nullable=False, server_default="0"))
     failure_code: Optional[str] = None
     filename: Optional[str] = None
-    store_id: Optional[str] = None
+    store_id: str = Field(sa_column=Column(String, nullable=False))
     ingestion_requests: Optional[list[dict[str, Any]]] = Field(default=None, sa_column=Column(JSON().with_variant(JSONB(), "postgresql")))
 
 
@@ -857,7 +858,7 @@ class UploadSession(SQLModel, table=True):
     size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))
     protocol: Optional[str] = None
     bucket: Optional[str] = None
-    store_id: Optional[str] = None
+    store_id: str = Field(sa_column=Column(String, nullable=False))
     provider_upload_id: Optional[str] = None
     state: Optional[str] = None
     part_size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))
@@ -868,7 +869,7 @@ class UploadSession(SQLModel, table=True):
     result_file_mfid: Optional[str] = None
     replace_file_mfid: Optional[str] = Field(default=None, index=True)
     replace_base_etag: Optional[str] = None
-    storage_generation: Optional[str] = None
+    storage_version: Optional[str] = Field(default=None, sa_column=Column("storage_generation", String))  # the column keeps its earlier name
     failure_code: Optional[str] = None
     lease_owner: Optional[str] = None
     version: Optional[int] = None

@@ -6,7 +6,7 @@ This page specifies how a dataset's file records catalog files that are not stor
 
 | Field | Type | Notes |
 |---|---|---|
-| `storage_backend` | Free text, default `"gcs"` | `"gcs"` means stored by the API, in the store named by the record's `store_id` (Google Cloud Storage or S3-compatible); the value is kept for compatibility with existing records and clients. Any other value (`"globus"`, `"nersc-perlmutter"`, `"lawrencium"`) marks a catalog-only record. Values are not validated, so external systems can be distinguished without a schema change. |
+| `storage_backend` | Free text, default `"gcs"` | `"gcs"` means stored by the API (see [The "gcs" value](#the-gcs-value)). Any other value (`"globus"`, `"nersc-perlmutter"`, `"lawrencium"`) marks a catalog-only record. Values are not validated, so external systems can be distinguished without a schema change. |
 | `storage_path` | Nullable text | For a stored record, `{bucket}/{key}`, assigned by the API ([Storage locations and downloads](storage_downloads.md)). For a catalog-only record, a location string such as a Globus URI or a file system path, not interpreted by the API. |
 | `access_note` | Nullable text | How to obtain the file when there is no self-service path, for example "request via NERSC allocation X" or "contact the PI for a Globus share". |
 | `sha256_hash`, `size` | Required | Required for every backend; supplied by the client. |
@@ -17,12 +17,12 @@ File records belong to datasets only. The `file_id` path parameter of `/files/{f
 
 A file's identity in its dataset is its `filename`:
 
-- `POST /datasets/{dataset_mfid}/files` requires the `create` permission. With an existing filename it returns the existing record unchanged when `sha256_hash`, `size` and `storage_backend` match (`storage_path` and `access_note` are neither compared nor updated), and 409 `filename_exists` with the existing `file_mfid` and `etag` otherwise. Identical content under different filenames gets separate records, so a dataset with `freq_001/kpoints.json` and `freq_002/kpoints.json` keeps both. A filename reserved by an upload in progress returns 409.
+- `POST /datasets/{dataset_mfid}/files` creates catalog-only records and requires the `create` permission. It refuses `storage_backend` `"gcs"`, including when it is omitted, with 422 `stored_file_needs_upload`: a stored file is created by uploading it (`POST /datasets/{dataset_mfid}/upload/multipart/initiate`). With an existing filename it returns the existing record unchanged when `sha256_hash`, `size` and `storage_backend` match (`storage_path` and `access_note` are neither compared nor updated), and 409 `filename_exists` with the existing `file_mfid` and `etag` otherwise. Identical content under different filenames gets separate records, so a dataset with `freq_001/kpoints.json` and `freq_002/kpoints.json` keeps both. A filename reserved by an upload in progress returns 409.
 - Catalog-only filenames must be canonical relative POSIX paths: not empty, no leading, trailing or repeated `/`, no `.` or `..` components, no ASCII control characters (U+0000 to U+001F, U+007F). Invalid names return 422; nothing is normalized. Clients rebuild datasets on disk from these paths.
 - For catalog-only records the database enforces both rules: check constraints on the path and a partial unique index on `(dataset_id, filename)`, which also resolves two concurrent requests with the same name.
 - `PATCH /files/{file_id}` cannot change a catalog-only filename (409 `filename_immutable`) and cannot move a record between stored and catalog-only (409 `storage_backend_class_change`). A stored file can be renamed under the upload filename rules (422 otherwise) to a filename not used in the dataset (409 `filename_exists` otherwise).
 
-The path rules and the unique index do not apply to stored records created through `POST /datasets/{dataset_mfid}/files`; records from before 4.0.0 include absolute paths and names that start with `./`. A client that writes stored files to disk by name validates the name itself.
+The path rules and the unique index do not apply to stored records; records from before 4.0.0 include absolute paths and names that start with `./`. A client that writes stored files to disk by name validates the name itself.
 
 ## Behavior of catalog-only records
 
@@ -30,3 +30,14 @@ The path rules and the unique index do not apply to stored records created throu
 - `POST /files/{file_id}/ingest` returns 400 `Ingestion is not supported for storage_backend='<value>' files.`; ingestion requests are created only for objects the API stores.
 - `PATCH /files/{file_id}` may change `storage_path`, `size`, `sha256_hash` and `access_note` freely ([Changes to stored records](storage_downloads.md#changes-to-stored-records) lists the fields this clears).
 - Permissions are evaluated as for stored files: reading and downloading require `viewer`, adding a record and requesting ingestion `contributor`, updating `editor`, and deleting `admin` on the dataset ([Permissions](permissions.md)).
+
+## The "gcs" value
+
+`storage_backend` `"gcs"` marks a record whose content the API stores and serves, in the store its `store_id` names. Despite the name it covers every store type, S3-compatible ones included; it dates from when Google Cloud Storage was the only storage. Such a record is created only by an upload (or a replacement), which sets `storage_path`, `storage_generation`, `store_id` and the verified checksums. Its filename follows the upload filename rules, it can be downloaded, ingested, replaced, deleted into the trash and restored. Every other value marks a catalog-only record.
+
+Known issues, to review:
+
+- The name says Google Cloud Storage but means "stored by this API" in any store.
+- It is also the default of `storage_backend` on `POST /datasets/{dataset_mfid}/files`, where it is refused, so a catalog request must always name its backend.
+- `storage_backend` is free text: a typo such as `"GCS"` makes a catalog-only record.
+- Stored-ness is told by `storage_backend == "gcs"` throughout the code and in check constraints and partial indexes (`ck_associatedfile_*`, `uq_associatedfile_non_gcs_dataset_filename`), so renaming the value needs a migration and a compatibility window for clients that send or read it.

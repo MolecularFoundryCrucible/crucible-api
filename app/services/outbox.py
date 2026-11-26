@@ -35,7 +35,7 @@ def _ingestion_message(session: Session, request: IngestionRequest):
     body = {
         "filename": file.storage_path,
         "store_id": file.store_id,
-        **({"storage_generation": file.storage_generation} if file.storage_generation else {}),
+        **({"storage_generation": file.storage_version} if file.storage_version else {}),
         "file_name": file.filename,
         "reqid": request.id,
         "dsid": request.dataset_mfid,

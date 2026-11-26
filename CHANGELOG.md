@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 ### Upgrade notes
 
+- Needs migration `f7a3d9c2b815`, which requires a store on every stored file, file version and upload session; it stops, with the counts, while a row has none. An installation still on the single-store settings upgrades through 4.1.x and runs `files assign-store` there first.
 - Needs migration `e5b2c8f1a604`, which adds `published_at` to ingestion requests and postprocessing runs and marks every existing one as sent.
 - Schedule `python -m app.cli messaging publish-pending` every minute wherever ingestion is enabled (one at a time, like `storage cleanup`); without it, work RabbitMQ did not take at once is never sent, and fails only when this command next runs a day later.
 
@@ -19,6 +20,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 ### Fixed
 
 - Ingestion requests and postprocessing runs are no longer lost when RabbitMQ is down, cannot route the message (a missing queue, a wrong routing suffix) or blocks it: the API publishes persistent messages with publisher confirms and the mandatory flag, records `published_at` once RabbitMQ takes a message, and `messaging publish-pending` sends what is still unsent. `POST /files/{file_id}/ingest` and `POST /datasets/{dataset_mfid}/postprocess` no longer answer 503 `ingestion_unavailable` or `pipeline_unavailable`; the request is kept with `published_at` null, and ingest adds a `queue_deferred` warning.
+
+### Removed
+
+- The lookup that located a stored file without `storage_path` by its basename on first download, ingestion or replacement: such a file now answers 404 "File not found in storage".
+- `python -m app.cli files assign-store` and `files backfill-locations`, which moved installations to stores; they remain in 4.1.x.
+
+### Changed
+
+- `POST /datasets/{dataset_mfid}/files` creates catalog-only records only: `storage_backend` `"gcs"`, the default, answers 422 `stored_file_needs_upload`. Stored files are created by uploading them.
 
 ## [4.1.1] - 2026-11-25
 

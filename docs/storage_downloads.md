@@ -26,7 +26,7 @@ A failure returns 409 `{"detail": {"code": "storage_location_invalid", "reason":
 
 ## Missing storage paths
 
-A stored record without `storage_path`, such as one registered through `POST /datasets/{dataset_mfid}/files` (which refuses a client `storage_path` for stored records), is located on its first download, ingestion request or replacement. The API lists `{dataset_mfid}/` in the bucket of the file's store, skipping `{dataset_mfid}/_files/`, and takes `{dataset_mfid}/{filename}` when it exists, otherwise the single key that ends in `/` followed by the filename's basename. The path found is saved on the record before the URL is signed; the location rule then applies. No match returns 404, several matches return 409. Records are located this way only in a `gcs` store; otherwise a record without `storage_path` returns 404. `python -m app.cli files backfill-locations --store <id>` records these locations ahead of time, with the object's generation; `--generations` also records the generation of files that have a path but none, so cleanup may delete their content once they are replaced or deleted. It reports by default, writes with `--commit`, and lists the files where several objects or none match. The lookup is retired once the backfill has run.
+A stored record without `storage_path` has no content: its download link, the dataset's download links (`null`) and an ingestion request answer 404 "File not found in storage". Such records come from before multipart uploads, when a file was registered first and placed later; stored records are now created only by uploading. Replacing such a file gives it content.
 
 ## Download links
 

@@ -71,7 +71,7 @@ def _setup_file_ingestion_request(db_engine):
             permission=Role.VIEWER.db_value,
         ))
 
-        associated = AssociatedFile(
+        associated = AssociatedFile(store_id="mf-storage-prod", 
             filename="data.tif",
             size=1,
             sha256_hash="0" * 64,

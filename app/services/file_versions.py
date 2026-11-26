@@ -38,11 +38,11 @@ def trash_file(session: Session, file: AssociatedFile, dataset_mfid: str, when) 
 
 
 def _keep(session, file, dataset_mfid, when, reason):
-    if not file.storage_path or file.storage_generation is None:
+    if not file.storage_path or file.storage_version is None:
         return None
     try:
         store_id = store_config(file.store_id).id
-        if not owned_object(store_config(file.store_id), file.storage_path, file.storage_generation, dataset_mfid):
+        if not owned_object(store_config(file.store_id), file.storage_path, file.storage_version, dataset_mfid):
             return None
     except StoreUnavailable:
         # Kept so it can be restored or cleaned once the store is configured again; cleanup checks ownership then.
@@ -55,7 +55,7 @@ def _keep(session, file, dataset_mfid, when, reason):
         session.add(existing)
         return existing
     version = FileVersion(
-        file_mfid=file.mfid, dataset_mfid=dataset_mfid, storage_path=file.storage_path, storage_generation=file.storage_generation,
+        file_mfid=file.mfid, dataset_mfid=dataset_mfid, storage_path=file.storage_path, storage_version=file.storage_version,
         size=file.size, sha256_hash=file.sha256_hash, storage_crc32c=file.storage_crc32c, reason=reason,
         store_id=store_id, created_at=when, delete_after=deadline,
     )
@@ -97,7 +97,7 @@ def restore_latest(engine, stores, file_mfid: str, when) -> Restored:
         _check_restorable(stores, version, when)
         replaced = keep_version(session, file, dataset_mfid, when)
         file.storage_path = version.storage_path
-        file.storage_generation = version.storage_generation
+        file.storage_version = version.storage_version
         file.size = version.size
         file.sha256_hash = version.sha256_hash
         file.storage_crc32c = version.storage_crc32c
@@ -155,7 +155,7 @@ def restore_deleted(engine, stores, dataset_mfid: str, file_mfid: str, when) -> 
             raise RestoreRefused("filename_reserved")
         file = AssociatedFile(
             mfid=version.file_mfid, dataset_id=dataset.id, filename=version.filename, storage_path=version.storage_path,
-            storage_generation=version.storage_generation, size=version.size, sha256_hash=version.sha256_hash, storage_crc32c=version.storage_crc32c,
+            storage_version=version.storage_version, size=version.size, sha256_hash=version.sha256_hash, storage_crc32c=version.storage_crc32c,
             store_id=version.store_id,
         )
         session.add(file)

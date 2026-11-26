@@ -137,12 +137,7 @@ When a store is removed from `STORAGE_STORES`, its files keep their store id: th
 
 ### Moving from the single-store settings
 
-Files stored by earlier releases have no store recorded and answer 503 `store_unavailable` until they get one:
-
-1. Replace the retired settings with `STORAGE_STORES`, one store for the existing bucket.
-2. Run the release's migrations.
-3. Run `python -m app.cli files assign-store --store <id>`, then again with `--commit`: it records the store on every stored file, file version and upload session without one.
-4. Run `python -m app.cli files backfill-locations --store <id>` (see [Missing storage paths](storage_downloads.md#missing-storage-paths)), then again with `--commit`.
+An installation still on the single-store settings (before 4.1.0) upgrades through 4.1.x first: 4.1.x has the `files assign-store` and `files backfill-locations` commands that record a store, and the location of files from before multipart uploads, on existing rows ([4.1.x docs](https://github.com/MolecularFoundryCrucible/crucible-api/blob/v4.1.1/docs/uploads.md#moving-from-the-single-store-settings)). Later releases require a store on every stored file, file version and upload session, and their migration stops with the counts of rows that have none.
 
 ## Google Cloud Storage
 

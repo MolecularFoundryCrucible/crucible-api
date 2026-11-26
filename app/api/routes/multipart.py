@@ -5,7 +5,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from sqlmodel import Session
 
-import app.api.routes.gcs_storage as gcs_storage
 from app.api.dependencies import get_engine
 from app.api.errors import STORE_UNAVAILABLE_RESPONSE, feature_disabled_response
 from app.api.path_params import DatasetMfid
@@ -36,7 +35,7 @@ def initiate_replace(auth_res: Annotated[Principal, Depends(authorize_user)], fi
     config = MultipartStorageConfig.from_env()
     if not config.enabled:
         raise FeatureDisabled("uploads", UPLOADS_DISABLED)
-    return service.initiate_replace(get_engine(), get_store, auth_res, file_mfid, body, idempotency_key, if_match, config, backfill=gcs_storage._ensure_storage_path)
+    return service.initiate_replace(get_engine(), get_store, auth_res, file_mfid, body, idempotency_key, if_match, config)
 
 
 @router.post("/datasets/{dataset_mfid}/upload/multipart/{upload_id}/parts", response_model=SignedParts)

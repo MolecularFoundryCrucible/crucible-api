@@ -3,11 +3,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
-import app.api.routes.gcs_storage as gcs_storage
 import app.storage.gcs as google
 from app.tables import AssociatedFile, Dataset, IngestionRequest, Resource
 from app.utils.permissions import PlatformRole
@@ -26,7 +24,7 @@ def _file(db_engine, storage_path, filename="scan.pdf", generation=None, backend
             session.add(dataset)
             session.commit()
             session.refresh(dataset)
-        af = AssociatedFile(filename=filename, storage_path=storage_path, storage_backend=backend, storage_generation=generation, size=10, sha256_hash="a" * 64, dataset_id=dataset.id, store_id=store_id if backend == "gcs" else None)
+        af = AssociatedFile(filename=filename, storage_path=storage_path, storage_backend=backend, storage_version=generation, size=10, sha256_hash="a" * 64, dataset_id=dataset.id, store_id=store_id if backend == "gcs" else None)
         session.add(af)
         session.commit()
         session.refresh(af)
@@ -40,7 +38,7 @@ def signer(monkeypatch):
     blob.content_type = "application/octet-stream"
     blob.generate_signed_url.return_value = "https://signed.example/x"
     monkeypatch.setattr(google, "server_client", lambda: client)
-    monkeypatch.setattr(gcs_storage, "get_store", lambda *_: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
+    monkeypatch.setattr("app.storage.get_store", lambda *_: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
     return client
 
 
@@ -134,49 +132,6 @@ def test_bulk_links_null_only_the_refused_file(client, db_engine, signer, admin)
     assert response.json() == {good: "https://signed.example/x", bad: None}
 
 
-def test_registered_gcs_record_without_path_downloads_via_backfill(client, db_engine, signer, admin, monkeypatch):
-    _file(db_engine, f"mf-storage-prod/{DS}/existing.pdf", filename="existing.pdf")
-    created = client.post(f"/datasets/{DS}/files", json={"filename": "placed.pdf", "size": 5, "sha256_hash": "d" * 64})
-    assert created.status_code == 200, created.text
-    assert created.json()["storage_path"] is None
-    monkeypatch.setattr(gcs_storage, "_determine_storage_path", lambda dsid, filename, store_id: f"mf-storage-prod/{dsid}/{filename}")
-    response = client.get(f"/files/{created.json()['mfid']}/download_link")
-    assert response.status_code == 200, response.text
-    signer.bucket.return_value.blob.assert_called_with(f"{DS}/placed.pdf", generation=None)
-
-
-def test_backfill_skips_multipart_objects(db_engine, monkeypatch):
-    listed = [SimpleNamespace(name=f"{DS}/_files/abc-scan.pdf"), SimpleNamespace(name=f"{DS}/raw/scan.pdf")]
-    client = MagicMock()
-    client.bucket.return_value.list_blobs.return_value = listed
-    monkeypatch.setattr(gcs_storage, "store_client", lambda store: client)
-    assert gcs_storage._determine_storage_path(DS, "scan.pdf", "mf-storage-prod") == f"mf-storage-prod/{DS}/raw/scan.pdf"
-
-
-def _listing(monkeypatch, *names):
-    client = MagicMock()
-    client.bucket.return_value.list_blobs.return_value = [SimpleNamespace(name=f"{DS}/{name}") for name in names]
-    monkeypatch.setattr(gcs_storage, "store_client", lambda store: client)
-
-
-def test_backfill_needs_a_whole_name_match(monkeypatch):
-    _listing(monkeypatch, "foobar.tif", "raw/bar.tif")
-    assert gcs_storage._determine_storage_path(DS, "bar.tif", "mf-storage-prod") == f"mf-storage-prod/{DS}/raw/bar.tif"
-    _listing(monkeypatch, "foobar.tif")
-    with pytest.raises(HTTPException) as error:
-        gcs_storage._determine_storage_path(DS, "bar.tif", "mf-storage-prod")
-    assert error.value.status_code == 404
-
-
-def test_backfill_prefers_the_exact_path_and_refuses_to_guess(monkeypatch):
-    _listing(monkeypatch, "a/bar.tif", "bar.tif", "b/bar.tif")
-    assert gcs_storage._determine_storage_path(DS, "bar.tif", "mf-storage-prod") == f"mf-storage-prod/{DS}/bar.tif"
-    _listing(monkeypatch, "a/bar.tif", "b/bar.tif")
-    with pytest.raises(HTTPException) as error:
-        gcs_storage._determine_storage_path(DS, "bar.tif", "mf-storage-prod")
-    assert error.value.status_code == 409
-
-
 def _ingestion_requests(db_engine):
     with Session(db_engine) as session:
         return session.exec(select(IngestionRequest)).all()
@@ -190,16 +145,6 @@ def test_ingest_refuses_a_file_outside_its_dataset(client, db_engine, admin):
     assert response.json()["detail"] == {"code": "storage_location_invalid", "reason": "outside_dataset", "message": "File storage location is not valid: outside_dataset"}
     send.assert_not_called()
     assert _ingestion_requests(db_engine) == []
-
-
-def test_ingest_backfills_missing_storage_path(client, db_engine, admin, monkeypatch):
-    file_mfid = _file(db_engine, None)
-    monkeypatch.setattr(gcs_storage, "_determine_storage_path", lambda dsid, filename, store_id: f"mf-storage-prod/{dsid}/{filename}")
-    with patch("app.services.outbox.send_pika_message") as send, patch("app.services.outbox.get_secret", return_value="pw"):
-        response = client.post(f"/files/{file_mfid}/ingest")
-    assert response.status_code == 200, response.text
-    assert response.json()["file_to_upload"] == f"mf-storage-prod/{DS}/scan.pdf"
-    assert f"mf-storage-prod/{DS}/scan.pdf" in send.call_args.kwargs["message"]
 
 
 PATH_ERROR = "storage_path is assigned by the upload API for GCS files"
@@ -274,7 +219,7 @@ def test_patch_may_rename_a_published_multipart_record(client, db_engine, admin,
     assert response.json()["filename"] == "renamed.pdf"
     with Session(db_engine) as session:
         af = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file_mfid)).one()
-        assert af.storage_generation == "7"
+        assert af.storage_version == "7"
 
 
 def test_legacy_gcs_record_cannot_switch_to_a_non_gcs_backend(client, db_engine, admin):
@@ -356,9 +301,6 @@ def test_download_without_storage_is_not_configured(client, db_engine, signer, a
 
 
 def test_a_file_without_a_location_is_not_found_on_s3(client, db_engine, admin, monkeypatch):
-    def refuse(store):
-        raise AssertionError("Google storage was asked")
-    monkeypatch.setattr(gcs_storage, "store_client", refuse)
     use_stores(monkeypatch, s3("mf-storage-prod", "mf-storage-prod"))
     file_mfid = _file(db_engine, None)
     assert client.get(f"/files/{file_mfid}/download_link").status_code == 404

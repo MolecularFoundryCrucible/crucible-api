@@ -200,13 +200,13 @@ def test_record_files_use_the_server_client(store, keyed):
 
 def test_signing_errors_stay_server_side(monkeypatch):
     from fastapi import HTTPException
-    from app.api.routes import gcs_storage
+    from app.services.storage_downloads import signed_download
 
     def fail(*args, **kwargs):
         raise RuntimeError("https://iamcredentials.googleapis.com signer@mf-crucible.iam.gserviceaccount.com")
-    monkeypatch.setattr(gcs_storage, "get_store", lambda *_: SimpleNamespace(signed_download=fail))
+    monkeypatch.setattr("app.storage.get_store", lambda *_: SimpleNamespace(signed_download=fail))
     with pytest.raises(HTTPException) as raised:
-        gcs_storage._signed_download("file", DS, f"mf-storage-prod/{DS}/scan.tif", None, "scan.tif", store_id="staging")
+        signed_download("file", DS, f"mf-storage-prod/{DS}/scan.tif", None, "scan.tif", store_id="staging")
     assert raised.value.status_code == 503
     assert "googleapis" not in raised.value.detail and "iam" not in raised.value.detail
 

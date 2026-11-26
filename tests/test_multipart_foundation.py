@@ -12,7 +12,7 @@ from app.utils.multipart_config import MultipartStorageConfig
 def make_session(**kwargs):
     values = dict(dataset_mfid="ds", object_key="uploads/object", associated_file_name="data", owner_user_id="owner", user_id=1, expires_at=datetime(2000, 1, 1, tzinfo=timezone.utc), size=10)
     values.update(kwargs)
-    return UploadSession(**values)
+    return UploadSession(**{"store_id": "mf-storage-prod", **values})
 
 
 def test_legacy_inserts_and_new_idempotency(db_engine):

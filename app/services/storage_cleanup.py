@@ -92,7 +92,7 @@ def delete_versions(engine, stores, now, dry_run, batch, report):
             except StoreUnavailable:
                 report.failures.append(f"version {version.id}: store_unavailable")
                 continue
-            if not owned_object(store, version.storage_path, version.storage_generation, version.dataset_mfid):
+            if not owned_object(store, version.storage_path, version.storage_version, version.dataset_mfid):
                 report.failures.append(f"version {version.id}: not_owned")
                 if not dry_run:
                     version.failure_code = "not_owned"
@@ -104,7 +104,7 @@ def delete_versions(engine, stores, now, dry_run, batch, report):
                 continue
             bucket, _, key = version.storage_path.partition("/")
             try:
-                stores(store.id).delete(bucket, key, version.storage_generation)
+                stores(store.id).delete(bucket, key, version.storage_version)
             except StorageFailure as error:
                 version.attempts += 1
                 version.failure_code = str(error) or "storage_failure"

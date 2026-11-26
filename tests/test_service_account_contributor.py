@@ -57,11 +57,11 @@ def test_service_account_can_add_a_file_without_updating_an_existing_one(client,
 
     created = client.post(
         "/datasets/dataset-one/files",
-        json={"filename": "first.dat", "size": 10, "sha256_hash": "same-hash"},
+        json={"filename": "first.dat", "size": 10, "sha256_hash": "same-hash", "storage_backend": "globus"},
     )
     repeated = client.post(
         "/datasets/dataset-one/files",
-        json={"filename": "first.dat", "size": 99, "sha256_hash": "other-hash"},
+        json={"filename": "first.dat", "size": 99, "sha256_hash": "other-hash", "storage_backend": "globus"},
     )
 
     assert created.status_code == 200, created.text

@@ -21,7 +21,7 @@ def _setup(db_engine, grantee_role):
         ag = AccessGroup(group_name="grp_1")
         session.add(ag)
         session.add(Resource(mfid="ds_1", resource_type="dataset"))
-        session.add(AssociatedFile(mfid="file_1", filename="a.txt", storage_path="bucket/ds_1/a.txt",
+        session.add(AssociatedFile(store_id="mf-storage-prod", mfid="file_1", filename="a.txt", storage_path="bucket/ds_1/a.txt",
                                    size=10, sha256_hash="x", dataset_id=ds.id))
         session.commit()
         session.refresh(ag)

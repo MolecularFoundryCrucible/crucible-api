@@ -252,8 +252,8 @@ class ThumbnailPreviewRead(SQLModel):
     mime_type: Literal["image/jpeg"] = "image/jpeg"
 
 
-def file_etag(storage_path, storage_generation, sha256_hash, size):
-    identity = f"{storage_path or ''}|{storage_generation or ''}|{sha256_hash}|{size}"
+def file_etag(storage_path, storage_version, sha256_hash, size):
+    identity = f"{storage_path or ''}|{storage_version or ''}|{sha256_hash}|{size}"
     return '"' + hashlib.sha256(identity.encode()).hexdigest()[:32] + '"'
 
 
@@ -310,13 +310,13 @@ class AssociatedFileRead(SQLModel):
     access_note: Optional[str] = None
     size: int
     sha256_hash: str
-    storage_generation: Optional[str] = Field(default=None, exclude=True)
+    storage_version: Optional[str] = Field(default=None, exclude=True)
     store_id: Optional[str] = Field(default=None, description="The store holding a stored file (see GET /storage/stores); null for a catalog-only record, or a stored file whose store has not been recorded yet.")
 
     @computed_field
     @property
     def etag(self) -> str:
-        return file_etag(self.storage_path, self.storage_generation, self.sha256_hash, self.size)
+        return file_etag(self.storage_path, self.storage_version, self.sha256_hash, self.size)
 
     @model_validator(mode="after")
     def catalog_records_have_no_store(self):

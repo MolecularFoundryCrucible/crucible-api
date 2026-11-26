@@ -36,7 +36,7 @@ def test_a_replace_keeps_the_previous_content_as_a_version(flow):
     _, engine, _ = flow
     file, current = replaced(flow)
     [version] = versions(engine)
-    assert (version.file_mfid, version.dataset_mfid, version.storage_path, version.storage_generation) == (file["mfid"], "ds", file["storage_path"], "7")
+    assert (version.file_mfid, version.dataset_mfid, version.storage_path, version.storage_version) == (file["mfid"], "ds", file["storage_path"], "7")
     assert (version.size, version.sha256_hash, version.storage_crc32c, version.reason) == (len(DATA), SHA, CRC, "replaced")
     assert version.delete_after - version.created_at == timedelta(days=14)
     assert (version.deleted_at, version.restored_at, version.attempts) == (None, None, 0)
@@ -125,7 +125,7 @@ def test_restore_brings_back_the_previous_content_and_can_be_undone(flow):
     file, current = replaced(flow)
     restored = restore_latest(engine, storage, file["mfid"], service.now())
     after = stored_file(engine, file["mfid"])
-    assert (after.storage_path, after.storage_generation, after.size, after.sha256_hash) == (file["storage_path"], "7", len(DATA), SHA)
+    assert (after.storage_path, after.storage_version, after.size, after.sha256_hash) == (file["storage_path"], "7", len(DATA), SHA)
     first, second = versions(engine)
     assert first.restored_at is not None and restored.version_id == first.id
     assert (second.storage_path, restored.replaced_version_id) == (current["storage_path"], second.id)
@@ -181,7 +181,7 @@ def due_version(engine, storage, path, used_by=None):
         if used_by is not None:
             dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
             session.add(AssociatedFile(dataset_id=dataset_id, filename=used_by, storage_path=path, size=1, sha256_hash="b" * 64, store_id="dedicated"))
-        version = FileVersion(file_mfid="f", dataset_mfid="ds", storage_path=path, storage_generation="7", size=1, sha256_hash="a" * 64,
+        version = FileVersion(file_mfid="f", dataset_mfid="ds", storage_path=path, storage_version="7", size=1, sha256_hash="a" * 64,
                               reason="replaced", store_id="dedicated", created_at=service.now() - timedelta(days=20), delete_after=service.now() - timedelta(days=6))
         session.add(version)
         session.commit()
@@ -194,7 +194,7 @@ def test_a_dry_run_writes_nothing_for_a_version_outside_the_own_buckets(flow):
     _, engine, storage = flow
     published_file(flow)
     with Session(engine) as session:
-        session.add(FileVersion(file_mfid="f", dataset_mfid="ds", storage_path="elsewhere/ds/_files/x", storage_generation="7", size=1, sha256_hash="a" * 64,
+        session.add(FileVersion(file_mfid="f", dataset_mfid="ds", storage_path="elsewhere/ds/_files/x", storage_version="7", size=1, sha256_hash="a" * 64,
                                 reason="replaced", store_id="dedicated", created_at=service.now(), delete_after=service.now() - timedelta(days=1)))
         session.commit()
     report = run_cleanup(engine, storage, service.now(), dry_run=True)
@@ -250,7 +250,7 @@ def test_a_second_file_sharing_the_object_gets_its_full_grace_period(flow):
     file = published_file(flow)
     with Session(engine) as session:
         dataset_id = session.exec(select(AssociatedFile.dataset_id)).first()
-        twin = AssociatedFile(dataset_id=dataset_id, filename="twin.bin", storage_path=file["storage_path"], storage_generation="7", size=len(DATA), sha256_hash=SHA, store_id="dedicated")
+        twin = AssociatedFile(dataset_id=dataset_id, filename="twin.bin", storage_path=file["storage_path"], storage_version="7", size=len(DATA), sha256_hash=SHA, store_id="dedicated")
         session.add(twin)
         session.commit()
         twin_mfid = twin.mfid
@@ -329,7 +329,7 @@ def test_deleting_a_file_puts_its_content_in_the_trash(flow):
     file = deleted(flow)
     [version] = versions(engine)
     assert (version.reason, version.filename, version.file_mfid, version.dataset_mfid) == ("deleted", "data.bin", file["mfid"], "ds")
-    assert (version.storage_path, version.storage_generation, version.size, version.sha256_hash) == (file["storage_path"], "7", len(DATA), SHA)
+    assert (version.storage_path, version.storage_version, version.size, version.sha256_hash) == (file["storage_path"], "7", len(DATA), SHA)
     assert version.delete_after - version.created_at == timedelta(days=14)
     assert file["storage_path"].partition("/")[2] in storage.objects
 
@@ -396,7 +396,7 @@ def test_deleting_a_legacy_file_without_generation_trashes_nothing(flow):
     file = published_file(flow)
     with Session(engine) as session:
         record = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file["mfid"])).one()
-        record.storage_generation = None
+        record.storage_version = None
         session.add(record)
         session.commit()
     assert client.delete(f"/files/{file['mfid']}").status_code == 200
@@ -414,7 +414,7 @@ def test_restoring_a_deleted_file_brings_it_back_with_the_same_mfid(flow):
     restored = restore_deleted(engine, storage, "ds", file["mfid"], service.now())
     assert restored.mfid == file["mfid"]
     after = stored_file(engine, file["mfid"])
-    assert (after.filename, after.storage_path, after.storage_generation, after.size, after.sha256_hash, after.storage_crc32c, after.sha256_verified_at) == ("data.bin", file["storage_path"], "7", len(DATA), SHA, CRC, None)
+    assert (after.filename, after.storage_path, after.storage_version, after.size, after.sha256_hash, after.storage_crc32c, after.sha256_verified_at) == ("data.bin", file["storage_path"], "7", len(DATA), SHA, CRC, None)
     assert versions(engine)[0].restored_at is not None
     assert run_cleanup(engine, storage, service.now() + timedelta(days=15)).deleted_versions == 0
 
@@ -466,7 +466,7 @@ def test_restore_of_a_deleted_file_refuses(flow, situation, code):
     if situation == "name_taken":
         with Session(engine) as session:
             dataset_id = session.exec(select(Dataset.id)).one()
-            session.add(AssociatedFile(dataset_id=dataset_id, filename="data.bin", storage_path="dedicated/ds/other", size=1, sha256_hash="b" * 64))
+            session.add(AssociatedFile(store_id="mf-storage-prod", dataset_id=dataset_id, filename="data.bin", storage_path="dedicated/ds/other", size=1, sha256_hash="b" * 64))
             session.commit()
     elif situation == "name_reserved":
         response = flow[0].post(BASE + "/initiate", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA}, headers={"Idempotency-Key": "again"})

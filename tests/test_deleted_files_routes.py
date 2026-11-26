@@ -55,7 +55,7 @@ def test_restore_errors_carry_a_code(trash):
     (client, engine, _), file = trash
     with Session(engine) as session:
         dataset_id = session.exec(select(Dataset.id)).one()
-        session.add(AssociatedFile(dataset_id=dataset_id, filename="data.bin", storage_path="dedicated/ds/other", size=1, sha256_hash="b" * 64))
+        session.add(AssociatedFile(store_id="mf-storage-prod", dataset_id=dataset_id, filename="data.bin", storage_path="dedicated/ds/other", size=1, sha256_hash="b" * 64))
         session.commit()
     taken = client.post(f"{TRASH}/{file['mfid']}/restore")
     assert (taken.status_code, taken.json()["detail"]["code"]) == (409, "filename_exists")

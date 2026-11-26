@@ -9,7 +9,6 @@ import google_crc32c
 import pytest
 from sqlmodel import Session, select
 
-import app.api.routes.gcs_storage as gcs_storage
 import app.storage.gcs as google
 from app.api.routes import multipart as routes
 from app.tables import AccessGroup, AssociatedFile, Dataset, DeletionRequest, FileVersion, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
@@ -199,14 +198,14 @@ def test_upload_resume_publish_retry_download_ingestion_and_delete(flow, monkeyp
     file = files(engine)[0]
     assert file.storage_path == f"dedicated/ds/_files/{identifier}"
     assert file.sha256_verified_at is None
-    assert file.storage_generation == "7"
+    assert file.storage_version == "7"
     assert file.sha256_hash == SHA
     signer = MagicMock()
     signed_blob = signer.bucket.return_value.blob.return_value
     signed_blob.content_type = "application/octet-stream"
     signed_blob.generate_signed_url.return_value = "https://download.example/pinned-generation-7"
     monkeypatch.setattr(google, "server_client", lambda: signer)
-    monkeypatch.setattr(gcs_storage, "get_store", lambda *_: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
+    monkeypatch.setattr("app.storage.get_store", lambda *_: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
     assert client.get(f"/files/{file_id}/download_link").json()["url"].endswith("pinned-generation-7")
     assert signer.bucket.return_value.blob.call_args.kwargs["generation"] == 7
     assert "filename*=UTF-8''data.bin" in signed_blob.generate_signed_url.call_args.kwargs["response_disposition"]
@@ -677,19 +676,10 @@ def test_cleanup_protection_requires_server_recorded_generation(flow, generation
     upload = row(engine, identifier)
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        session.add(AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="reference", storage_path=f"{upload.bucket}/{upload.object_key}", size=len(DATA), sha256_hash=SHA, storage_generation=generation))
+        session.add(AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="reference", storage_path=f"{upload.bucket}/{upload.object_key}", size=len(DATA), sha256_hash=SHA, storage_version=generation))
         session.commit()
     assert client.delete(BASE + f"/{identifier}").status_code == 204
     assert bool(storage.objects) == (generation is not None)
-
-
-def test_unverified_multipart_hash_does_not_dedupe_registered_files(flow):
-    client, engine, _ = flow
-    publish(flow)
-    publish(flow, filename="copy.bin")
-    response = client.post("/datasets/ds/files", json={"filename": "legacy.bin", "size": len(DATA), "sha256_hash": SHA})
-    assert response.status_code == 200, response.text
-    assert response.json()["filename"] == "legacy.bin"
 
 
 def test_dataset_hard_deleted_during_completion_returns_409_and_removes_the_object(flow):
@@ -729,17 +719,13 @@ def test_upload_does_not_publish_into_a_dataset_put_up_for_deletion(flow):
 def test_file_record_filenames_are_unique_within_a_dataset(flow):
     client, _, _ = flow
     file_id = complete(flow, publish(flow)).json()["mfid"]
-    repeated = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA})
-    assert repeated.status_code == 200, repeated.text
-    assert repeated.json()["mfid"] == file_id
-    changed = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": "2" * 64})
+    changed = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA, "storage_backend": "globus"})
     assert changed.status_code == 409
     detail = changed.json()["detail"]
     assert (detail["code"], detail["file_mfid"]) == ("filename_exists", file_id)
     assert detail["etag"] == client.get(f"/files/{file_id}").json()["etag"]
-    renamed = client.post("/datasets/ds/files", json={"filename": "alias.bin", "size": len(DATA), "sha256_hash": SHA})
+    renamed = client.post("/datasets/ds/files", json={"filename": "alias.bin", "size": len(DATA), "sha256_hash": SHA, "storage_backend": "globus"})
     assert renamed.status_code == 200, renamed.text
-    assert renamed.json()["filename"] == "alias.bin"
     assert renamed.json()["mfid"] != file_id
     assert sorted(f["filename"] for f in client.get("/datasets/ds/files").json()) == ["alias.bin", "data.bin"]
 
@@ -747,7 +733,7 @@ def test_file_record_filenames_are_unique_within_a_dataset(flow):
 def test_file_registration_respects_multipart_filename_reservation(flow):
     client, engine, _ = flow
     start(flow)
-    response = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": "1" * 64})
+    response = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": "1" * 64, "storage_backend": "globus"})
     assert response.status_code == 409
 
 
@@ -869,68 +855,11 @@ def test_replace_with_trusted_identical_content_returns_the_file(flow):
     assert response.json()["upload_id"] is None
 
 
-def test_replace_denied_without_access_never_runs_the_backfill(flow, monkeypatch):
-    client, engine, _ = flow
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        record = AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="legacy.bin", size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path=None)
-        session.add(record)
-        session.commit()
-        session.refresh(record)
-        mfid = record.mfid
-        acl = session.exec(select(ResourceACL).where(ResourceACL.mfid == "ds")).one()
-        acl.permission = "viewer"
-        acl.write = False
-        session.add(acl)
-        session.commit()
-    calls = []
-    monkeypatch.setattr(gcs_storage, "_determine_storage_path", lambda *args: calls.append(args) or "mf-storage-prod/ds/legacy.bin")
-    response = replace_start(flow, mfid)
-    assert response.status_code == 403
-    assert calls == []
-
-
-def test_replace_backfills_the_storage_path_before_creating_the_session(flow, monkeypatch):
-    client, engine, _ = flow
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        record = AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="legacy.bin", size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path=None)
-        session.add(record)
-        session.commit()
-        session.refresh(record)
-        mfid = record.mfid
-    before_etag = client.get(f"/files/{mfid}").json()["etag"]
-    monkeypatch.setattr(gcs_storage, "_determine_storage_path", lambda *args: "mf-storage-prod/ds/legacy.bin")
-    response = replace_start(flow, mfid, headers={"If-Match": before_etag})
-    assert response.status_code == 200, response.text
-    session = row(engine, response.json()["upload_id"])
-    assert session.replace_base_etag == file_etag("mf-storage-prod/ds/legacy.bin", None, SHA, len(DATA))
-
-
-def test_replace_trusted_short_circuit_persists_the_backfilled_path(flow, monkeypatch):
-    client, engine, _ = flow
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        record = AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="legacy.bin", size=len(DATA), sha256_hash=SHA, storage_backend="gcs", storage_path=None)
-        session.add(record)
-        session.commit()
-        session.refresh(record)
-        mfid = record.mfid
-    monkeypatch.setattr(gcs_storage, "_determine_storage_path", lambda *args: "mf-storage-prod/ds/legacy.bin")
-    response = replace_start(flow, mfid, digest=SHA)
-    assert response.status_code == 200, response.text
-    assert response.json()["state"] == "completed"
-    with Session(engine) as session:
-        stored = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == mfid)).one()
-        assert stored.storage_path == "mf-storage-prod/ds/legacy.bin"
-    assert client.get(f"/files/{mfid}").json()["etag"] == response.json()["existing_file"]["etag"]
-
-
 @pytest.fixture
 def kept(db_engine):
     def read():
         with Session(db_engine) as session:
-            return [(version.storage_path, version.storage_generation) for version in session.exec(select(FileVersion).order_by(FileVersion.id)).all()]
+            return [(version.storage_path, version.storage_version) for version in session.exec(select(FileVersion).order_by(FileVersion.id)).all()]
     return read
 
 
@@ -970,18 +899,13 @@ def test_replace_moves_a_legacy_file_into_the_multipart_layout(flow, kept):
     with Session(engine) as session:
         record = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == mfid)).one()
         assert record.storage_path == f"dedicated/ds/_files/{identifier}"
-        assert record.storage_generation == "7"
+        assert record.storage_version == "7"
         assert record.filename == "old.bin"
     assert kept() == []
 
 
-def test_replace_of_pathless_legacy_file_backfills_and_skips_missing_object(flow, kept, monkeypatch):
+def test_replacing_a_file_without_content_gives_it_content_and_keeps_no_version(flow, kept):
     client, engine, _ = flow
-    import app.api.routes.gcs_storage as gcs_storage
-    from fastapi import HTTPException
-    def missing(dsid, filename, store_id):
-        raise HTTPException(status_code=404, detail="File not found in production storage")
-    monkeypatch.setattr(gcs_storage, "_determine_storage_path", missing)
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
         legacy = AssociatedFile(store_id="dedicated", dataset_id=dataset.id, filename="nopath.bin", size=3, sha256_hash="e" * 64, storage_path=None)
@@ -1050,7 +974,7 @@ def test_storage_backend_changed_during_replace_fails_publication(flow, kept):
     put(flow, identifier)
     with Session(engine) as session:
         record = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file["mfid"])).one()
-        assert file_etag(record.storage_path, record.storage_generation, record.sha256_hash, record.size) == file["etag"]
+        assert file_etag(record.storage_path, record.storage_version, record.sha256_hash, record.size) == file["etag"]
         record.storage_backend = "local"
         session.add(record)
         session.commit()
@@ -1087,7 +1011,6 @@ def test_replace_idempotent_replay_precedes_if_match(flow, monkeypatch):
     client, engine, _ = flow
     mfid = pathless_file(engine)
     before_etag = client.get(f"/files/{mfid}").json()["etag"]
-    monkeypatch.setattr(gcs_storage, "_determine_storage_path", lambda *args: "dedicated/ds/legacy.bin")
     headers = {"Idempotency-Key": "replay-1", "If-Match": before_etag}
     first = replace_start(flow, mfid, headers=headers)
     assert first.status_code == 200, first.text
@@ -1116,12 +1039,8 @@ def test_replace_of_file_whose_dataset_vanished_is_404(flow):
     assert response.json()["detail"] == "File not found"
 
 
-def test_identical_content_does_not_short_circuit_when_bytes_are_missing(flow, monkeypatch):
+def test_identical_content_does_not_short_circuit_when_bytes_are_missing(flow):
     client, engine, _ = flow
-    from fastapi import HTTPException
-    def missing(dsid, filename, store_id):
-        raise HTTPException(status_code=404, detail="File not found in production storage")
-    monkeypatch.setattr(gcs_storage, "_determine_storage_path", missing)
     mfid = pathless_file(engine)
     response = replace_start(flow, mfid, digest=SHA)
     assert response.status_code == 200, response.text
@@ -1129,12 +1048,8 @@ def test_identical_content_does_not_short_circuit_when_bytes_are_missing(flow, m
     assert row(engine, response.json()["upload_id"]).replace_file_mfid == mfid
 
 
-def test_replace_without_previous_path_is_logged(flow, kept, monkeypatch, caplog):
+def test_replace_without_previous_path_is_logged(flow, kept, caplog):
     client, engine, _ = flow
-    from fastapi import HTTPException
-    def missing(dsid, filename, store_id):
-        raise HTTPException(status_code=404, detail="File not found in production storage")
-    monkeypatch.setattr(gcs_storage, "_determine_storage_path", missing)
     mfid = pathless_file(engine)
     with caplog.at_level("INFO", logger="app.services.multipart"):
         _, response = replace(flow, mfid)
@@ -1151,16 +1066,6 @@ def test_replace_routes_document_their_error_responses():
     assert "etag_mismatch" in replace_responses["412"]["description"]
     assert "filename_exists" in paths["/datasets/{dataset_mfid}/upload/multipart/initiate"]["post"]["responses"]["409"]["description"]
     assert "ETag" in paths["/files/{file_id}"]["get"]["responses"]["200"]["headers"]
-
-
-def test_backfill_listing_is_bounded(monkeypatch):
-    client = MagicMock()
-    blob = MagicMock()
-    blob.name = "ds/legacy.bin"
-    client.bucket.return_value.list_blobs.return_value = [blob]
-    monkeypatch.setattr(gcs_storage, "store_client", lambda store: client)
-    assert gcs_storage._determine_storage_path("ds", "legacy.bin", "mf-storage-prod").endswith("/ds/legacy.bin")
-    client.bucket.return_value.list_blobs.assert_called_once_with(prefix="ds/", timeout=30)
 
 
 MIB = 1024 ** 2

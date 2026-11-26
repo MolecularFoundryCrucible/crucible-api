@@ -110,7 +110,7 @@ def writer(records, db_engine, auth_as, monkeypatch):
 
 
 @pytest.mark.parametrize("method, path, body", [
-    ("post", "/datasets/ds-pending/files", {"filename": "b.h5", "size": 1, "sha256_hash": "b" * 64}),
+    ("post", "/datasets/ds-pending/files", {"filename": "b.h5", "size": 1, "sha256_hash": "b" * 64, "storage_backend": "globus"}),
     ("patch", "/files/f-ds-pending", {"access_note": "x"}),
     ("delete", "/files/f-ds-pending", None),
     ("post", "/files/f-ds-pending/ingest", None),

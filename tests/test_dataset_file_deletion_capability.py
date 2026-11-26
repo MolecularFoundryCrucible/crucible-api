@@ -17,7 +17,7 @@ def _dataset_with_file(db_engine, pending=False):
         session.add_all([dataset, group])
         session.commit()
         session.add(ResourceACL(mfid=DS, accessgroup_id=group.id, read=True, write=True, permission="owner"))
-        file = AssociatedFile(dataset_id=dataset.id, filename="a.txt", size=10, sha256_hash="a" * 64, storage_path=f"mf-storage-prod/{DS}/a.txt")
+        file = AssociatedFile(store_id="mf-storage-prod", dataset_id=dataset.id, filename="a.txt", size=10, sha256_hash="a" * 64, storage_path=f"mf-storage-prod/{DS}/a.txt")
         session.add(file)
         if pending:
             session.add(DeletionRequest(resource_id=DS, resource_type="dataset", requester_id=ME, status="pending"))

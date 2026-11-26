@@ -16,7 +16,6 @@ from app.services.related_records import dataset_responses
 from app.services.resource_access import record_roles
 from app.services.instrument_members import grant_dataset as grant_instrument_members, revoke_dataset as revoke_instrument_members
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.config import get_settings
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
 from app.general_utils import get_utc_datetime
@@ -92,8 +91,7 @@ from app.models.query_params import requested_owners
 from app.utils.user_utils import owned_by_any, owner_fields, owner_unique_id, owners_of, resolve_create_owner
 from app.utils.sql_utils import record_resource, is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for, dataset_or_404, file_named, offset_page
 from app.utils.gcs_record_utils import write_record, dataset_record
-from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
-from app.services.storage_downloads import StorageNotConfigured
+from app.services.storage_downloads import StorageNotConfigured, signed_download
 from app.storage import StoreUnavailable
 
 router = APIRouter(tags=["datasets"])
@@ -1238,16 +1236,7 @@ def generate_dataset_download_links(
             select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)
         ).all()
 
-        mfid_to_path = {}
-        for af in af_records:
-            if af.storage_backend != "gcs":
-                mfid_to_path[af.mfid] = None
-                continue
-            try:
-                mfid_to_path[af.mfid] = (_ensure_storage_path(af, dsid, session), af.storage_generation, af.filename, af.store_id)
-            except (HTTPException, StoreUnavailable, StorageNotConfigured):
-                mfid_to_path[af.mfid] = None
-        session.commit()
+        mfid_to_path = {af.mfid: (af.storage_path, af.storage_version, af.filename, af.store_id) if af.storage_backend == "gcs" and af.storage_path else None for af in af_records}
 
     # Generate signed URLs outside the DB session; null for missing blobs. Keyless signing is a call
     # to Google per URL (about 0.1 s), so a large dataset is signed in parallel.
@@ -1257,8 +1246,8 @@ def generate_dataset_download_links(
             return mfid, None
         try:
             path, generation, filename, store_id = storage_path
-            return mfid, _signed_download(mfid, dsid, path, generation, filename, disposition, store_id)[0]
-        except (HTTPException, StoreUnavailable):
+            return mfid, signed_download(mfid, dsid, path, generation, filename, disposition, store_id)[0]
+        except (HTTPException, StoreUnavailable, StorageNotConfigured):
             return mfid, None
 
     with ThreadPoolExecutor(max_workers=DOWNLOAD_SIGNING_WORKERS) as pool:
@@ -1297,6 +1286,8 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
     Requires contributor access.
     '''
 
+    if associated_file.storage_backend == "gcs":
+        raise HTTPException(422, {"code": "stored_file_needs_upload", "message": "A file in this server's storage is created by uploading it (POST /datasets/{dataset_mfid}/upload/multipart/initiate); to catalog a file kept elsewhere, name its storage_backend"})
     with Session(get_engine()) as session:
         ds = dataset_or_404(session, dsid)
         require_permission(session, auth_res, dsid, Permission.CREATE)
@@ -1310,7 +1301,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         def retry_or_conflict(existing):
             if all(getattr(existing, field) == getattr(associated_file, field) for field in ("sha256_hash", "size", "storage_backend")):
                 return AssociatedFileRead.model_validate(existing, update={"dataset_mfid": dsid})
-            raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing.mfid, "etag": file_etag(existing.storage_path, existing.storage_generation, existing.sha256_hash, existing.size), "message": "Filename already exists"})
+            raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing.mfid, "etag": file_etag(existing.storage_path, existing.storage_version, existing.sha256_hash, existing.size), "message": "Filename already exists"})
 
         existing = same_name()
         if existing is not None:
@@ -1322,7 +1313,6 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         af_obj = AssociatedFile(
             **associated_file.model_dump(),
             dataset_id=dataset_pk,
-            store_id=get_settings().storage.default_store_id if associated_file.storage_backend == "gcs" else None,
         )
         session.add(af_obj)
         try:

@@ -115,7 +115,7 @@ def part_size(upload, number):
 
 
 def trusted_hash():
-    return or_(AssociatedFile.storage_generation.is_(None), AssociatedFile.sha256_verified_at.is_not(None))
+    return or_(AssociatedFile.storage_version.is_(None), AssociatedFile.sha256_verified_at.is_not(None))
 
 
 def filename_reserved(session, dsid, filename):
@@ -197,7 +197,7 @@ def reserve(engine, principal, dsid, body, key, config, warnings=None):
             require_permission(session, demoted(session, principal), dsid, Permission.READ)
             return MultipartStatus(state="completed", existing_file=AssociatedFileRead.model_validate(existing_name, update={"dataset_mfid": dsid}))
         if existing_name is not None:
-            raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing_name.mfid, "etag": file_etag(existing_name.storage_path, existing_name.storage_generation, existing_name.sha256_hash, existing_name.size), "message": "Filename already exists"})
+            raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing_name.mfid, "etag": file_etag(existing_name.storage_path, existing_name.storage_version, existing_name.sha256_hash, existing_name.size), "message": "Filename already exists"})
         if filename_reserved(session, dsid, body.filename):
             raise HTTPException(409, "Filename is reserved by another upload")
         store = choose_store(session, dataset, body.store_id, warnings)
@@ -238,7 +238,7 @@ def start(engine, storage, upload):
         return status(session, current)
 
 
-def reserve_replace(engine, principal, file_mfid, body, key, if_match, config, backfill=None):
+def reserve_replace(engine, principal, file_mfid, body, key, if_match, config):
     if body.size > config.max_upload_bytes:
         raise HTTPException(413, "File exceeds the configured upload limit")
     fingerprint = request_fingerprint(body, replace_file_mfid=file_mfid)
@@ -266,32 +266,21 @@ def reserve_replace(engine, principal, file_mfid, body, key, if_match, config, b
             previous = idempotent(session, principal, dsid, key, fingerprint)
             if previous is not None:
                 return previous
-        seen_etag = file_etag(file.storage_path, file.storage_generation, file.sha256_hash, file.size)
+        seen_etag = file_etag(file.storage_path, file.storage_version, file.sha256_hash, file.size)
         if not if_match_satisfied(if_match, seen_etag):
             raise HTTPException(412, {"code": "etag_mismatch", "etag": seen_etag, "message": "File has changed since the given ETag"})
-        backfilled = False
-        if not file.storage_path and backfill is not None:
-            try:
-                backfill(file, dsid, session)
-                backfilled = True
-            except HTTPException:
-                pass
-        base_etag = file_etag(file.storage_path, file.storage_generation, file.sha256_hash, file.size)
+        base_etag = seen_etag
         running = replace_in_progress(session, file_mfid)
         if running is not None:
-            if backfilled:
-                session.commit()
             raise HTTPException(409, {"code": "replace_in_progress", "upload_id": running.upload_id, "message": "Another replace of this file is in progress"})
-        trusted = file.storage_path and (file.storage_generation is None or file.sha256_verified_at is not None)
+        trusted = file.storage_path and (file.storage_version is None or file.sha256_verified_at is not None)
         if body.sha256_hash and body.sha256_hash == file.sha256_hash and body.size == file.size and trusted:
-            if backfilled:
-                session.commit()
             return MultipartStatus(state="completed", existing_file=AssociatedFileRead.model_validate(file, update={"dataset_mfid": dsid}))
         return new_session(session, principal, dsid, body.size, key, fingerprint, body.sha256_hash, config, file.filename, replace_file_mfid=file_mfid, replace_base_etag=base_etag, store=choose_store(session, dataset, body.store_id) if body.store_id else store_config(file.store_id))
 
 
-def initiate_replace(engine, storage, principal, file_mfid, body, key, if_match, config, backfill=None):
-    upload = reserve_replace(engine, principal, file_mfid, body, key, if_match, config, backfill=backfill)
+def initiate_replace(engine, storage, principal, file_mfid, body, key, if_match, config):
+    upload = reserve_replace(engine, principal, file_mfid, body, key, if_match, config)
     if isinstance(upload, MultipartStatus):
         return upload
     return start(engine, storage, upload)
@@ -365,7 +354,7 @@ def cleanup(engine, storage, upload):
     metadata = storage.head(upload.bucket, upload.object_key)
     if metadata:
         with Session(engine) as session:
-            registered = session.exec(select(AssociatedFile.id).where(AssociatedFile.storage_path == f"{upload.bucket}/{upload.object_key}", AssociatedFile.storage_generation.is_not(None))).first()
+            registered = session.exec(select(AssociatedFile.id).where(AssociatedFile.storage_path == f"{upload.bucket}/{upload.object_key}", AssociatedFile.storage_version.is_not(None))).first()
         if registered is None:
             storage.delete(upload.bucket, upload.object_key, metadata.version)
     with Session(engine) as session:
@@ -452,7 +441,7 @@ def complete(engine, storage, principal, dsid, body):
                         code = "permission_revoked"
                     else:
                         file = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == current.replace_file_mfid).with_for_update()).one_or_none()
-                        code = None if file is not None and file.storage_backend == "gcs" and file_etag(file.storage_path, file.storage_generation, file.sha256_hash, file.size) == current.replace_base_etag else "file_changed"
+                        code = None if file is not None and file.storage_backend == "gcs" and file_etag(file.storage_path, file.storage_version, file.sha256_hash, file.size) == current.replace_base_etag else "file_changed"
                 else:
                     authorize(session, principal, dsid)
                     conflict = file_named(session, dataset.id, current.associated_file_name)
@@ -460,10 +449,10 @@ def complete(engine, storage, principal, dsid, body):
                 if code is None:
                     touch_resource_modification_time(session, dsid)
                     if file is not None:
-                        previous = (file.storage_path, file.storage_generation)
+                        previous = (file.storage_path, file.storage_version)
                         keep_version(session, file, dsid, now())
                         file.storage_path = f"{current.bucket}/{current.object_key}"
-                        file.storage_generation = metadata.version
+                        file.storage_version = metadata.version
                         file.size = current.size
                         file.sha256_hash = current.claimed_sha256
                         file.storage_crc32c = current.claimed_crc32c
@@ -471,10 +460,10 @@ def complete(engine, storage, principal, dsid, body):
                         file.store_id = current.store_id
                         session.add(file)
                     else:
-                        file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.object_key}", size=current.size, sha256_hash=current.claimed_sha256, storage_generation=metadata.version, storage_crc32c=current.claimed_crc32c, store_id=current.store_id)
+                        file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.object_key}", size=current.size, sha256_hash=current.claimed_sha256, storage_version=metadata.version, storage_crc32c=current.claimed_crc32c, store_id=current.store_id)
                         session.add(file)
                     current.result_file_mfid = file.mfid
-                    current.storage_generation = metadata.version
+                    current.storage_version = metadata.version
                     current.state = "completed"
                     current.failure_code = None
                     save(session, current)

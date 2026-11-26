@@ -37,7 +37,7 @@ def _make_public_dataset_with_file(db_engine, dsid, storage_path="mf-storage-pro
         session.add(ds)
         session.commit()
         session.refresh(ds)
-        af = AssociatedFile(
+        af = AssociatedFile(store_id="mf-storage-prod", 
             filename="f.txt", storage_path=storage_path, size=10,
             sha256_hash="abc123", dataset_id=ds.id,
         )
@@ -52,7 +52,7 @@ def test_gcs_backend_download_link_still_calls_generate_signed_url(client, db_en
     auth_as("0000-0000-0000-0001", groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
     with patch(
-        "app.api.routes.files._signed_download",
+        "app.api.routes.files.signed_download",
         return_value=("https://signed.example/x", 3600),
     ) as mock_sign:
         resp = client.get(f"/files/{file_mfid}/download_link")
@@ -70,7 +70,7 @@ def test_associated_file_storage_backend_defaults_to_gcs(db_engine):
         session.commit()
         session.refresh(ds)
 
-        af_default = AssociatedFile(filename="a.txt", size=1, sha256_hash="h1", dataset_id=ds.id)
+        af_default = AssociatedFile(store_id="mf-storage-prod", filename="a.txt", size=1, sha256_hash="h1", dataset_id=ds.id)
         af_remote = AssociatedFile(
             filename="b.txt", size=2, sha256_hash="h2", dataset_id=ds.id,
             storage_backend="globus", storage_path="globus://endpoint/path/b.txt",
@@ -190,14 +190,12 @@ def test_non_gcs_single_file_download_link_returns_null_without_calling_gcs(clie
     auth_as("0000-0000-0000-0001",
             groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
-    with patch("app.api.routes.files._signed_download") as mock_sign, \
-         patch("app.api.routes.files._ensure_storage_path") as mock_ensure:
+    with patch("app.api.routes.files.signed_download") as mock_sign:
         resp = client.get(f"/files/{file_mfid}/download_link")
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"url": None, "expires_in": None}
     mock_sign.assert_not_called()
-    mock_ensure.assert_not_called()
 
 
 def test_non_gcs_file_in_batch_download_links_is_null(client, db_engine, auth_as):
@@ -215,7 +213,7 @@ def test_non_gcs_file_in_batch_download_links_is_null(client, db_engine, auth_as
         session.commit()
         public_gid = pub.id
         session.refresh(ds)
-        gcs_af = AssociatedFile(
+        gcs_af = AssociatedFile(store_id="mf-storage-prod", 
             filename="local.txt", storage_path="mf-storage-prod/ds_pub_3/local.txt",
             size=1, sha256_hash="h_gcs", dataset_id=ds.id,
         )
@@ -234,7 +232,7 @@ def test_non_gcs_file_in_batch_download_links_is_null(client, db_engine, auth_as
     auth_as("0000-0000-0000-0001", groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
     with patch(
-        "app.api.routes.datasets._signed_download",
+        "app.api.routes.datasets.signed_download",
         return_value=("https://signed.example/local.txt", 3600),
     ):
         resp = client.get("/datasets/ds_pub_3/download_links")
@@ -391,10 +389,12 @@ def test_non_gcs_rejects_noncanonical_filenames(client, db_engine, auth_as, file
     assert response.status_code == 422, response.text
 
 
-def test_gcs_filenames_keep_legacy_shapes(client, db_engine, auth_as):
-    _writer(db_engine, auth_as, "ds_gcs_legacy")
-    response = client.post("/datasets/ds_gcs_legacy/files", json={"filename": "/home/user/run/scan.tif", "size": 1, "sha256_hash": "g"})
-    assert response.status_code == 200, response.text
+@pytest.mark.parametrize("backend", [{}, {"storage_backend": "gcs"}])
+def test_stored_files_are_created_by_uploading_not_by_cataloging(client, db_engine, auth_as, backend):
+    _writer(db_engine, auth_as, "ds_stored_record")
+    response = client.post("/datasets/ds_stored_record/files", json={"filename": "scan.tif", "size": 1, "sha256_hash": "g", **backend})
+    assert (response.status_code, response.json()["detail"]["code"]) == (422, "stored_file_needs_upload")
+    assert client.get("/datasets/ds_stored_record/files").json() == []
 
 
 def test_non_gcs_database_enforces_unique_canonical_filenames(db_engine):
@@ -413,15 +413,19 @@ def test_non_gcs_database_enforces_unique_canonical_filenames(db_engine):
             with pytest.raises(IntegrityError):
                 session.commit()
             session.rollback()
-        session.add(AssociatedFile(filename="same", storage_backend="gcs", size=1, sha256_hash="5", dataset_id=ds.id))
+        session.add(AssociatedFile(store_id="mf-storage-prod", filename="same", storage_backend="gcs", size=1, sha256_hash="5", dataset_id=ds.id))
         session.commit()
 
 
 def test_patch_guards_file_identity(client, db_engine, auth_as):
     _writer(db_engine, auth_as, "ds_patch_identity")
     remote = client.post("/datasets/ds_patch_identity/files", json={"filename": "dir/file", "size": 1, "sha256_hash": "h", "storage_backend": "globus"}).json()["mfid"]
-    gcs = client.post("/datasets/ds_patch_identity/files", json={"filename": "a.tif", "size": 1, "sha256_hash": "g"}).json()["mfid"]
-    client.post("/datasets/ds_patch_identity/files", json={"filename": "b.tif", "size": 1, "sha256_hash": "g2"})
+    with Session(db_engine) as session:
+        dataset_id = session.exec(select(Dataset.id).where(Dataset.unique_id == "ds_patch_identity")).one()
+        stored = [AssociatedFile(store_id="mf-storage-prod", dataset_id=dataset_id, filename=name, size=1, sha256_hash=digest, storage_path=f"mf-storage-prod/ds_patch_identity/{name}") for name, digest in (("a.tif", "g"), ("b.tif", "g2"))]
+        session.add_all(stored)
+        session.commit()
+        gcs = stored[0].mfid
     renamed = client.patch(f"/files/{remote}", json={"filename": "other/file"})
     assert (renamed.status_code, renamed.json()["detail"]["code"]) == (409, "filename_immutable")
     assert client.patch(f"/files/{remote}", json={"filename": "dir/file"}).status_code == 200
